@@ -346,9 +346,13 @@ class SoundPlayer:
 
 
 # ---------------------------------------------------------------- widgets
-LEGACY_END = {"checkmate_white": ("#", "#f2f2f2", "#111"), "checkmate_black": ("#", "#333", "#fff"),
-              "draw_white": ("½", "#f2f2f2", "#111"), "draw_black": ("½", "#333", "#fff"),
-              "resign_white": ("⚑", "#f2f2f2", "#111"), "resign_black": ("⚑", "#333", "#fff")}
+LEGACY_END = {
+    "checkmate_white": ("#", "#f2f2f2", "#111"), "checkmate_black": ("#", "#333", "#fff"),
+    "draw_white": ("½", "#f2f2f2", "#111"), "draw_black": ("½", "#333", "#fff"),
+    "resign_white": ("⚑", "#f2f2f2", "#111"), "resign_black": ("⚑", "#333", "#fff"),
+    "abandon_white": ("⏻", "#f2f2f2", "#111"), "abandon_black": ("⏻", "#333", "#fff"),
+    "timeout_white": ("⏱", "#f2f2f2", "#111"), "timeout_black": ("⏱", "#333", "#fff"),
+}
 
 
 class BoardWidget(QWidget):
@@ -2995,12 +2999,31 @@ class SettingsDialog(QDialog):
         l3.addWidget(self.update_status_lbl)
         l3.addStretch(1)
 
+        self._restart_requested = False
+        foot = QHBoxLayout()
+        self.btn_restart_app = QPushButton("Restart App")
+        self.btn_restart_app.setToolTip("Save settings and restart Holly's Chess Analyzer")
+        self.btn_restart_app.clicked.connect(self._request_restart)
+        foot.addWidget(self.btn_restart_app)
+        foot.addStretch(1)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
+        foot.addWidget(bb)
+        lay.addLayout(foot)
 
         if self.main_win and hasattr(self.main_win, "check_channels") and "--selftest" not in sys.argv:
             self.main_win.check_channels(self._on_channels_loaded)
+
+    def _request_restart(self):
+        if QMessageBox.question(
+            self,
+            APP_TITLE,
+            "Save settings and restart Holly's Chess Analyzer now?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes,
+        ) == QMessageBox.Yes:
+            self._restart_requested = True
+            self.accept()
 
     def _on_channels_loaded(self, data: dict, err: str = ""):
         if err:
@@ -4347,7 +4370,7 @@ class MainWindow(QMainWindow):
         self.update_player_bars()
 
     def end_badges(self, b, idx):
-        """Checkmate / draw / resignation markers on the kings of the final position."""
+        """Checkmate / draw / resignation / abandon / timeout markers on the kings of the final position."""
         if idx == 0 or idx != len(self.basic) or self.game is None:
             return []
         result = self.game.headers.get("Result", "*")
@@ -4357,8 +4380,12 @@ class MainWindow(QMainWindow):
             return [(b.king(b.turn), "checkmate_white" if b.turn else "checkmate_black")]
         if b.is_game_over() or result == "1/2-1/2":
             return [(wk, "draw_white"), (bk, "draw_black")]
-        if result in ("1-0", "0-1") and "time" not in term and "abandon" not in term:
+        if result in ("1-0", "0-1"):
             loser = chess.BLACK if result == "1-0" else chess.WHITE
+            if "abandon" in term:
+                return [(b.king(loser), "abandon_white" if loser else "abandon_black")]
+            if "time" in term or "flag" in term:
+                return [(b.king(loser), "timeout_white" if loser else "timeout_black")]
             return [(b.king(loser), "resign_white" if loser else "resign_black")]
         return []
 
@@ -5078,6 +5105,9 @@ class MainWindow(QMainWindow):
             self.apply_customizations()
             self.keybinds = d.result_keybinds()
             self.save_keybinds()
+            if getattr(d, "_restart_requested", False):
+                self.restart_app()
+                return
             self.apply_keybinds()
             self.qs.setValue("lenient", s.lenient_brilliant)
             self.evalbar.formula = s.eval_formula
@@ -5119,6 +5149,52 @@ class MainWindow(QMainWindow):
                 else:
                     self.evalbar.update()
                     self.graph.update()
+
+    def restart_app(self):
+        """Cleanly save state, release the single-instance lock, spawn a fresh instance, and exit."""
+        import subprocess
+        self._updating_exit = True
+        try:
+            self._christmas_timer.stop()
+            self._fireworks_timer.stop()
+        except Exception:
+            pass
+        try:
+            self.qs.sync()
+        except Exception:
+            pass
+        try:
+            self.stop()
+        except Exception:
+            pass
+        try:
+            self.holder.abort()
+        except Exception:
+            pass
+        winutil.release_single_instance()
+        try:
+            env = updater._clean_relaunch_env()
+            if getattr(sys, "frozen", False):
+                cmd = [sys.executable]
+                cwd = os.path.dirname(os.path.abspath(sys.executable))
+            else:
+                cmd = [sys.executable, os.path.abspath(__file__)]
+                cwd = os.path.dirname(os.path.abspath(__file__))
+            flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200) if sys.platform == "win32" else 0
+            subprocess.Popen(cmd, env=env, cwd=cwd, creationflags=flags, close_fds=True)
+        except Exception as exc:
+            self._updating_exit = False
+            QMessageBox.warning(self, APP_TITLE, f"Could not restart automatically:\n{exc}")
+            return
+        for wgt in list(QApplication.topLevelWidgets()):
+            try:
+                wgt.close()
+            except Exception:
+                pass
+        QApplication.quit()
+        t = threading.Timer(0.5, lambda: os._exit(0))
+        t.daemon = True
+        t.start()
 
     def closeEvent(self, e):
         try:

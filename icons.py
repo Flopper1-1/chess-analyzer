@@ -24,6 +24,8 @@ ICON_LIST = [
     ("checkmate_white", "Checkmate (white king)"), ("checkmate_black", "Checkmate (black king)"),
     ("draw_white", "Draw (white king)"), ("draw_black", "Draw (black king)"),
     ("resign_white", "Resigned (white)"), ("resign_black", "Resigned (black)"),
+    ("abandon_white", "Abandoned (white)"), ("abandon_black", "Abandoned (black)"),
+    ("timeout_white", "Timeout (white)"), ("timeout_black", "Timeout (black)"),
 ]
 
 _cache = {}

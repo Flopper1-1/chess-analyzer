@@ -1408,6 +1408,20 @@ _ANNO_STEM_ALIASES = {
     "black_resign": "resign_black",
     "resignation_black": "resign_black",
     "black_resignation": "resign_black",
+    "abandon_white": "abandon_white",
+    "white_abandon": "abandon_white",
+    "abandoned_white": "abandon_white",
+    "abandon_black": "abandon_black",
+    "black_abandon": "abandon_black",
+    "abandoned_black": "abandon_black",
+    "timeout_white": "timeout_white",
+    "white_timeout": "timeout_white",
+    "flag_white": "timeout_white",
+    "flagged_white": "timeout_white",
+    "timeout_black": "timeout_black",
+    "black_timeout": "timeout_black",
+    "flag_black": "timeout_black",
+    "flagged_black": "timeout_black",
 }
 
 _ANNO_SYMBOL_EXACT = {
