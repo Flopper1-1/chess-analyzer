@@ -1,10 +1,12 @@
 import ctypes
+import getpass
 import hashlib
 import io
 import json
 import math
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -46,27 +48,70 @@ APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
 ISSUES_URL = "https://github.com/Flopper1-1/chess-analyzer/issues"
 SURVEY_URL = "https://forms.gle/qeVYFdKAeZpdAWW97"
-CRASH_FORM_URL = "https://forms.gle/NyNHs2tAn8jYpRP76"
+COMPATIBILITY_FORM_URL = "https://forms.gle/NyNHs2tAn8jYpRP76"
+CRASH_FORM_URL = COMPATIBILITY_FORM_URL
 
 _CRASH_REPORTED = False
 
 
+def sanitize_crash_text(text: str) -> str:
+    """Redact local OS usernames and home directory user segments as 'anon'."""
+    if not text:
+        return ""
+    sanitized = str(text)
+    sanitized = re.sub(r'([A-Za-z]:[\\/]+Users[\\/]+)[^\\/\s"\']+', r"\1anon", sanitized, flags=re.IGNORECASE)
+    sanitized = re.sub(r'(/(?:Users|home)/)[^/\s"\']+', r"\1anon", sanitized)
+
+    candidates = []
+    for val in (
+        os.environ.get("USERNAME", ""),
+        os.environ.get("USER", ""),
+        os.path.basename(os.path.expanduser("~").rstrip("\\/")),
+    ):
+        val = (val or "").strip()
+        if val:
+            candidates.append(val)
+    try:
+        g_user = (getpass.getuser() or "").strip()
+        if g_user:
+            candidates.append(g_user)
+    except Exception:
+        pass
+
+    ignored = {"anon", "user", "users", "home", "self", "none", "true", "false", "main", "file", "line", "code", "app"}
+    seen = set()
+    for cand in sorted(candidates, key=len, reverse=True):
+        low = cand.lower()
+        if len(cand) < 3 or low in seen or low in ignored:
+            continue
+        seen.add(low)
+        sanitized = re.sub(re.escape(cand), "anon", sanitized, flags=re.IGNORECASE)
+    return sanitized
+
+
 def show_crash_dialog(exc_type, exc_value, exc_tb):
-    """Display an emergency crash dialog allowing the user to copy details and report the crash."""
+    """Display an emergency crash dialog allowing the user to copy details and open the Compatibility Form."""
     global _CRASH_REPORTED
     if _CRASH_REPORTED:
         return
     _CRASH_REPORTED = True
 
     tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
-    tb_text = "".join(tb_lines)
+    tb_text = sanitize_crash_text("".join(tb_lines))
+    safe_exc_text = sanitize_crash_text(str(exc_value))
 
-    # Save crash traceback to log file in user data directory
+    # Save sanitized crash traceback to log file in user data directory (scrubbing older entries too)
     try:
         crash_log_path = os.path.join(themes.data_root(), "crash.log")
-        with open(crash_log_path, "a", encoding="utf-8") as f:
-            f.write(f"\n--- CRASH REPORT {time.strftime('%Y-%m-%d %H:%M:%S')} ({APP_VERSION}) ---\n")
-            f.write(tb_text)
+        new_entry = f"\n--- CRASH REPORT {time.strftime('%Y-%m-%d %H:%M:%S')} ({APP_VERSION}) ---\n{tb_text}"
+        if os.path.isfile(crash_log_path) and os.path.getsize(crash_log_path) < 1_048_576:
+            with open(crash_log_path, "r", encoding="utf-8", errors="replace") as f:
+                existing = sanitize_crash_text(f.read())
+            with open(crash_log_path, "w", encoding="utf-8") as f:
+                f.write(existing + new_entry)
+        else:
+            with open(crash_log_path, "a", encoding="utf-8") as f:
+                f.write(new_entry)
     except Exception:
         pass
 
@@ -91,13 +136,13 @@ def show_crash_dialog(exc_type, exc_value, exc_tb):
         box.setTextFormat(Qt.RichText)
         box.setText(
             f"<b>{APP_TITLE} encountered an unexpected error and crashed.</b><br><br>"
-            "We apologize for the inconvenience! Please report this crash using our quick form so we can fix it:<br>"
-            f"<a href='{CRASH_FORM_URL}'>{CRASH_FORM_URL}</a>"
+            "We apologize for the inconvenience! You can open our Compatibility Form below to share OS/compatibility info:<br>"
+            f"<a href='{COMPATIBILITY_FORM_URL}'>{COMPATIBILITY_FORM_URL}</a>"
         )
-        box.setInformativeText("Click <b>Report Crash</b> to open the crash report form in your browser.")
+        box.setInformativeText("Click <b>Compatibility Form</b> to open the form in your browser.")
         box.setDetailedText(f"Version: {APP_VERSION}\n\n{tb_text}")
 
-        btn_report = box.addButton("Report Crash", QMessageBox.AcceptRole)
+        btn_report = box.addButton("Compatibility Form", QMessageBox.AcceptRole)
         btn_copy = box.addButton("Copy Error Details", QMessageBox.ActionRole)
         btn_close = box.addButton("Close", QMessageBox.RejectRole)
         box.setDefaultButton(btn_report)
@@ -111,19 +156,19 @@ def show_crash_dialog(exc_type, exc_value, exc_tb):
                     cb.setText(f"{APP_TITLE} {APP_VERSION} Crash Report:\n\n{tb_text}")
                 continue
             if clicked is btn_report:
-                if not QDesktopServices.openUrl(QUrl(CRASH_FORM_URL)):
-                    webbrowser.open(CRASH_FORM_URL)
+                if not QDesktopServices.openUrl(QUrl(COMPATIBILITY_FORM_URL)):
+                    webbrowser.open(COMPATIBILITY_FORM_URL)
             break
     except Exception:
         try:
-            if not QDesktopServices.openUrl(QUrl(CRASH_FORM_URL)):
-                webbrowser.open(CRASH_FORM_URL)
+            if not QDesktopServices.openUrl(QUrl(COMPATIBILITY_FORM_URL)):
+                webbrowser.open(COMPATIBILITY_FORM_URL)
         except Exception:
             pass
         try:
             ctypes.windll.user32.MessageBoxW(
                 0,
-                f"Holly's Chess Analyzer encountered an error:\n\n{exc_value}\n\nPlease report this at:\n{CRASH_FORM_URL}",
+                f"Holly's Chess Analyzer encountered an error:\n\n{safe_exc_text}\n\nPlease fill out our Compatibility Form at:\n{COMPATIBILITY_FORM_URL}",
                 f"{APP_TITLE} - Crash",
                 0x10,
             )
@@ -4763,20 +4808,20 @@ class MainWindow(QMainWindow):
 
     def report_issue(self):
         box = QMessageBox(self)
-        box.setWindowTitle("Report an Issue or Crash")
+        box.setWindowTitle("Report an Issue or Feedback")
         box.setIcon(QMessageBox.Question)
-        box.setText("How would you like to report an issue or crash?")
+        box.setText("How would you like to report an issue or share feedback?")
         box.setInformativeText(
-            "You can fill out our quick Crash / Bug Report Form or open a ticket on GitHub Issues."
+            "You can fill out our quick Compatibility Form or open a ticket on GitHub Issues."
         )
-        btn_form = box.addButton("Crash / Bug Report Form", QMessageBox.AcceptRole)
+        btn_form = box.addButton("Compatibility Form", QMessageBox.AcceptRole)
         btn_gh = box.addButton("GitHub Issues", QMessageBox.ActionRole)
         btn_cancel = box.addButton("Cancel", QMessageBox.RejectRole)
         box.setDefaultButton(btn_form)
         box.exec()
         clicked = box.clickedButton()
         if clicked is btn_form:
-            self._open_url(CRASH_FORM_URL)
+            self._open_url(COMPATIBILITY_FORM_URL)
         elif clicked is btn_gh:
             self._open_url(ISSUES_URL)
 

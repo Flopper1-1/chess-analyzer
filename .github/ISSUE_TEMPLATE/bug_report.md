@@ -6,8 +6,8 @@ labels: bug
 assignees: ''
 ---
 
-### Quick Crash Report
-If you experienced an application crash, you can also fill out our quick **[Crash & Bug Report Form](https://forms.gle/NyNHs2tAn8jYpRP76)** (no GitHub login required).
+### Compatibility Form
+You can also fill out our quick **[Compatibility Form](https://forms.gle/NyNHs2tAn8jYpRP76)** (no GitHub login required).
 
 ### Describe the Bug / Crash
 A clear and concise description of what happened.
