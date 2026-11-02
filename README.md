@@ -6,20 +6,17 @@
 
   **Desktop chess analysis workstation powered by Stockfish 17.1, Lichess opening classification, and custom annotations.**
 
-  [![Release](https://img.shields.io/github/v/release/Flopper1-1/chess-analyzer?style=for-the-badge&color=4caf50&label=Download%20EXE)](https://github.com/Flopper1-1/chess-analyzer/releases/latest)
-  [![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows)](https://github.com/Flopper1-1/chess-analyzer/releases)
-  [![Engine](https://img.shields.io/badge/Stockfish-17.1%20AVX2-d32f2f?style=for-the-badge)](https://stockfishchess.org/)
-  [![UI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt-41cd52?style=for-the-badge&logo=qt)](https://www.qt.io/)
-  [![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)](LICENSES/Stockfish-GPLv3.txt)
+  ![Version](https://img.shields.io/badge/Version-v1.0.0-4caf50?style=for-the-badge)
+  ![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows)
+  ![Engine](https://img.shields.io/badge/Stockfish-17.1%20AVX2-d32f2f?style=for-the-badge)
+  ![UI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt-41cd52?style=for-the-badge&logo=qt)
+  ![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)
 
   ---
 
   ### 🎬 Feature Showcase
-  *(Rendered programmatically with [Remotion](showcase/))*
 
   <img src="assets/showcase.gif" alt="Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
-
-  [▶ Download Full 1080p HD Showcase MP4](https://github.com/Flopper1-1/chess-analyzer/releases/download/v1.0.0/showcase.mp4)
 
 </div>
 
@@ -95,13 +92,7 @@
 
 ## 🚀 Getting Started
 
-### Option 1: Standalone Portable Binary (Recommended)
-No Python, Git, or Stockfish installations needed.
-1. Download **`ChessAnalyzer.exe`** from [**Releases**](https://github.com/Flopper1-1/chess-analyzer/releases/latest).
-2. Run the executable.
-3. Paste any PGN / FEN or drag-and-drop a `.pgn` file onto the board.
-
-### Option 2: Running from Source
+### Running from Source
 ```powershell
 # Clone the repository
 git clone https://github.com/Flopper1-1/chess-analyzer.git
@@ -127,7 +118,7 @@ The compiled standalone binary will be created in `dist/ChessAnalyzer.exe`.
 
 ## 🎬 Remotion Showcase Suite
 
-The showcase animation in this README is generated entirely through code using [Remotion](https://www.remotion.dev/):
+The showcase animation in this README is generated entirely through code using Remotion:
 
 ```powershell
 cd showcase
