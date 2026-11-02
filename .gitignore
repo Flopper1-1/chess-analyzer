@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+build/
+dist/
+*.spec
+node_modules/
+.remotion/
+out/
+shot*.png
+tests/shot*.png
+
