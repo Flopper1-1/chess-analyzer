@@ -508,12 +508,12 @@ const FeaturesScene: React.FC = () => {
   );
 };
 
-// --- SCENE 5: OUTRO / DOWNLOAD ---
+// --- SCENE 5: OUTRO ---
 const OutroScene: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  const scale = spring({ frame, fps, config: { damping: 12 } });
+  const scale = spring({ frame, fps, config: { damping: 14 } });
 
   return (
     <AbsoluteFill
@@ -527,61 +527,84 @@ const OutroScene: React.FC = () => {
       <div
         style={{
           transform: `scale(${scale})`,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
           textAlign: 'center',
         }}
       >
         <Img
           src={staticFile('icon.png')}
           style={{
-            width: 130,
-            height: 130,
-            marginBottom: '25px',
-            boxShadow: '0 15px 40px rgba(76,175,80,0.4)',
-            borderRadius: '30px',
+            width: 140,
+            height: 140,
+            marginBottom: '28px',
+            boxShadow: '0 15px 45px rgba(76,175,80,0.4)',
+            borderRadius: '32px',
+            border: '2px solid rgba(255,255,255,0.15)',
           }}
         />
 
         <h1
           style={{
             fontFamily: 'Segoe UI, sans-serif',
-            fontSize: 68,
+            fontSize: 64,
             fontWeight: 800,
             color: THEME.textLight,
             margin: 0,
+            letterSpacing: '1px',
           }}
         >
-          Download Chess Analyzer
+          Chess Game Analyzer
         </h1>
-
-        <p
-          style={{
-            fontSize: 26,
-            color: THEME.textMuted,
-            marginTop: '16px',
-            maxWidth: '700px',
-            lineHeight: 1.4,
-          }}
-        >
-          Single Standalone Windows Executable • No Python or Stockfish Install Required
-        </p>
 
         <div
           style={{
-            marginTop: '35px',
-            display: 'inline-flex',
-            alignItems: 'center',
+            display: 'flex',
             gap: '16px',
-            background: THEME.accentGreen,
-            color: '#ffffff',
-            padding: '16px 40px',
-            borderRadius: '50px',
-            fontSize: 24,
-            fontWeight: 700,
-            boxShadow: '0 10px 30px rgba(76,175,80,0.4)',
+            marginTop: '24px',
+            justifyContent: 'center',
           }}
         >
-          🚀 Get It on GitHub Releases
+          <span
+            style={{
+              background: 'rgba(255,255,255,0.08)',
+              padding: '10px 24px',
+              borderRadius: '24px',
+              fontSize: 22,
+              fontWeight: 600,
+              color: THEME.textLight,
+              border: '1px solid rgba(255,255,255,0.12)',
+            }}
+          >
+            Standalone Windows Executable
+          </span>
+          <span
+            style={{
+              background: 'rgba(76, 175, 80, 0.15)',
+              padding: '10px 24px',
+              borderRadius: '24px',
+              fontSize: 22,
+              fontWeight: 600,
+              color: THEME.accentGreen,
+              border: '1px solid rgba(76, 175, 80, 0.3)',
+            }}
+          >
+            Stockfish 17.1 Built-in
+          </span>
         </div>
+
+        <p
+          style={{
+            fontSize: 22,
+            color: THEME.textMuted,
+            marginTop: '20px',
+            marginBottom: 0,
+            letterSpacing: '0.5px',
+          }}
+        >
+          No external dependencies required
+        </p>
       </div>
     </AbsoluteFill>
   );
