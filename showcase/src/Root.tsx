@@ -2,6 +2,7 @@ import React from 'react';
 import { Composition } from 'remotion';
 import { ShowcaseVideo } from './Showcase';
 import { ZackDShortVideo } from './ZackDShort';
+import { ChessPhonkEditVideo } from './ChessPhonkEdit';
 
 export const Root: React.FC = () => {
   return (
@@ -18,6 +19,14 @@ export const Root: React.FC = () => {
         id="ZackDShort"
         component={ZackDShortVideo}
         durationInFrames={1280}
+        fps={30}
+        width={1080}
+        height={1920}
+      />
+      <Composition
+        id="ChessPhonkEdit"
+        component={ChessPhonkEditVideo}
+        durationInFrames={630}
         fps={30}
         width={1080}
         height={1920}
