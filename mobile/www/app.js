@@ -452,3 +452,4 @@ function loadFromInput() {
 window.addEventListener('DOMContentLoaded', () => {
   loadSample('fegatello');
 });
+

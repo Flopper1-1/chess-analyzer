@@ -819,12 +819,15 @@ class MainWindow(QMainWindow):
         root.addLayout(right, 2)
 
         tb = QToolBar(); self.addToolBar(tb)
+        self.tb = tb
+        self.save_act = None
         for t, fn in (("Open PGN…", self.open_file), ("Paste PGN/FEN…", self.paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
-                      ("Rename Game…", self.rename_current_game),
-                      ("Save to Library", self.save_to_library), ("Library…", self.open_library),
-                      ("Settings…", self.open_settings)):
-            tb.addAction(t, fn)
+                      ("Save to Library", self.save_to_library), ("Rename Game…", self.rename_current_game),
+                      ("Library…", self.open_library), ("Settings…", self.open_settings)):
+            act = tb.addAction(t, fn)
+            if t == "Save to Library":
+                self.save_act = act
         self.game_combo = QComboBox(); self.game_combo.setVisible(False)
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         tb.addWidget(self.game_combo)
@@ -904,7 +907,7 @@ class MainWindow(QMainWindow):
         h = self.games[i].headers
         j = self.jobs[i]
         if j.done:
-            st = "✓"
+            st = "✓ saved" if j.lib_id else "✓"
         elif j.running:
             a, b = j.progress
             st = "… %d%%" % (100 * a // max(1, b))
@@ -919,14 +922,35 @@ class MainWindow(QMainWindow):
                 self.game_combo.setItemText(i, self.combo_text(i))
 
     def update_players_header(self):
-        if not self.game:
+        if not self.game or not self.job:
+            self.players.setText("")
+            self.update_save_button(False)
             return
         h = self.game.headers
         base = "%s  vs  %s   %s" % (h.get("White", "?"), h.get("Black", "?"), h.get("Result", ""))
-        if self.job and self.job.title:
-            self.players.setText("%s   (%s)" % (self.job.title, base))
+        if self.job.title and self.job.title != f"{h.get('White', '?')} vs {h.get('Black', '?')}":
+            text = f"<b>{self.job.title}</b> &nbsp; <span style='color:#aaa;'>({base})</span>"
         else:
-            self.players.setText(base)
+            text = f"<b>{base}</b>"
+        if self.job.lib_id is not None:
+            text += " &nbsp; <span style='background:#2e7d32;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px;'>✓ Saved</span>"
+        self.players.setTextFormat(Qt.RichText)
+        self.players.setText(text)
+        self.update_save_button(self.job.lib_id is not None)
+
+    def update_save_button(self, saved: bool, flash: bool = False):
+        if not self.save_act:
+            return
+        w = self.tb.widgetForAction(self.save_act)
+        if saved:
+            self.save_act.setText("✓ Saved in Library" if not flash else "✓ Game Saved!")
+            if w:
+                bg = "#43a047" if flash else "#2e7d32"
+                w.setStyleSheet(f"QToolButton {{ background: {bg}; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 3px 8px; }}")
+        else:
+            self.save_act.setText("Save to Library")
+            if w:
+                w.setStyleSheet("")
 
     def pick_game(self, i):
         if i < 0 or i >= len(self.games):
@@ -1237,17 +1261,50 @@ class MainWindow(QMainWindow):
             return self.settings.side
         return "black" if self.board.flipped else "white"
 
+    def rename_current_game(self):
+        if not self.game or not self.job:
+            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
+        h = self.game.headers
+        cur = self.job.title or f"{h.get('White', '?')} vs {h.get('Black', '?')}"
+        new_title, ok = QInputDialog.getText(self, "Rename Game", "Enter name for this game:", QLineEdit.Normal, cur)
+        if ok and new_title.strip():
+            self.job.title = new_title.strip()
+            if self.job.lib_id is not None:
+                self.library.rename(self.job.lib_id, self.job.title)
+            self.update_players_header()
+            self.refresh_combo(self.job)
+            self.status.setText(f"Renamed game to '{self.job.title}'.")
+
     def save_to_library(self):
         if not self.game or not self.job:
             QMessageBox.information(self, "Chess Analyzer", "Open and analyse a game first."); return
         if not self.job.done:
             QMessageBox.information(self, "Chess Analyzer", "Wait for analysis to finish before saving to the library."); return
-        uc = self._current_user_color()
+        h = self.game.headers
+        mc = self.settings.matched_color(h)
+        if mc == chess.WHITE:
+            uc = "white"
+        elif mc == chess.BLACK:
+            uc = "black"
+        elif self.settings.side in ("white", "black"):
+            uc = self.settings.side
+        else:
+            uc = "black" if self.board.flipped else "white"
         gid = self.library.save(self.game, self.job.results, self.settings, title=self.job.title or None, user_color=uc)
         self.job.lib_id = gid
-        h = self.game.headers
-        label = self.job.title or ("%s vs %s" % (h.get("White", "?"), h.get("Black", "?")))
-        self.status.setText("Saved '%s' to library (#%d)." % (label, gid))
+        if not self.job.title:
+            for row in self.library.list():
+                if row["id"] == gid:
+                    self.job.title = row["title"]
+                    break
+        self.update_players_header()
+        self.update_save_button(True, flash=True)
+        QTimer.singleShot(1800, lambda: self.job and self.job.lib_id == gid and self.update_save_button(True, flash=False))
+        self.refresh_combo(self.job)
+        name = self.job.title or f"{h.get('White', '?')} vs {h.get('Black', '?')}"
+        self.status.setStyleSheet("color: #66bb6a; font-weight: bold;")
+        self.status.setText(f"✓ Saved '{name}' to library (#{gid}).")
+        QTimer.singleShot(3000, lambda: self.status.setStyleSheet(""))
 
     def open_library(self):
         d = LibraryDialog(self.library, self)
@@ -1276,7 +1333,7 @@ class MainWindow(QMainWindow):
         self.game_combo.setVisible(False)
         self.game_combo.blockSignals(False)
         self.pick_game(0)
-        self.status.setText("Loaded '%s' from library (%d moves, instant)." % (job.title or "game", len(results)))
+        self.status.setText("Loaded saved game from library (%d moves, instant)." % len(results))
 
     def best_button(self, row):
         b = QPushButton("Best")
