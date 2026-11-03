@@ -47,24 +47,3 @@ p.end()
 img.save(os.path.join(DST, "excellent.png"))
 print("excellent done", br)
 
-
-# generated "miss" icon: salmon circle with an outlined white X (same style as the other icons)
-from PySide6.QtGui import QPen
-ref = QImage(os.path.join(DST, "incorrect.png"))
-img = QImage(W, ref.height(), QImage.Format_ARGB32)
-img.fill(Qt.transparent)
-p = QPainter(img)
-p.setRenderHint(QPainter.Antialiasing)
-p.setPen(Qt.NoPen)
-p.setBrush(QColor("#b2b2b2"))
-p.drawEllipse(QRectF(0, 6, W, img.height() - 6))
-p.setBrush(QColor("#ee6b6e"))
-p.drawEllipse(QRectF(0, 0, W, W - 6))
-a, b = W * 0.30, W * 0.70
-for color, width in (("white", 44), ("#ee6b6e", 24)):
-    p.setPen(QPen(QColor(color), width, Qt.SolidLine, Qt.RoundCap))
-    p.drawLine(QPointF(a, a - 3), QPointF(b, b - 3))
-    p.drawLine(QPointF(b, a - 3), QPointF(a, b - 3))
-p.end()
-img.save(os.path.join(DST, "miss.png"))
-print("miss done")

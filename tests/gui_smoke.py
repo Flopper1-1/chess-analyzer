@@ -63,6 +63,24 @@ d.stack.setCurrentIndex(0)
 d.findChildren(M.QTabWidget)[0].setCurrentIndex(1)
 QTest.qWait(200)
 d.grab().save(os.path.join(HERE, "shot_settings.png"))
-w.holder.close()
+
+# Test in-app library save and instant reload without engine
+import tempfile
+import library as LIB
+tmp_db = os.path.join(tempfile.gettempdir(), "smoke_lib.db")
+if os.path.exists(tmp_db):
+    os.remove(tmp_db)
+w.library = LIB.GameLibrary(tmp_db)
+w.pick_game(0)
+orig_syms = [r.symbol for r in w.results]
+w.save_to_library()
+lib_rows = w.library.list()
+assert len(lib_rows) == 1
+w.holder.close()  # close engine first to prove reload does not start Stockfish
+w.load_from_library(lib_rows[0]["id"])
+assert [r.symbol for r in w.results] == orig_syms
+assert w.holder.engine is None
+os.remove(tmp_db)
+print("library smoke ok!")
 
 print('---PGN---'); print(w.annotated_pgn(0))

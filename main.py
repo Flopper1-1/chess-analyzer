@@ -23,6 +23,7 @@ import styles
 import icons
 import winutil
 import accuracy as ACC
+import library as LIB
 
 PIECES = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
           "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟"}
@@ -524,6 +525,126 @@ class PasteDialog(QDialog):
         l.addWidget(bb)
 
 
+class LibraryDialog(QDialog):
+    COLS = ["Saved", "White", "Black", "Result", "Opening", "White Acc", "Black Acc", "Est. Rating", "Moves"]
+
+    def __init__(self, lib: LIB.GameLibrary, parent=None):
+        super().__init__(parent)
+        self.lib = lib
+        self.main_win = parent
+        self.selected_id = None
+        self.setWindowTitle("Saved Games Library")
+        self.resize(900, 500)
+        lay = QVBoxLayout(self)
+
+        top = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Search by player, opening, ECO, or event…")
+        self.search.textChanged.connect(self.refresh)
+        top.addWidget(QLabel("Search:"))
+        top.addWidget(self.search, 1)
+        lay.addLayout(top)
+
+        self.table = QTableWidget(0, len(self.COLS))
+        self.table.setHorizontalHeaderLabels(self.COLS)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        hh = self.table.horizontalHeader()
+        hh.setSectionResizeMode(QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(4, QHeaderView.Stretch)
+        self.table.cellDoubleClicked.connect(lambda _r, _c: self.open_selected())
+        lay.addWidget(self.table, 1)
+
+        btns = QHBoxLayout()
+        self.btn_open = QPushButton("Open")
+        self.btn_del = QPushButton("Delete")
+        self.btn_exp = QPushButton("Export PGN…")
+        self.btn_imp = QPushButton("Import PGN…")
+        self.btn_close = QPushButton("Close")
+        self.btn_open.clicked.connect(self.open_selected)
+        self.btn_del.clicked.connect(self.delete_selected)
+        self.btn_exp.clicked.connect(self.export_selected)
+        self.btn_imp.clicked.connect(self.import_pgn)
+        self.btn_close.clicked.connect(self.reject)
+        for b in (self.btn_open, self.btn_del, self.btn_exp, self.btn_imp):
+            btns.addWidget(b)
+        btns.addStretch(1)
+        btns.addWidget(self.btn_close)
+        lay.addLayout(btns)
+        self.refresh()
+
+    def refresh(self):
+        self.rows = self.lib.list(self.search.text())
+        self.table.setRowCount(len(self.rows))
+        fmt_acc = lambda v: "–" if v is None else f"{v:.1f}%"
+        for r_idx, row in enumerate(self.rows):
+            opening = f"{row['eco']} {row['opening']}".strip() or "–"
+            w_r = row["white_rating"]
+            b_r = row["black_rating"]
+            rat = f"{w_r or '–'} / {b_r or '–'}"
+            vals = [
+                row["saved_at"] or "",
+                row["white"] or "?",
+                row["black"] or "?",
+                row["result"] or "*",
+                opening,
+                fmt_acc(row["white_acc"]),
+                fmt_acc(row["black_acc"]),
+                rat,
+                str(row["moves"] or 0),
+            ]
+            for c_idx, val in enumerate(vals):
+                it = QTableWidgetItem(val)
+                if c_idx in (0, 3, 5, 6, 7, 8):
+                    it.setTextAlignment(Qt.AlignCenter)
+                self.table.setItem(r_idx, c_idx, it)
+        if self.rows:
+            self.table.selectRow(0)
+
+    def _cur_row(self):
+        r = self.table.currentRow()
+        if 0 <= r < len(self.rows):
+            return self.rows[r]
+        return None
+
+    def open_selected(self):
+        row = self._cur_row()
+        if not row:
+            return
+        self.selected_id = row["id"]
+        self.accept()
+
+    def delete_selected(self):
+        row = self._cur_row()
+        if not row:
+            return
+        self.lib.delete(row["id"])
+        self.refresh()
+
+    def export_selected(self):
+        row = self._cur_row()
+        if not row or not self.main_win:
+            return
+        game, results = self.lib.load(row["id"])
+        default = f"{row['white']}-vs-{row['black']}.pgn"
+        default = "".join(c if c.isalnum() or c in "-_. " else "_" for c in default)
+        path, _ = QFileDialog.getSaveFileName(self, "Export annotated PGN", default, "PGN files (*.pgn)")
+        if path:
+            text = self.main_win.format_annotated_pgn(game, results)
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(text + "\n")
+
+    def import_pgn(self):
+        if not self.main_win:
+            return
+        p, _ = QFileDialog.getOpenFileName(self, "Import PGN to analyse", "", "PGN files (*.pgn);;All files (*)")
+        if p:
+            self.reject()
+            self.main_win.load_path(p)
+
+
 def parse_input(text):
     """Return list of chess.pgn.Game from PGN text or a single FEN."""
     text = text.strip()
@@ -565,6 +686,7 @@ class MainWindow(QMainWindow):
                                    int(qs.value("hash", 128)), qs.value("engine", ""), qs.value("preset", "custom"), qs.value("lenient", False, type=bool))
         styles.load(qs)
         self.holder = EngineHolder()
+        self.library = LIB.GameLibrary()
         self.book = None
         self.games, self.game, self.results = [], None, []
         self.jobs, self.job = [], None
@@ -626,13 +748,16 @@ class MainWindow(QMainWindow):
 
         tb = QToolBar(); self.addToolBar(tb)
         for t, fn in (("Open PGN…", self.open_file), ("Paste PGN/FEN…", self.paste),
-                      ("Re-analyze", self.restart_all), ("Stop", self.stop), ("Save game…", self.save_game), ("Save all…", self.save_all), ("Settings…", self.open_settings)):
+                      ("Re-analyze", self.restart_all), ("Stop", self.stop),
+                      ("Save to Library", self.save_to_library), ("Library…", self.open_library),
+                      ("Settings…", self.open_settings)):
             tb.addAction(t, fn)
         self.game_combo = QComboBox(); self.game_combo.setVisible(False)
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         tb.addWidget(self.game_combo)
         self.cur = 0
         self.pv_boards = None
+        tb.addAction("Win% Guide", self.show_win_guide)
         tb.addAction("Keys", self.show_keys)
         self.table.currentCellChanged.connect(lambda r, c, pr, pc: r >= 0 and r != self.cur and self.goto(r))
         self.keymap = [
@@ -647,7 +772,8 @@ class MainWindow(QMainWindow):
             (Qt.Key_F, "Flip board", self.flip),
             (Qt.Key_B, "Show best line for current move", lambda: self.show_best(self.cur)),
             (QKeySequence("Ctrl+O"), "Open PGN", self.open_file),
-            (QKeySequence("Ctrl+S"), "Save game", self.save_game),
+            (QKeySequence("Ctrl+S"), "Save to library", self.save_to_library),
+            (QKeySequence("Ctrl+L"), "Open library", self.open_library),
         ]
         for key, _d, fn in self.keymap:
             QShortcut(QKeySequence(key), self, activated=fn)
@@ -951,9 +1077,10 @@ class MainWindow(QMainWindow):
 
     def annotated_pgn(self, idx):
         """PGN text of game idx with NAGs, [%eval] and a short comment per analysed move."""
-        game, job = self.games[idx], self.jobs[idx]
+        return self.format_annotated_pgn(self.games[idx], self.jobs[idx].results)
+
+    def format_annotated_pgn(self, game, results):
         copy = chess.pgn.read_game(io.StringIO(str(game)))     # never mutate the loaded game
-        results = job.results
         node, k = copy, 0
         last_open = None
         while node.variations and k < len(results):
@@ -1000,6 +1127,39 @@ class MainWindow(QMainWindow):
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(self.annotated_pgn(i) for i in range(len(self.games))) + "\n")
             self.status.setText("Saved %d game(s) to %s" % (len(self.games), path))
+
+    def save_to_library(self):
+        if not self.game or not self.job:
+            QMessageBox.information(self, "Chess Analyzer", "Open and analyse a game first."); return
+        if not self.job.done:
+            QMessageBox.information(self, "Chess Analyzer", "Wait for analysis to finish before saving to the library."); return
+        gid = self.library.save(self.game, self.job.results, self.settings)
+        h = self.game.headers
+        self.status.setText("Saved '%s vs %s' to library (#%d)." % (h.get("White", "?"), h.get("Black", "?"), gid))
+
+    def open_library(self):
+        d = LibraryDialog(self.library, self)
+        if d.exec() and d.selected_id is not None:
+            self.load_from_library(d.selected_id)
+
+    def load_from_library(self, game_id: int):
+        self.stop()
+        game, results = self.library.load(game_id)
+        job = Job(game)
+        job.results = list(results)
+        job.done = True
+        job.running = False
+        job.progress = (len(results), max(1, len(results)))
+        self.games = [game]
+        self.jobs = [job]
+        self.ensure_book()
+        self.game_combo.blockSignals(True)
+        self.game_combo.clear()
+        self.game_combo.addItem(self.combo_text(0))
+        self.game_combo.setVisible(False)
+        self.game_combo.blockSignals(False)
+        self.pick_game(0)
+        self.status.setText("Loaded saved game from library (%d moves, instant)." % len(results))
 
     def best_button(self, row):
         b = QPushButton("Best")
@@ -1054,6 +1214,26 @@ class MainWindow(QMainWindow):
     def flip(self):
         self.board.flipped = not self.board.flipped
         self.board.update()
+
+    def show_win_guide(self):
+        msg = (
+            "<h3>What is Win Chance?</h3>"
+            "<p>Stockfish scores positions in centipawns (100 = 1 pawn advantage). "
+            "To measure the real impact of a move, centipawns are converted to an "
+            "<b>expected win percentage (0–100%)</b> using the Lichess win-probability formula:</p>"
+            "<p><code>win% = 50 + 50 · (2 / (1 + e^(-0.00368208 · cp)) - 1)</code></p>"
+            "<ul>"
+            "<li><b>0.00 eval</b> → 50% win chance</li>"
+            "<li><b>+1.00 eval</b> → ~59% win chance</li>"
+            "<li><b>+2.00 eval</b> → ~68% win chance</li>"
+            "<li><b>+3.00 eval</b> → ~75% win chance</li>"
+            "<li><b>+5.00 eval</b> → ~86% win chance</li>"
+            "</ul>"
+            "<p>A move's <b>loss</b> is how much win% it gave away compared with the engine's best move: "
+            "<b>Inaccuracy (?!)</b> 5–10%, <b>Mistake (?)</b> 10–20%, <b>Blunder (??)</b> &gt;20%, and "
+            "<b>Miss</b> when a winning move (&ge;70% win%) was missed leaving &lt;60%.</p>"
+        )
+        QMessageBox.information(self, "Win Chance & Annotations Guide", msg)
 
     def show_keys(self):
         lines = []

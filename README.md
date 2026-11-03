@@ -70,9 +70,9 @@
 | <img src="assets/icons/good.png" width="30"/> | **Good (`✓`)** | Loss ≤ 5% | Solid move without compromising position |
 | <img src="assets/icons/book.png" width="30"/> | **Book (`/`)** | Known Theory | Move cataloged in Lichess Opening Database (ECO A–E) |
 | <img src="assets/icons/inaccuracy.png" width="30"/> | **Inaccuracy (`?!`)** | Loss 5–10% | Suboptimal play that reduces edge |
-| <img src="assets/icons/incorrect.png" width="30"/> | **Mistake (`?`)** | Loss 10–20% | Concession causing positional damage |
+| <img src="assets/icons/mistake.png" width="30"/> | **Mistake (`?`)** | Loss 10–20% | Concession causing positional damage |
 | <img src="assets/icons/blunder.png" width="30"/> | **Blunder (`??`)** | Loss > 20% | Critical blunder swinging game evaluation |
-| <img src="assets/icons/miss.png" width="30"/> | **Miss (`✗`)** | Drop from win | Missed winning tactic or game-winning conversion |
+| <img src="assets/icons/incorrect.png" width="30"/> | **Miss (`✗`)** | Drop from win | Missed winning tactic or game-winning conversion |
 | <img src="assets/icons/forced.png" width="30"/> | **Forced (`→`)** | 1 legal move | The only available legal move (excluded from accuracy) |
 
 ---
@@ -87,6 +87,8 @@
 | <kbd>F</kbd> | Flip board orientation |
 | <kbd>B</kbd> | Calculate & show 3 engine lines for current move |
 | <kbd>Ctrl</kbd> + <kbd>O</kbd> | Open PGN file |
+| <kbd>Ctrl</kbd> + <kbd>S</kbd> | Save analysed game to Library |
+| <kbd>Ctrl</kbd> + <kbd>L</kbd> | Open Saved Games Library |
 
 ---
 

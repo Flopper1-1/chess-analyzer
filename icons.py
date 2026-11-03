@@ -12,14 +12,14 @@ from openings import resource_path
 # annotation key -> icon file stem
 KEY_TO_STEM = {
     "!!": "brilliant", "!": "great_find", "+++": "best", "++": "excellent", "+": "good",
-    "/": "book", "miss": "miss", "?!": "inaccuracy", "?": "incorrect", "??": "blunder",
+    "/": "book", "miss": "incorrect", "?!": "inaccuracy", "?": "mistake", "??": "blunder",
     "forced": "forced", "alt": "alternative",
 }
 # (stem, label) in display order for the Settings dialog
 ICON_LIST = [
     ("brilliant", "Brilliant  !!"), ("great_find", "Great  !"), ("best", "Best"),
     ("excellent", "Excellent"), ("good", "Good"), ("book", "Book"),
-    ("miss", "Miss (missed win)"), ("inaccuracy", "Inaccuracy  ?!"), ("incorrect", "Mistake  ?"), ("blunder", "Blunder  ??"),
+    ("incorrect", "Miss (missed win)"), ("inaccuracy", "Inaccuracy  ?!"), ("mistake", "Mistake  ?"), ("blunder", "Blunder  ??"),
     ("forced", "Forced move"), ("alternative", "Best alternative"),
     ("checkmate_white", "Checkmate (white king)"), ("checkmate_black", "Checkmate (black king)"),
     ("draw_white", "Draw (white king)"), ("draw_black", "Draw (black king)"),
