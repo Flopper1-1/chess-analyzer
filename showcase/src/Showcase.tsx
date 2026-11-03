@@ -84,7 +84,7 @@ const IntroScene: React.FC = () => {
   const pills = [
     { label: '⚡ Stockfish 19 Engine', color: THEME.accentGreen, bg: 'rgba(76,175,80,0.14)' },
     { label: '💎 Brilliant (!!) Library Tracker', color: THEME.accentCyan, bg: 'rgba(38,198,218,0.14)' },
-    { label: '🖥️ Windows .EXE  •  📱 Android .APK  •  🍎 iOS .IPA', color: THEME.accentGold, bg: 'rgba(245,197,66,0.13)' },
+    { label: '🖥️ Standalone Windows .EXE', color: THEME.accentGold, bg: 'rgba(245,197,66,0.13)' },
   ];
 
   return (
@@ -876,8 +876,8 @@ const OutroScene: React.FC = () => {
         <div style={{ display: 'flex', gap: 18, marginTop: 26 }}>
           {[
             { label: '🖥️ Windows (.exe)', col: THEME.accentGreen },
-            { label: '🤖 Android (.apk)', col: THEME.accentCyan },
-            { label: '🍎 iOS (.ipa)', col: THEME.accentGold },
+            { label: '⚡ Zero Dependencies', col: THEME.accentCyan },
+            { label: '🔥 Stockfish 19 Built-In', col: THEME.accentGold },
           ].map((p) => (
             <span
               key={p.label}
