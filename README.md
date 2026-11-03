@@ -16,7 +16,7 @@
 
   ### 🎬 Feature Showcase
 
-  <img src="assets/showcase.gif" alt="Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
+  <img src="assets/showcase_preview.gif" alt="Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
 
 </div>
 
