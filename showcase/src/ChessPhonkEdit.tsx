@@ -11,22 +11,22 @@ import {
   useVideoConfig,
 } from 'remotion';
 
-// --- PIECE GRAPHICS (SVG) ---
+// --- CLEAN VECTOR CHESS PIECES (2D FLAT STREAM/APP STYLE) ---
 const PIECES: Record<string, React.ReactNode> = {
-  // White Pieces
+  // White Pieces (Pure White with Crisp Dark Contours)
   wK: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="none" fillRule="evenodd" stroke="#ffffff" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M22.5 11.63V6M20 8h5" stroke="#f8fafc" strokeWidth="2.5" />
-        <path d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5" fill="#f8fafc" stroke="#f8fafc" />
-        <path d="M11.5 37c5.5 3.5 16.5 3.5 22 0l-1.5-6.5c-4 2-15 2-19 0l-1.5 6.5z" fill="#f8fafc" stroke="#f8fafc" />
-        <path d="M12 30c6 2.5 15 2.5 21 0l1-5c-3 1.5-19 1.5-22 0l-0 5z" fill="#f8fafc" stroke="#f8fafc" />
+      <g fill="none" fillRule="evenodd" stroke="#0f172a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22.5 11.63V6M20 8h5" stroke="#f8fafc" strokeWidth="3" />
+        <path d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5" fill="#f8fafc" stroke="#0f172a" />
+        <path d="M11.5 37c5.5 3.5 16.5 3.5 22 0l-1.5-6.5c-4 2-15 2-19 0l-1.5 6.5z" fill="#f8fafc" stroke="#0f172a" />
+        <path d="M12 30c6 2.5 15 2.5 21 0l1-5c-3 1.5-19 1.5-22 0l-0 5z" fill="#f8fafc" stroke="#0f172a" />
       </g>
     </svg>
   ),
   wQ: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#f8fafc" stroke="#f8fafc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="6" cy="12" r="2.5" />
         <circle cx="14" cy="9" r="2.5" />
         <circle cx="22.5" cy="8" r="2.5" />
@@ -40,40 +40,40 @@ const PIECES: Record<string, React.ReactNode> = {
   ),
   wR: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#f8fafc" stroke="#f8fafc" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 39h27v-3H9v3zm3-3v-4h21v4H12zm2-4l1.5-13.5h14L31 32H14zm-3-15h23v-5h-3v2h-4v-2h-4v2h-4v-2h-4v2h-4v-2z" />
       </g>
     </svg>
   ),
   wB: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#f8fafc" stroke="#f8fafc" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 36c3.5-1 18.5-1 22 0-1-2.5-3-2.5-4-4-2-1.5-10-1.5-12 0-1 1.5-5 1.5-6 4z" />
         <path d="M15 32c2.5 2.5 12.5 2.5 15 0 .5-1.5 0-2 0-2 0-2.5-2.5-4-2.5-4 5.5-1.5 6-11.5-5-15.5-11 4-10.5 14-5 15.5 0 0-2.5 1.5-2.5 4 0 0-.5.5 0 2z" />
         <circle cx="25" cy="8" r="1.8" />
-        <path d="M17.5 26h10M15 30h15m-7.5-14.5v5m-3-2.5h6" stroke="#0e1724" strokeWidth="2" />
+        <path d="M17.5 26h10M15 30h15m-7.5-14.5v5m-3-2.5h6" stroke="#0f172a" strokeWidth="2" />
       </g>
     </svg>
   ),
   wN: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#f8fafc" stroke="#f8fafc" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21" />
         <path d="M24 18c.38 2.91-5.55 7.37-8 9-3 2-2.82 4.34-5 4-1.042-.94 1.41-3.04 0-3-1 0 .19 1.23-1 2-1 0-4.003 1-4-4 0-2 6-12 6-12s1.89-1.9 2-3.5c-.73-.994-.5-2-.5-3 1-1 3 2.5 3 2.5h2s.78-1.992 2.5-3c1 0 1 3 1 3" />
-        <circle cx="9.5" cy="25.5" r="1.5" fill="#0e1724" stroke="none" />
+        <circle cx="9.5" cy="25.5" r="1.8" fill="#0f172a" stroke="none" />
       </g>
     </svg>
   ),
   wP: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <path d="M22 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38-1.95 1.12-3.28 3.21-3.28 5.62 0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" fill="#f8fafc" stroke="#f8fafc" strokeWidth="2" />
+      <path d="M22 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38-1.95 1.12-3.28 3.21-3.28 5.62 0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" fill="#f8fafc" stroke="#0f172a" strokeWidth="2.2" />
     </svg>
   ),
 
-  // Black Pieces
+  // Black Pieces (Dark Charcoal with Crimson Edge Glow)
   bK: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#18202c" stroke="#ef5350" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#111827" stroke="#ef5350" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
         <path d="M22.5 11.63V6M20 8h5" />
         <path d="M22.5 25s4.5-7.5 3-10.5c0 0-1-2.5-3-2.5s-3 2.5-3 2.5c-1.5 3 3 10.5 3 10.5" />
         <path d="M11.5 37c5.5 3.5 16.5 3.5 22 0l-1.5-6.5c-4 2-15 2-19 0l-1.5 6.5z" />
@@ -83,305 +83,399 @@ const PIECES: Record<string, React.ReactNode> = {
   ),
   bQ: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#18202c" stroke="#ef5350" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#111827" stroke="#ef5350" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <circle cx="6" cy="12" r="2.5" />
         <circle cx="14" cy="9" r="2.5" />
         <circle cx="22.5" cy="8" r="2.5" />
         <circle cx="31" cy="9" r="2.5" />
         <circle cx="39" cy="12" r="2.5" />
         <path d="M9 26c8.5-1.5 18.5-1.5 27 0l2.5-12.5L31 21l-8.5-10L14 21 6.5 13.5 9 26z" />
+        <path d="M9 26c0 2 1.5 2 2.5 4 2.5 1 18.5 1 21 0 1-2 2.5-2 2.5-4-8.5-1.5-18.5-1.5-26 0z" />
         <path d="M11 38.5c7 2.5 16 2.5 23 0l-1.5-5.5c-6.5 1.5-13.5 1.5-20 0l-1.5 5.5z" />
       </g>
     </svg>
   ),
   bR: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <g fill="#18202c" stroke="#ef5350" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+      <g fill="#111827" stroke="#ef5350" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
         <path d="M9 39h27v-3H9v3zm3-3v-4h21v4H12zm2-4l1.5-13.5h14L31 32H14zm-3-15h23v-5h-3v2h-4v-2h-4v2h-4v-2h-4v2h-4v-2z" />
+      </g>
+    </svg>
+  ),
+  bB: (
+    <svg viewBox="0 0 45 45" width="100%" height="100%">
+      <g fill="#111827" stroke="#ef5350" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M9 36c3.5-1 18.5-1 22 0-1-2.5-3-2.5-4-4-2-1.5-10-1.5-12 0-1 1.5-5 1.5-6 4z" />
+        <path d="M15 32c2.5 2.5 12.5 2.5 15 0 .5-1.5 0-2 0-2 0-2.5-2.5-4-2.5-4 5.5-1.5 6-11.5-5-15.5-11 4-10.5 14-5 15.5 0 0-2.5 1.5-2.5 4 0 0-.5.5 0 2z" />
+        <circle cx="25" cy="8" r="1.8" />
+        <path d="M17.5 26h10M15 30h15m-7.5-14.5v5m-3-2.5h6" stroke="#ef5350" strokeWidth="2" />
+      </g>
+    </svg>
+  ),
+  bN: (
+    <svg viewBox="0 0 45 45" width="100%" height="100%">
+      <g fill="#111827" stroke="#ef5350" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M22 10c10.5 1 16.5 8 16 29H15c0-9 10-6.5 8-21" />
+        <path d="M24 18c.38 2.91-5.55 7.37-8 9-3 2-2.82 4.34-5 4-1.042-.94 1.41-3.04 0-3-1 0 .19 1.23-1 2-1 0-4.003 1-4-4 0-2 6-12 6-12s1.89-1.9 2-3.5c-.73-.994-.5-2-.5-3 1-1 3 2.5 3 2.5h2s.78-1.992 2.5-3c1 0 1 3 1 3" />
+        <circle cx="9.5" cy="25.5" r="1.8" fill="#ef5350" stroke="none" />
       </g>
     </svg>
   ),
   bP: (
     <svg viewBox="0 0 45 45" width="100%" height="100%">
-      <path d="M22 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38-1.95 1.12-3.28 3.21-3.28 5.62 0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" fill="#18202c" stroke="#ef5350" strokeWidth="2.2" />
+      <path d="M22 9c-2.21 0-4 1.79-4 4 0 .89.29 1.71.78 2.38-1.95 1.12-3.28 3.21-3.28 5.62 0 2.03.94 3.84 2.41 5.03-3 1.06-7.41 5.55-7.41 13.47h23c0-7.92-4.41-12.41-7.41-13.47 1.47-1.19 2.41-3 2.41-5.03 0-2.41-1.33-4.5-3.28-5.62.49-.67.78-1.49.78-2.38 0-2.21-1.79-4-4-4z" fill="#111827" stroke="#ef5350" strokeWidth="2.4" />
     </svg>
   ),
 };
 
-// --- CHESSBOARD COMPONENT ---
-interface BoardProps {
-  frame: number;
+// --- CHESSBOARD TILES & SQUARES DEFINITION ---
+// files: 0=a, 1=b, 2=c, 3=d, 4=e, 5=f, 6=g, 7=h
+// ranks: 0=8, 1=7, 2=6, 3=5, 4=4, 5=3, 6=2, 7=1
+const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+const RANKS = ['8', '7', '6', '5', '4', '3', '2', '1'];
+
+interface LightSquare {
+  row: number;
+  col: number;
+  color: string;
+  intensity: number;
 }
 
-const ChessEditBoard: React.FC<BoardProps> = ({ frame }) => {
-  // Key Animation Milestones:
-  // frame 24 (0.8s): Black Queen takes bait on f7
-  // frame 357 (11.9s): BEAT DROP! White Knight sacrifices Nf6+!!
-  // frame 465 (15.5s): Black Pawn forced gxf6
-  // frame 495 (16.5s): White Bishop checks Bh6+!
-  // frame 525 (17.5s): Black King retreats Kg8
-  // frame 555 (18.5s): White Rook delivers Re8# CHECKMATE!!
+// 2D CHESSBOARD WITH GLOWING LIGHT-UP TILES
+const Chess2DBoard: React.FC<{ frame: number }> = ({ frame }) => {
+  // Move 1: 15. Bxd7+ (Bishop b5 -> d7) - frames 168 to 178
+  // Move 2: 15... Nxd7 (Knight f6 -> d7) - frames 248 to 258
+  // Move 3: 16. Qb8+!! (Queen b3 -> b8) - frames 368 to 378 (THE BASS DROP)
+  // Move 4: 16... Nxb8 (Knight d7 -> b8) - frames 428 to 438
+  // Move 5: 17. Rd8# (Rook d1 -> d8) - frames 488 to 498 (CHECKMATE)
 
-  // Piece Positions: row 0 = rank 8, row 7 = rank 1; col 0 = file a, col 7 = file h
-  // Standard tactical board coordinates:
-  // e8 = [0, 4], f8 = [0, 5], g8 = [0, 6], h8 = [0, 7]
-  // f7 = [1, 5], g7 = [1, 6], h7 = [1, 7]
-  // f6 = [2, 5], h6 = [2, 7]
-  // e1 = [7, 4], e8 = [0, 4]
+  // Piece Transitions:
+  // White Bishop b5 -> d7 (starts [3,1], goes to [1,3])
+  const progB = interpolate(frame, [168, 178], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const wB_row = interpolate(progB, [0, 1], [3, 1]);
+  const wB_col = interpolate(progB, [0, 1], [1, 3]);
 
-  // Animated Piece Movements
-  // 1. Black Queen takes f7 (frame 15 to 26)
-  const bQPos = frame < 24 ? { r: 1, c: 3 } : { r: 1, c: 5 };
+  // Black Knight f6 -> d7 (starts [2,5], goes to [1,3])
+  const progN1 = interpolate(frame, [248, 258], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  // Black Knight d7 -> b8 (from [1,3] to [0,1])
+  const progN2 = interpolate(frame, [428, 438], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const bN_row = frame < 258
+    ? interpolate(progN1, [0, 1], [2, 1])
+    : interpolate(progN2, [0, 1], [1, 0]);
+  const bN_col = frame < 258
+    ? interpolate(progN1, [0, 1], [5, 3])
+    : interpolate(progN2, [0, 1], [3, 1]);
 
-  // 2. White Knight from d5 to f6 (frame 348 to 357)
-  const knightProgress = interpolate(frame, [346, 357], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.out(Easing.back(1.5)),
-  });
-  const wN_r = interpolate(knightProgress, [0, 1], [3, 2]); // row 3 to 2
-  const wN_c = interpolate(knightProgress, [0, 1], [3, 5]); // col 3 to 5 (f6)
+  // White Queen b3 -> b8 (starts [5,1], goes to [0,1])
+  const progQ = interpolate(frame, [368, 378], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.back(1.4)) });
+  const wQ_row = interpolate(progQ, [0, 1], [5, 0]);
+  const wQ_col = 1;
 
-  // 3. Black Pawn gxf6 (frame 455 to 465)
-  const bP_gxf6 = frame >= 465;
+  // White Rook d1 -> d8 (starts [7,3], goes to [0,3])
+  const progR = interpolate(frame, [488, 498], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const wR_row = interpolate(progR, [0, 1], [7, 0]);
+  const wR_col = 3;
 
-  // 4. White Bishop to h6 (frame 485 to 495)
-  const bishopProgress = interpolate(frame, [485, 495], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.out(Easing.quad),
-  });
-  const wB_r = interpolate(bishopProgress, [0, 1], [5, 2]); // c1 to h6
-  const wB_c = interpolate(bishopProgress, [0, 1], [2, 7]);
+  // Active Light-Up Tiles depending on the move and beat:
+  const litSquares: LightSquare[] = [];
 
-  // 5. Black King from e8 to g8 / h8 (frame 515 to 525)
-  const bK_r = 0;
-  const bK_c = frame < 525 ? 4 : 7; // e8 -> h8
+  if (frame < 178) {
+    // Initial tension: Black Queen on e6 [2,4] & White Queen on b3 [5,1]
+    litSquares.push({ row: 2, col: 4, color: '#ef5350', intensity: Math.sin(frame * 0.25) * 0.3 + 0.7 });
+    litSquares.push({ row: 5, col: 1, color: '#ffd54f', intensity: 0.8 });
+  } else if (frame >= 178 && frame < 258) {
+    // Move 1: 15. Bxd7+ Check! Origin b5 [3,1], destination d7 [1,3], Black King e8 [0,4]
+    litSquares.push({ row: 3, col: 1, color: '#ffd54f', intensity: 0.6 });
+    litSquares.push({ row: 1, col: 3, color: '#ffd54f', intensity: 1.0 });
+    litSquares.push({ row: 0, col: 4, color: '#ef5350', intensity: 0.8 }); // King in check!
+  } else if (frame >= 258 && frame < 378) {
+    // Move 2: 15... Nxd7 Knight takes on d7 [1,3].
+    // Target b8 [0,1] pulses as the sacrifice square!
+    litSquares.push({ row: 1, col: 3, color: '#ef5350', intensity: 0.7 });
+    // b8 starts pulsing neon cyan in anticipation of the drop!
+    const targetGlow = frame >= 320 ? Math.sin((frame - 320) * 0.4) * 0.5 + 0.5 : 0.2;
+    litSquares.push({ row: 0, col: 1, color: '#26c6da', intensity: targetGlow });
+  } else if (frame >= 378 && frame < 438) {
+    // Move 3: 16. Qb8+!! THE BRILLIANT QUEEN SACRIFICE
+    // b3 [5,1] and b8 [0,1] explode with radiant cyan light!
+    litSquares.push({ row: 5, col: 1, color: '#26c6da', intensity: 0.85 });
+    litSquares.push({ row: 0, col: 1, color: '#26c6da', intensity: 1.0 });
+    litSquares.push({ row: 0, col: 4, color: '#ef5350', intensity: 0.9 }); // King in check!
+  } else if (frame >= 438 && frame < 498) {
+    // Move 4: 16... Nxb8 forced
+    litSquares.push({ row: 1, col: 3, color: '#ef5350', intensity: 0.6 });
+    litSquares.push({ row: 0, col: 1, color: '#ef5350', intensity: 0.9 });
+  } else if (frame >= 498) {
+    // Move 5: 17. Rd8# CHECKMATE!!
+    litSquares.push({ row: 7, col: 3, color: '#4caf50', intensity: 0.7 });
+    litSquares.push({ row: 0, col: 3, color: '#4caf50', intensity: 1.0 }); // Rd8#
+    litSquares.push({ row: 0, col: 4, color: '#ef5350', intensity: 1.0 }); // King checkmated!
+  }
 
-  // 6. White Rook from e1 to e8# (frame 545 to 555)
-  const rookProgress = interpolate(frame, [545, 555], [0, 1], {
-    extrapolateLeft: 'clamp',
-    extrapolateRight: 'clamp',
-    easing: Easing.out(Easing.cubic),
-  });
-  const wR_r = interpolate(rookProgress, [0, 1], [7, 0]); // e1 -> e8
-  const wR_c = 4;
-
-  const squares = [
-    // Rank 8
-    [{ r: 0, c: 4 }, 'bK', bK_r === 0 && bK_c === 4],
-    [{ r: 0, c: 7 }, 'bK', bK_c === 7],
-    [{ r: 0, c: 0 }, 'bR', true],
-    [{ r: 0, c: 5 }, 'bR', frame < 400],
-    // Rank 7
-    [{ r: 1, c: 5 }, 'bQ', frame >= 24 && frame < 357],
-    [{ r: 1, c: 6 }, 'bP', !bP_gxf6],
-    [{ r: 1, c: 7 }, 'bP', true],
-    // Rank 6 (f6 target)
-    [{ r: 2, c: 5 }, bP_gxf6 ? 'bP' : 'wN', frame >= 357],
-    [{ r: wB_r, c: wB_c }, 'wB', true],
-    // Rank 1
-    [{ r: wR_r, c: wR_c }, 'wR', true],
-    [{ r: 7, c: 6 }, 'wK', true],
-  ];
+  const squareSize = 108; // 108 * 8 = 864px
 
   return (
     <div
       style={{
-        width: 820,
-        height: 820,
-        borderRadius: 32,
-        background: '#0d131a',
-        border: '6px solid rgba(255, 255, 255, 0.15)',
-        boxShadow: frame >= 357
-          ? '0 0 60px rgba(38, 198, 218, 0.6), 0 30px 90px rgba(0,0,0,0.95)'
-          : '0 25px 80px rgba(0,0,0,0.85)',
-        display: 'grid',
-        gridTemplateColumns: 'repeat(8, 1fr)',
-        gridTemplateRows: 'repeat(8, 1fr)',
+        width: 900,
+        height: 900,
+        background: '#090d14',
+        borderRadius: 24,
+        border: frame >= 378 ? '4px solid #26c6da' : '4px solid rgba(255, 255, 255, 0.2)',
+        boxShadow: frame >= 378
+          ? '0 0 60px rgba(38,198,218,0.7), 0 20px 60px rgba(0,0,0,0.9)'
+          : '0 25px 70px rgba(0,0,0,0.9)',
         position: 'relative',
-        overflow: 'hidden',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
       }}
     >
-      {/* 64 Board Squares */}
-      {Array.from({ length: 64 }).map((_, idx) => {
-        const row = Math.floor(idx / 8);
-        const col = idx % 8;
-        const isDark = (row + col) % 2 === 1;
+      {/* 8x8 Board Container */}
+      <div
+        style={{
+          width: 864,
+          height: 864,
+          display: 'grid',
+          gridTemplateColumns: 'repeat(8, 108px)',
+          gridTemplateRows: 'repeat(8, 108px)',
+          position: 'relative',
+          borderRadius: 16,
+          overflow: 'hidden',
+        }}
+      >
+        {/* Render 64 Squares with Lighting Engine */}
+        {Array.from({ length: 64 }).map((_, idx) => {
+          const row = Math.floor(idx / 8);
+          const col = idx % 8;
+          const isDark = (row + col) % 2 === 1;
 
-        // Highlight square of interest
-        const isF6 = row === 2 && col === 5;
-        const isCheckmated = frame >= 555 && row === 0 && col === 7;
+          const lit = litSquares.find((s) => s.row === row && s.col === col);
+          const baseColor = isDark ? '#141d27' : '#233040';
 
-        return (
-          <div
-            key={idx}
-            style={{
-              background: isCheckmated
-                ? '#e53935'
-                : isF6 && frame >= 357 && frame < 450
-                ? '#26c6da'
-                : isDark
-                ? '#1e293b'
-                : '#334155',
-              boxShadow: isF6 && frame >= 357 ? 'inset 0 0 25px rgba(255,255,255,0.8)' : 'none',
-              transition: 'background 0.1s ease',
-            }}
+          let bg = baseColor;
+          let shadow = 'none';
+          let border = 'none';
+
+          if (lit) {
+            bg = `radial-gradient(circle at 50% 50%, ${lit.color}${Math.floor(lit.intensity * 90).toString(16).padStart(2, '0')}, ${baseColor})`;
+            shadow = `inset 0 0 24px ${lit.color}, 0 0 20px ${lit.color}88`;
+            border = `2px solid ${lit.color}`;
+          }
+
+          return (
+            <div
+              key={idx}
+              style={{
+                width: 108,
+                height: 108,
+                background: bg,
+                boxShadow: shadow,
+                border: border,
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+                transition: 'background 0.08s ease',
+              }}
+            >
+              {/* File / Rank coordinates on borders */}
+              {col === 0 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    top: 4,
+                    left: 6,
+                    fontSize: 14,
+                    fontWeight: 900,
+                    color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.25)',
+                    fontFamily: 'Montserrat, sans-serif',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {RANKS[row]}
+                </span>
+              )}
+              {row === 7 && (
+                <span
+                  style={{
+                    position: 'absolute',
+                    bottom: 4,
+                    right: 6,
+                    fontSize: 14,
+                    fontWeight: 900,
+                    color: isDark ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.25)',
+                    fontFamily: 'Montserrat, sans-serif',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  {FILES[col]}
+                </span>
+              )}
+            </div>
+          );
+        })}
+
+        {/* --- ALL 100% LEGAL CHESS PIECES (POSITIONED IN 2D) --- */}
+
+        {/* 1. White King: c1 [7, 2] */}
+        <PieceSlot row={7} col={2} piece="wK" />
+
+        {/* 2. White Pawns */}
+        <PieceSlot row={6} col={0} piece="wP" />
+        <PieceSlot row={6} col={1} piece="wP" />
+        <PieceSlot row={6} col={2} piece="wP" />
+        <PieceSlot row={4} col={4} piece="wP" />
+        <PieceSlot row={6} col={5} piece="wP" />
+        <PieceSlot row={6} col={6} piece="wP" />
+        <PieceSlot row={6} col={7} piece="wP" />
+
+        {/* 3. White Bishop g5: [3, 6] (Pins the knight!) */}
+        <PieceSlot row={3} col={6} piece="wB" />
+
+        {/* 4. White Bishop b5 (Moves to d7 at frame 178, captured at frame 258) */}
+        {frame < 258 && (
+          <PieceSlot
+            row={wB_row}
+            col={wB_col}
+            piece="wB"
+            highlight={frame >= 178 ? '#ffd54f' : undefined}
+            scale={frame >= 170 && frame <= 178 ? 1.15 : 1}
           />
-        );
-      })}
+        )}
 
-      {/* Render Dynamic Moving Pieces */}
-      {/* 1. Black Queen */}
-      {frame >= 24 && frame < 357 && (
-        <div
-          style={{
-            position: 'absolute',
-            width: 102.5,
-            height: 102.5,
-            top: bQPos.r * 102.5,
-            left: bQPos.c * 102.5,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 10,
-          }}
-        >
-          {PIECES.bQ}
-        </div>
-      )}
+        {/* 5. White Queen (Moves to b8 at frame 378, captured at frame 438) */}
+        {frame < 438 && (
+          <PieceSlot
+            row={wQ_row}
+            col={wQ_col}
+            piece="wQ"
+            highlight={frame >= 378 ? '#26c6da' : undefined}
+            scale={frame >= 370 && frame <= 378 ? 1.25 : 1}
+          />
+        )}
 
-      {/* 2. White Knight (Sacrifice to f6) */}
-      {frame < 465 && (
-        <div
-          style={{
-            position: 'absolute',
-            width: 102.5,
-            height: 102.5,
-            top: wN_r * 102.5,
-            left: wN_c * 102.5,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            padding: 8,
-            filter: frame >= 357 ? 'drop-shadow(0 0 20px #26c6da)' : 'none',
-            zIndex: 10,
-          }}
-        >
-          {PIECES.wN}
-        </div>
-      )}
+        {/* 6. White Rook d1 (Moves to d8# at frame 498) */}
+        <PieceSlot
+          row={wR_row}
+          col={wR_col}
+          piece="wR"
+          highlight={frame >= 498 ? '#4caf50' : undefined}
+          scale={frame >= 490 && frame <= 498 ? 1.25 : 1}
+        />
 
-      {/* 3. Black King */}
-      <div
-        style={{
-          position: 'absolute',
-          width: 102.5,
-          height: 102.5,
-          top: bK_r * 102.5,
-          left: bK_c * 102.5,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 8,
-          transform: frame >= 555 ? 'rotate(90deg) translateY(20px)' : 'none',
-          transition: 'transform 0.2s ease',
-        }}
-      >
-        {PIECES.bK}
+        {/* --- BLACK PIECES --- */}
+
+        {/* 7. Black King e8: [0, 4] */}
+        <PieceSlot
+          row={0}
+          col={4}
+          piece="bK"
+          highlight={frame >= 498 ? '#ef5350' : undefined}
+          rotation={frame >= 498 ? 90 : 0}
+        />
+
+        {/* 8. Black Pawns */}
+        <PieceSlot row={1} col={0} piece="bP" />
+        <PieceSlot row={3} col={4} piece="bP" />
+        <PieceSlot row={1} col={5} piece="bP" />
+        <PieceSlot row={1} col={6} piece="bP" />
+        <PieceSlot row={1} col={7} piece="bP" />
+
+        {/* 9. Black Bishop f8: [0, 5] */}
+        <PieceSlot row={0} col={5} piece="bB" />
+
+        {/* 10. Black Rook h8: [0, 7] */}
+        <PieceSlot row={0} col={7} piece="bR" />
+
+        {/* 11. Black Queen e6: [2, 4] */}
+        <PieceSlot row={2} col={4} piece="bQ" />
+
+        {/* 12. Black Rook d7: [1, 3] (Captured at frame 178) */}
+        {frame < 178 && <PieceSlot row={1} col={3} piece="bR" />}
+
+        {/* 13. Black Knight (f6 -> d7 at frame 258, d7 -> b8 at frame 438) */}
+        <PieceSlot
+          row={bN_row}
+          col={bN_col}
+          piece="bN"
+          highlight={frame >= 438 ? '#26c6da' : undefined}
+        />
       </div>
+    </div>
+  );
+};
 
-      {/* 4. White Bishop */}
-      <div
-        style={{
-          position: 'absolute',
-          width: 102.5,
-          height: 102.5,
-          top: wB_r * 102.5,
-          left: wB_c * 102.5,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 8,
-          filter: frame >= 495 ? 'drop-shadow(0 0 16px #ffd54f)' : 'none',
-        }}
-      >
-        {PIECES.wB}
-      </div>
-
-      {/* 5. White Rook (Delivering Checkmate) */}
-      <div
-        style={{
-          position: 'absolute',
-          width: 102.5,
-          height: 102.5,
-          top: wR_r * 102.5,
-          left: wR_c * 102.5,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: 8,
-          filter: frame >= 555 ? 'drop-shadow(0 0 25px #4caf50)' : 'none',
-          zIndex: 15,
-        }}
-      >
-        {PIECES.wR}
-      </div>
-
-      {/* 6. Static / Defending pawns */}
-      <div style={{ position: 'absolute', top: 102.5, left: 7 * 102.5, width: 102.5, height: 102.5, padding: 12 }}>
-        {PIECES.bP}
-      </div>
-      {!bP_gxf6 && (
-        <div style={{ position: 'absolute', top: 102.5, left: 6 * 102.5, width: 102.5, height: 102.5, padding: 12 }}>
-          {PIECES.bP}
-        </div>
-      )}
-      {bP_gxf6 && (
-        <div style={{ position: 'absolute', top: 2 * 102.5, left: 5 * 102.5, width: 102.5, height: 102.5, padding: 12 }}>
-          {PIECES.bP}
-        </div>
-      )}
+// Helper component to cleanly position pieces by (row, col)
+const PieceSlot: React.FC<{
+  row: number;
+  col: number;
+  piece: string;
+  highlight?: string;
+  scale?: number;
+  rotation?: number;
+}> = ({ row, col, piece, highlight, scale = 1, rotation = 0 }) => {
+  return (
+    <div
+      style={{
+        position: 'absolute',
+        width: 108,
+        height: 108,
+        top: row * 108,
+        left: col * 108,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 10,
+        transform: `scale(${scale}) rotate(${rotation}deg)`,
+        filter: highlight ? `drop-shadow(0 0 16px ${highlight})` : 'none',
+        zIndex: scale > 1 ? 25 : 10,
+        boxSizing: 'border-box',
+        pointerEvents: 'none',
+      }}
+    >
+      {PIECES[piece]}
     </div>
   );
 };
 
 // --- DYNAMIC EVALUATION BAR COMPONENT ---
 const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
-  // Before drop (frame < 357): Eval bar is deeply negative (-9.5) / 95% black
-  // Exactly at frame 357: Explosively reverses to +M1 / 100% white!
+  // Reversal happens ON THE EXACT BEAT DROP at frame 378
   const reversalSpring = spring({
-    frame: Math.max(0, frame - 357),
+    frame: Math.max(0, frame - 378),
     fps: 30,
-    config: { damping: 9, mass: 0.45, stiffness: 210 },
+    config: { damping: 9, mass: 0.45, stiffness: 220 },
   });
 
-  const evalPercent = frame < 357
-    ? interpolate(frame, [0, 60], [50, 6], { extrapolateRight: 'clamp' })
-    : interpolate(reversalSpring, [0, 1], [6, 100]);
+  const isLanded = frame >= 378;
 
-  const evalText = frame < 357
-    ? (frame < 30 ? '0.0' : '-9.5')
-    : '+M1';
+  // Before drop: 12% white / 88% black (-9.5)
+  // After drop: rockets to 100% white (+M1 forced checkmate)
+  const evalPercent = !isLanded
+    ? interpolate(frame, [0, 40], [50, 10], { extrapolateRight: 'clamp' })
+    : interpolate(reversalSpring, [0, 1], [10, 100]);
 
-  const isBrilliant = frame >= 357;
+  const evalText = !isLanded ? '-9.5' : '+M1';
 
   return (
     <div
       style={{
-        width: 860,
-        height: 64,
+        width: 900,
+        height: 60,
         background: 'rgba(10, 16, 24, 0.95)',
-        border: isBrilliant ? '3px solid #26c6da' : '2px solid rgba(255,255,255,0.2)',
+        border: isLanded ? '3px solid #26c6da' : '2px solid rgba(255,255,255,0.2)',
         borderRadius: 20,
-        boxShadow: isBrilliant
-          ? '0 0 35px rgba(38, 198, 218, 0.8), inset 0 0 20px rgba(38, 198, 218, 0.3)'
+        boxShadow: isLanded
+          ? '0 0 40px rgba(38, 198, 218, 0.85), inset 0 0 20px rgba(38, 198, 218, 0.3)'
           : '0 8px 30px rgba(0,0,0,0.8)',
         position: 'relative',
         overflow: 'hidden',
         display: 'flex',
         alignItems: 'center',
         padding: 4,
+        boxSizing: 'border-box',
       }}
     >
       {/* Sinking Red Fill vs Rising White/Cyan Fill */}
@@ -389,12 +483,11 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
         style={{
           width: `${evalPercent}%`,
           height: '100%',
-          background: isBrilliant
+          background: isLanded
             ? 'linear-gradient(90deg, #26c6da 0%, #ffffff 100%)'
             : 'linear-gradient(90deg, #1e293b 0%, #ffffff 100%)',
           borderRadius: 14,
-          transition: 'width 0.05s ease',
-          boxShadow: isBrilliant ? '0 0 25px #26c6da' : 'none',
+          boxShadow: isLanded ? '0 0 25px #26c6da' : 'none',
         }}
       />
 
@@ -404,9 +497,9 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
           position: 'absolute',
           left: 24,
           fontFamily: 'Montserrat, sans-serif',
-          fontSize: 26,
+          fontSize: 24,
           fontWeight: 900,
-          color: isBrilliant ? '#071018' : '#ffffff',
+          color: isLanded ? '#071018' : '#ffffff',
           letterSpacing: '1px',
           zIndex: 5,
         }}
@@ -419,85 +512,85 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
           position: 'absolute',
           right: 24,
           fontFamily: 'Montserrat, sans-serif',
-          fontSize: 22,
+          fontSize: 20,
           fontWeight: 800,
-          color: '#ef5350',
+          color: isLanded ? '#26c6da' : '#ef5350',
           letterSpacing: '1px',
           zIndex: 5,
         }}
       >
-        {isBrilliant ? 'CHECKMATE FORCED' : 'BLUNDER DETECTED'}
+        {isLanded ? 'CHECKMATE IN 2 (FORCED)' : 'BLACK WIN ADVANTAGE'}
       </div>
     </div>
   );
 };
 
-// --- MAIN CHESS PHONK EDIT COMPOSITION (9:16 / 1080x1920) ---
+// --- MAIN 9:16 CHESS PHONK EDIT COMPOSITION (1080x1920) ---
 export const ChessPhonkEditVideo: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // 1. Bass Hit Camera Shake Engine
-  // Beat transients:
-  // frame 357 (11.90s) - THE DROP
-  // frame 465 (15.50s) - BEAT 1
-  // frame 495 (16.50s) - BEAT 2
-  // frame 525 (17.50s) - BEAT 3
-  // frame 555 (18.50s) - BEAT 4 (MATE)
+  // Precise Beat Drops in LAST CHANCE FUNK (Slowed):
+  // Frame 378 (12.60s) - THE MAIN BASS DROP (Queen Sacrifice Qb8+!!)
+  // Frame 438 (14.60s) - Beat 1 (Nxb8)
+  // Frame 498 (16.60s) - Beat 2 (Rd8# Checkmate!)
+  // Frame 558 (18.60s) - Beat 3 (Outro Slam)
+  const drops = [378, 438, 498, 558];
   let shakeIntensity = 0;
-  const drops = [357, 465, 495, 525, 555];
   drops.forEach((d, idx) => {
-    if (frame >= d && frame < d + 18) {
-      const decay = (d + 18 - frame) / 18;
-      shakeIntensity = Math.max(shakeIntensity, (idx === 0 ? 32 : 18) * decay);
+    if (frame >= d && frame < d + 16) {
+      const decay = (d + 16 - frame) / 16;
+      shakeIntensity = Math.max(shakeIntensity, (idx === 0 ? 30 : 16) * decay);
     }
   });
 
   const shakeX = Math.sin(frame * 1.8) * shakeIntensity;
   const shakeY = Math.cos(frame * 1.9) * shakeIntensity;
 
-  // 2. White Flash at the drop (frame 357)
-  const flashOpacity = frame >= 357 && frame < 375
-    ? interpolate(frame, [357, 375], [1, 0], { extrapolateRight: 'clamp' })
-    : 0;
+  // White Flash on the drop at frame 378
+  const flashOpacity =
+    frame >= 378 && frame < 396
+      ? interpolate(frame, [378, 396], [0.95, 0], { extrapolateRight: 'clamp' })
+      : 0;
 
-  // 3. Shockwave ring at frame 357
-  const shockwave = frame >= 357 && frame < 390
-    ? spring({ frame: frame - 357, fps, config: { damping: 10, mass: 0.5 } })
-    : 0;
+  // Shockwave ring on the drop
+  const shockwave =
+    frame >= 378 && frame < 415
+      ? spring({ frame: frame - 378, fps, config: { damping: 10, mass: 0.5 } })
+      : 0;
 
-  // 4. Brilliant (!!) Badge Scale & Slam
-  const brilliantSlam = frame >= 357 && frame < 450
-    ? spring({ frame: frame - 357, fps, config: { damping: 11, mass: 0.5, stiffness: 240 } })
-    : 0;
+  // Brilliant (!!) Badge Scale & Slam
+  const brilliantSlam =
+    frame >= 378 && frame < 438
+      ? spring({ frame: frame - 378, fps, config: { damping: 11, mass: 0.5, stiffness: 240 } })
+      : 0;
 
-  // 5. 3D Camera tilt angle
-  const boardRotateX = interpolate(frame, [0, 357, 555], [38, 42, 28], { extrapolateRight: 'clamp' });
-  const boardRotateZ = interpolate(frame, [0, 357, 555], [-8, 6, -4], { extrapolateRight: 'clamp' });
-  const boardZoom = interpolate(frame, [315, 356], [1, 1.25], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp' });
-
-  // 6. Dynamic On-Screen Sigma Phonk Text Overlays
-  let mainText = 'HE THOUGHT THE QUEEN WAS FREE';
-  let subText = 'BLACK ADVANTAGE: -9.5';
+  // Dynamic Typography & Narrative
+  let mainText = 'HE THOUGHT THE QUEEN WAS TRAPPED';
+  let subText = 'EVALUATION: -9.5';
   let textColor = '#ef5350';
 
-  if (frame >= 165 && frame < 315) {
-    mainText = "HE DIDN'T CALCULATE AHEAD";
-    subText = 'STOCKFISH 19 DEPTH 36';
+  if (frame >= 178 && frame < 258) {
+    mainText = '15. Bxd7+ !!';
+    subText = 'SACRIFICING THE BISHOP';
     textColor = '#ffd54f';
-  } else if (frame >= 315 && frame < 357) {
-    mainText = 'WAIT FOR THE SACRIFICE...';
-    subText = 'CALCULATING 100% FORCED MATE';
+  } else if (frame >= 258 && frame < 378) {
+    mainText = 'HE THOUGHT HE WAS SAFE...';
+    subText = 'STOCKFISH 19 CALCULATING MATE';
     textColor = '#ffffff';
-  } else if (frame >= 357 && frame < 450) {
-    mainText = 'BRILLIANT MOVE !!';
-    subText = 'QUEEN SACRIFICE ACCELERATION';
+  } else if (frame >= 378 && frame < 438) {
+    mainText = '16. Qb8+ !! — BRILLIANT';
+    subText = 'THE IMMORTAL QUEEN SACRIFICE';
     textColor = '#26c6da';
-  } else if (frame >= 450 && frame < 555) {
-    mainText = 'FORCED CHECKMATE SEQUENCE';
-    subText = 'EVERY MOVE IS FORCED';
+  } else if (frame >= 438 && frame < 498) {
+    mainText = '16... Nxb8 (FORCED)';
+    subText = 'ONLY ONE LEGAL MOVE';
+    textColor = '#ffd54f';
+  } else if (frame >= 498 && frame < 560) {
+    mainText = '17. Rd8 # — CHECKMATE';
+    subText = 'MORPHY OPERA IMMORTAL MATE';
     textColor = '#4caf50';
-  } else if (frame >= 555) {
+  } else if (frame >= 560) {
     mainText = 'CHESS ANALYZER';
     subText = 'NEVER MISS A BRILLIANT SACRIFICE';
     textColor = '#26c6da';
@@ -513,34 +606,34 @@ export const ChessPhonkEditVideo: React.FC = () => {
     >
       <Audio src={staticFile('phonk_track.mp3')} />
 
-      {/* Animated Phonk Neon Cyber Grid */}
+      {/* Cyber Grid Background */}
       <div
         style={{
           position: 'absolute',
           inset: 0,
-          background: 'radial-gradient(circle at 50% 45%, #101c2a 0%, #060a0f 70%, #020406 100%)',
+          background: 'radial-gradient(circle at 50% 50%, #0d1622 0%, #06090e 70%, #020305 100%)',
         }}
       />
       <div
         style={{
           position: 'absolute',
           inset: 0,
-          backgroundImage: `linear-gradient(to right, rgba(38,198,218,0.05) 1px, transparent 1px),
-                            linear-gradient(to bottom, rgba(38,198,218,0.05) 1px, transparent 1px)`,
-          backgroundSize: '80px 80px',
-          backgroundPosition: `0px ${(frame * 2.5) % 80}px`,
+          backgroundImage: `linear-gradient(to right, rgba(38,198,218,0.04) 1px, transparent 1px),
+                            linear-gradient(to bottom, rgba(38,198,218,0.04) 1px, transparent 1px)`,
+          backgroundSize: '70px 70px',
+          backgroundPosition: `0px ${(frame * 2) % 70}px`,
           pointerEvents: 'none',
         }}
       />
 
-      {/* Red Pulse / Heartbeat Vignette for the Bait phase */}
-      {frame < 357 && (
+      {/* Red Warning Vignette prior to the drop */}
+      {frame < 378 && (
         <div
           style={{
             position: 'absolute',
             inset: 0,
-            background: 'radial-gradient(circle, transparent 40%, rgba(229,57,53,0.38) 100%)',
-            opacity: Math.sin(frame * 0.35) * 0.4 + 0.6,
+            background: 'radial-gradient(circle, transparent 40%, rgba(229,57,53,0.3) 100%)',
+            opacity: Math.sin(frame * 0.3) * 0.4 + 0.6,
             pointerEvents: 'none',
           }}
         />
@@ -550,7 +643,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       <div
         style={{
           position: 'absolute',
-          top: 80,
+          top: 70,
           left: 0,
           right: 0,
           display: 'flex',
@@ -565,10 +658,10 @@ export const ChessPhonkEditVideo: React.FC = () => {
             display: 'flex',
             alignItems: 'center',
             gap: 14,
-            background: 'rgba(15, 23, 42, 0.85)',
+            background: 'rgba(15, 23, 42, 0.9)',
             border: '2px solid rgba(255,255,255,0.2)',
             borderRadius: 30,
-            padding: '8px 26px',
+            padding: '8px 28px',
             boxShadow: '0 8px 24px rgba(0,0,0,0.6)',
           }}
         >
@@ -577,8 +670,8 @@ export const ChessPhonkEditVideo: React.FC = () => {
               width: 12,
               height: 12,
               borderRadius: '50%',
-              background: frame >= 357 ? '#26c6da' : '#ef5350',
-              boxShadow: `0 0 14px ${frame >= 357 ? '#26c6da' : '#ef5350'}`,
+              background: frame >= 378 ? '#26c6da' : '#ef5350',
+              boxShadow: `0 0 14px ${frame >= 378 ? '#26c6da' : '#ef5350'}`,
             }}
           />
           <span
@@ -590,38 +683,38 @@ export const ChessPhonkEditVideo: React.FC = () => {
               letterSpacing: '2px',
             }}
           >
-            STOCKFISH 19 • DEPTH {Math.min(38, Math.floor(12 + frame * 0.08))}
+            STOCKFISH 19 • DEPTH {Math.min(36, Math.floor(14 + frame * 0.07))}
           </span>
         </div>
 
         <EvalBar frame={frame} />
       </div>
 
-      {/* Center 3D Perspective Chessboard */}
+      {/* Center Flat 2D Chessboard with Glowing Tiles */}
       <div
         style={{
           position: 'absolute',
-          top: '48%',
+          top: '49%',
           left: '50%',
-          transform: `translate(-50%, -50%) perspective(1000px) rotateX(${boardRotateX}deg) rotateZ(${boardRotateZ}deg) scale(${boardZoom})`,
+          transform: 'translate(-50%, -50%)',
           zIndex: 20,
         }}
       >
-        <ChessEditBoard frame={frame} />
+        <Chess2DBoard frame={frame} />
       </div>
 
       {/* Shockwave Blast Ring on Bass Drop */}
-      {frame >= 357 && frame < 390 && (
+      {frame >= 378 && frame < 415 && (
         <div
           style={{
             position: 'absolute',
-            top: '48%',
+            top: '49%',
             left: '50%',
-            transform: `translate(-50%, -50%) scale(${shockwave * 4})`,
-            width: 320,
-            height: 320,
+            transform: `translate(-50%, -50%) scale(${shockwave * 4.5})`,
+            width: 300,
+            height: 300,
             borderRadius: '50%',
-            border: '8px solid rgba(38,198,218,0.9)',
+            border: '8px solid rgba(38,198,218,0.95)',
             boxShadow: '0 0 60px rgba(38,198,218,0.95), inset 0 0 40px rgba(38,198,218,0.5)',
             opacity: 1 - shockwave,
             pointerEvents: 'none',
@@ -630,12 +723,12 @@ export const ChessPhonkEditVideo: React.FC = () => {
         />
       )}
 
-      {/* Giant Brilliant (!!) Badge Slam at Frame 357 */}
-      {frame >= 357 && frame < 450 && (
+      {/* Giant Brilliant (!!) Badge Slam at Frame 378 */}
+      {frame >= 378 && frame < 438 && (
         <div
           style={{
             position: 'absolute',
-            top: '48%',
+            top: '49%',
             left: '50%',
             transform: `translate(-50%, -50%) scale(${Math.max(0.6, brilliantSlam)})`,
             zIndex: 60,
@@ -649,7 +742,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
           <div
             style={{
               fontFamily: 'Montserrat, Impact, sans-serif',
-              fontSize: 62,
+              fontSize: 64,
               fontWeight: 900,
               color: '#ffffff',
               letterSpacing: '3px',
@@ -662,14 +755,14 @@ export const ChessPhonkEditVideo: React.FC = () => {
         </div>
       )}
 
-      {/* Checkmate Victory Stamp at Frame 555+ */}
-      {frame >= 555 && frame < 595 && (
+      {/* Checkmate Victory Stamp at Frame 498+ */}
+      {frame >= 498 && frame < 560 && (
         <div
           style={{
             position: 'absolute',
-            top: '48%',
+            top: '49%',
             left: '50%',
-            transform: `translate(-50%, -50%) scale(${spring({ frame: frame - 555, fps, config: { damping: 9, mass: 0.5 } })})`,
+            transform: `translate(-50%, -50%) scale(${spring({ frame: frame - 498, fps, config: { damping: 9, mass: 0.5 } })})`,
             zIndex: 60,
             display: 'flex',
             flexDirection: 'column',
@@ -681,7 +774,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
           <div
             style={{
               fontFamily: 'Montserrat, Impact, sans-serif',
-              fontSize: 68,
+              fontSize: 70,
               fontWeight: 900,
               color: '#4caf50',
               letterSpacing: '4px',
@@ -695,7 +788,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       )}
 
       {/* Bottom Bold Phonk Typography HUD */}
-      {frame < 575 && (
+      {frame < 560 && (
         <div
           style={{
             position: 'absolute',
@@ -712,7 +805,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
         >
           <div
             style={{
-              background: 'rgba(6, 12, 19, 0.92)',
+              background: 'rgba(6, 12, 19, 0.94)',
               border: `3px solid ${textColor}44`,
               boxShadow: `0 20px 60px rgba(0,0,0,0.9), 0 0 30px ${textColor}33`,
               borderRadius: 24,
@@ -723,7 +816,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
             <div
               style={{
                 fontFamily: 'Montserrat, Impact, sans-serif',
-                fontSize: 56,
+                fontSize: 54,
                 fontWeight: 900,
                 color: textColor,
                 letterSpacing: '2px',
@@ -737,7 +830,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
             <div
               style={{
                 fontFamily: 'Montserrat, sans-serif',
-                fontSize: 28,
+                fontSize: 26,
                 fontWeight: 800,
                 color: '#f8fafc',
                 letterSpacing: '3px',
@@ -750,8 +843,8 @@ export const ChessPhonkEditVideo: React.FC = () => {
         </div>
       )}
 
-      {/* Outro Screen (frames 575 - 630 / 19.1s - 21.0s) */}
-      {frame >= 575 && (
+      {/* Outro Screen (frames 560 - 630 / 18.67s - 21.0s) */}
+      {frame >= 560 && (
         <div
           style={{
             position: 'absolute',
@@ -762,7 +855,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 70,
-            transform: `scale(${spring({ frame: frame - 575, fps, config: { damping: 11, mass: 0.55 } })})`,
+            transform: `scale(${spring({ frame: frame - 560, fps, config: { damping: 11, mass: 0.55 } })})`,
           }}
         >
           <Img
@@ -839,4 +932,3 @@ export const ChessPhonkEditVideo: React.FC = () => {
     </AbsoluteFill>
   );
 };
-
