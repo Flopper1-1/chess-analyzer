@@ -1,0 +1,560 @@
+{
+  "total_duration": 42.213,
+  "words": [
+    {
+      "text": "If",
+      "start": 0.0,
+      "end": 0.151
+    },
+    {
+      "text": "you've",
+      "start": 0.209,
+      "end": 0.395
+    },
+    {
+      "text": "ever",
+      "start": 0.418,
+      "end": 0.569
+    },
+    {
+      "text": "blundered",
+      "start": 0.65,
+      "end": 1.033
+    },
+    {
+      "text": "your",
+      "start": 1.057,
+      "end": 1.173
+    },
+    {
+      "text": "queen",
+      "start": 1.219,
+      "end": 1.428
+    },
+    {
+      "text": "in",
+      "start": 1.463,
+      "end": 1.521
+    },
+    {
+      "text": "chess,",
+      "start": 1.579,
+      "end": 2.009
+    },
+    {
+      "text": "you",
+      "start": 2.183,
+      "end": 2.264
+    },
+    {
+      "text": "might",
+      "start": 2.322,
+      "end": 2.496
+    },
+    {
+      "text": "think",
+      "start": 2.531,
+      "end": 2.682
+    },
+    {
+      "text": "the",
+      "start": 2.728,
+      "end": 2.798
+    },
+    {
+      "text": "game",
+      "start": 2.833,
+      "end": 3.019
+    },
+    {
+      "text": "is",
+      "start": 3.042,
+      "end": 3.111
+    },
+    {
+      "text": "completely",
+      "start": 3.158,
+      "end": 3.599
+    },
+    {
+      "text": "over.",
+      "start": 3.657,
+      "end": 4.075
+    },
+    {
+      "text": "When",
+      "start": 4.772,
+      "end": 4.934
+    },
+    {
+      "text": "this",
+      "start": 4.969,
+      "end": 5.085
+    },
+    {
+      "text": "happens,",
+      "start": 5.132,
+      "end": 5.526
+    },
+    {
+      "text": "your",
+      "start": 5.55,
+      "end": 5.666
+    },
+    {
+      "text": "adrenaline",
+      "start": 5.689,
+      "end": 6.142
+    },
+    {
+      "text": "surges,",
+      "start": 6.177,
+      "end": 6.734
+    },
+    {
+      "text": "your",
+      "start": 6.908,
+      "end": 7.036
+    },
+    {
+      "text": "heart",
+      "start": 7.094,
+      "end": 7.268
+    },
+    {
+      "text": "rate",
+      "start": 7.303,
+      "end": 7.477
+    },
+    {
+      "text": "spikes,",
+      "start": 7.5,
+      "end": 8.034
+    },
+    {
+      "text": "and",
+      "start": 8.278,
+      "end": 8.406
+    },
+    {
+      "text": "your",
+      "start": 8.452,
+      "end": 8.568
+    },
+    {
+      "text": "brain",
+      "start": 8.603,
+      "end": 8.847
+    },
+    {
+      "text": "triggers",
+      "start": 8.905,
+      "end": 9.218
+    },
+    {
+      "text": "an",
+      "start": 9.253,
+      "end": 9.323
+    },
+    {
+      "text": "overwhelming",
+      "start": 9.404,
+      "end": 9.95
+    },
+    {
+      "text": "urge",
+      "start": 10.019,
+      "end": 10.24
+    },
+    {
+      "text": "to",
+      "start": 10.275,
+      "end": 10.344
+    },
+    {
+      "text": "immediately",
+      "start": 10.426,
+      "end": 10.925
+    },
+    {
+      "text": "resign.",
+      "start": 10.983,
+      "end": 11.517
+    },
+    {
+      "text": "But",
+      "start": 12.214,
+      "end": 12.353
+    },
+    {
+      "text": "here's",
+      "start": 12.411,
+      "end": 12.62
+    },
+    {
+      "text": "what",
+      "start": 12.643,
+      "end": 12.759
+    },
+    {
+      "text": "grandmasters",
+      "start": 12.806,
+      "end": 13.421
+    },
+    {
+      "text": "do",
+      "start": 13.479,
+      "end": 13.572
+    },
+    {
+      "text": "instead.",
+      "start": 13.63,
+      "end": 14.176
+    },
+    {
+      "text": "Rather",
+      "start": 14.872,
+      "end": 15.116
+    },
+    {
+      "text": "than",
+      "start": 15.151,
+      "end": 15.267
+    },
+    {
+      "text": "quitting,",
+      "start": 15.348,
+      "end": 15.813
+    },
+    {
+      "text": "they",
+      "start": 15.987,
+      "end": 16.126
+    },
+    {
+      "text": "look",
+      "start": 16.173,
+      "end": 16.335
+    },
+    {
+      "text": "for",
+      "start": 16.393,
+      "end": 16.509
+    },
+    {
+      "text": "a",
+      "start": 16.556,
+      "end": 16.579
+    },
+    {
+      "text": "counter-tactic.",
+      "start": 16.66,
+      "end": 17.554
+    },
+    {
+      "text": "If",
+      "start": 18.158,
+      "end": 18.309
+    },
+    {
+      "text": "giving",
+      "start": 18.379,
+      "end": 18.599
+    },
+    {
+      "text": "away",
+      "start": 18.646,
+      "end": 18.82
+    },
+    {
+      "text": "your",
+      "start": 18.878,
+      "end": 18.982
+    },
+    {
+      "text": "piece",
+      "start": 19.04,
+      "end": 19.284
+    },
+    {
+      "text": "forces",
+      "start": 19.331,
+      "end": 19.656
+    },
+    {
+      "text": "a",
+      "start": 19.69,
+      "end": 19.725
+    },
+    {
+      "text": "checkmate,",
+      "start": 19.76,
+      "end": 20.329
+    },
+    {
+      "text": "modern",
+      "start": 20.654,
+      "end": 20.968
+    },
+    {
+      "text": "engines",
+      "start": 21.014,
+      "end": 21.339
+    },
+    {
+      "text": "don't",
+      "start": 21.432,
+      "end": 21.664
+    },
+    {
+      "text": "consider",
+      "start": 21.699,
+      "end": 22.047
+    },
+    {
+      "text": "it",
+      "start": 22.105,
+      "end": 22.175
+    },
+    {
+      "text": "a",
+      "start": 22.233,
+      "end": 22.279
+    },
+    {
+      "text": "blunder",
+      "start": 22.36,
+      "end": 22.697
+    },
+    {
+      "text": "at",
+      "start": 22.744,
+      "end": 22.802
+    },
+    {
+      "text": "all...",
+      "start": 22.86,
+      "end": 23.231
+    },
+    {
+      "text": "they",
+      "start": 23.614,
+      "end": 23.742
+    },
+    {
+      "text": "classify",
+      "start": 23.788,
+      "end": 24.311
+    },
+    {
+      "text": "it",
+      "start": 24.369,
+      "end": 24.439
+    },
+    {
+      "text": "as",
+      "start": 24.497,
+      "end": 24.601
+    },
+    {
+      "text": "a",
+      "start": 24.648,
+      "end": 24.682
+    },
+    {
+      "text": "Brilliant",
+      "start": 24.764,
+      "end": 25.17
+    },
+    {
+      "text": "move.",
+      "start": 25.216,
+      "end": 25.658
+    },
+    {
+      "text": "Powered",
+      "start": 26.354,
+      "end": 26.691
+    },
+    {
+      "text": "by",
+      "start": 26.714,
+      "end": 26.819
+    },
+    {
+      "text": "Stockfish",
+      "start": 26.888,
+      "end": 27.457
+    },
+    {
+      "text": "19,",
+      "start": 27.515,
+      "end": 28.142
+    },
+    {
+      "text": "Chess",
+      "start": 28.467,
+      "end": 28.734
+    },
+    {
+      "text": "Analyzer",
+      "start": 28.792,
+      "end": 29.245
+    },
+    {
+      "text": "scans",
+      "start": 29.303,
+      "end": 29.617
+    },
+    {
+      "text": "millions",
+      "start": 29.744,
+      "end": 30.139
+    },
+    {
+      "text": "of",
+      "start": 30.186,
+      "end": 30.244
+    },
+    {
+      "text": "moves",
+      "start": 30.325,
+      "end": 30.569
+    },
+    {
+      "text": "in",
+      "start": 30.627,
+      "end": 30.708
+    },
+    {
+      "text": "seconds",
+      "start": 30.801,
+      "end": 31.161
+    },
+    {
+      "text": "to",
+      "start": 31.207,
+      "end": 31.265
+    },
+    {
+      "text": "spot",
+      "start": 31.323,
+      "end": 31.59
+    },
+    {
+      "text": "these",
+      "start": 31.648,
+      "end": 31.823
+    },
+    {
+      "text": "hidden",
+      "start": 31.881,
+      "end": 32.159
+    },
+    {
+      "text": "sacrifices,",
+      "start": 32.217,
+      "end": 33.1
+    },
+    {
+      "text": "tracking",
+      "start": 33.309,
+      "end": 33.68
+    },
+    {
+      "text": "your",
+      "start": 33.727,
+      "end": 33.843
+    },
+    {
+      "text": "win",
+      "start": 33.901,
+      "end": 34.063
+    },
+    {
+      "text": "probability,",
+      "start": 34.121,
+      "end": 34.888
+    },
+    {
+      "text": "accuracy,",
+      "start": 35.004,
+      "end": 35.758
+    },
+    {
+      "text": "and",
+      "start": 35.932,
+      "end": 36.083
+    },
+    {
+      "text": "every",
+      "start": 36.2,
+      "end": 36.478
+    },
+    {
+      "text": "brilliant",
+      "start": 36.536,
+      "end": 36.873
+    },
+    {
+      "text": "move.",
+      "start": 36.931,
+      "end": 37.326
+    },
+    {
+      "text": "So",
+      "start": 38.022,
+      "end": 38.22
+    },
+    {
+      "text": "next",
+      "start": 38.301,
+      "end": 38.533
+    },
+    {
+      "text": "time",
+      "start": 38.556,
+      "end": 38.765
+    },
+    {
+      "text": "you",
+      "start": 38.8,
+      "end": 38.87
+    },
+    {
+      "text": "drop",
+      "start": 38.928,
+      "end": 39.137
+    },
+    {
+      "text": "your",
+      "start": 39.183,
+      "end": 39.288
+    },
+    {
+      "text": "queen...",
+      "start": 39.334,
+      "end": 39.787
+    },
+    {
+      "text": "don't",
+      "start": 40.112,
+      "end": 40.309
+    },
+    {
+      "text": "resign.",
+      "start": 40.344,
+      "end": 40.867
+    },
+    {
+      "text": "Analyze",
+      "start": 41.25,
+      "end": 41.749
+    },
+    {
+      "text": "it.",
+      "start": 41.784,
+      "end": 42.213
+    }
+  ]
+}
