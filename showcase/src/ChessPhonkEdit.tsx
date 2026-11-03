@@ -143,69 +143,70 @@ interface LightSquare {
 
 // 2D CHESSBOARD WITH GLOWING LIGHT-UP TILES
 const Chess2DBoard: React.FC<{ frame: number }> = ({ frame }) => {
-  // Move 1: 15. Bxd7+ (Bishop b5 -> d7) - frames 168 to 178
-  // Move 2: 15... Nxd7 (Knight f6 -> d7) - frames 248 to 258
-  // Move 3: 16. Qb8+!! (Queen b3 -> b8) - frames 368 to 378 (THE BASS DROP)
-  // Move 4: 16... Nxb8 (Knight d7 -> b8) - frames 428 to 438
-  // Move 5: 17. Rd8# (Rook d1 -> d8) - frames 488 to 498 (CHECKMATE)
+  // Move 1: 15. Bxd7+ (Bishop b5 -> d7) - snappy whip frames 175 to 179 (Beat 1)
+  // Move 2: 15... Nxd7 (Knight f6 -> d7) - snappy whip frames 255 to 259 (Beat 2)
+  // Pre-drop build: pulses at 319, 339, 359
+  // Move 3: 16. Qb8+!! (Queen b3 -> b8) - snappy whip frames 375 to 379 (THE MAIN 808 BASS DROP)
+  // Move 4: 16... Nxb8 (Knight d7 -> b8) - snappy whip frames 435 to 439 (Beat 4)
+  // Move 5: 17. Rd8# (Rook d1 -> d8) - snappy whip frames 495 to 499 (CHECKMATE DROP)
 
-  // Piece Transitions:
+  // Snappy Piece Transitions (3-4 frame whip snaps landing exactly on the drum transients):
   // White Bishop b5 -> d7 (starts [3,1], goes to [1,3])
-  const progB = interpolate(frame, [168, 178], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const progB = interpolate(frame, [175, 179], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
   const wB_row = interpolate(progB, [0, 1], [3, 1]);
   const wB_col = interpolate(progB, [0, 1], [1, 3]);
 
   // Black Knight f6 -> d7 (starts [2,5], goes to [1,3])
-  const progN1 = interpolate(frame, [248, 258], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const progN1 = interpolate(frame, [255, 259], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
   // Black Knight d7 -> b8 (from [1,3] to [0,1])
-  const progN2 = interpolate(frame, [428, 438], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
-  const bN_row = frame < 258
+  const progN2 = interpolate(frame, [435, 439], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const bN_row = frame < 259
     ? interpolate(progN1, [0, 1], [2, 1])
     : interpolate(progN2, [0, 1], [1, 0]);
-  const bN_col = frame < 258
+  const bN_col = frame < 259
     ? interpolate(progN1, [0, 1], [5, 3])
     : interpolate(progN2, [0, 1], [3, 1]);
 
   // White Queen b3 -> b8 (starts [5,1], goes to [0,1])
-  const progQ = interpolate(frame, [368, 378], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.back(1.4)) });
+  const progQ = interpolate(frame, [375, 379], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.quad) });
   const wQ_row = interpolate(progQ, [0, 1], [5, 0]);
   const wQ_col = 1;
 
   // White Rook d1 -> d8 (starts [7,3], goes to [0,3])
-  const progR = interpolate(frame, [488, 498], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
+  const progR = interpolate(frame, [495, 499], [0, 1], { extrapolateLeft: 'clamp', extrapolateRight: 'clamp', easing: Easing.out(Easing.cubic) });
   const wR_row = interpolate(progR, [0, 1], [7, 0]);
   const wR_col = 3;
 
   // Active Light-Up Tiles depending on the move and beat:
   const litSquares: LightSquare[] = [];
 
-  if (frame < 178) {
+  if (frame < 179) {
     // Initial tension: Black Queen on e6 [2,4] & White Queen on b3 [5,1]
     litSquares.push({ row: 2, col: 4, color: '#ef5350', intensity: Math.sin(frame * 0.25) * 0.3 + 0.7 });
     litSquares.push({ row: 5, col: 1, color: '#ffd54f', intensity: 0.8 });
-  } else if (frame >= 178 && frame < 258) {
+  } else if (frame >= 179 && frame < 259) {
     // Move 1: 15. Bxd7+ Check! Origin b5 [3,1], destination d7 [1,3], Black King e8 [0,4]
     litSquares.push({ row: 3, col: 1, color: '#ffd54f', intensity: 0.6 });
     litSquares.push({ row: 1, col: 3, color: '#ffd54f', intensity: 1.0 });
     litSquares.push({ row: 0, col: 4, color: '#ef5350', intensity: 0.8 }); // King in check!
-  } else if (frame >= 258 && frame < 378) {
+  } else if (frame >= 259 && frame < 379) {
     // Move 2: 15... Nxd7 Knight takes on d7 [1,3].
     // Target b8 [0,1] pulses as the sacrifice square!
     litSquares.push({ row: 1, col: 3, color: '#ef5350', intensity: 0.7 });
     // b8 starts pulsing neon cyan in anticipation of the drop!
-    const targetGlow = frame >= 320 ? Math.sin((frame - 320) * 0.4) * 0.5 + 0.5 : 0.2;
+    const targetGlow = frame >= 319 ? Math.sin((frame - 319) * 0.45) * 0.5 + 0.5 : 0.2;
     litSquares.push({ row: 0, col: 1, color: '#26c6da', intensity: targetGlow });
-  } else if (frame >= 378 && frame < 438) {
+  } else if (frame >= 379 && frame < 439) {
     // Move 3: 16. Qb8+!! THE BRILLIANT QUEEN SACRIFICE
     // b3 [5,1] and b8 [0,1] explode with radiant cyan light!
     litSquares.push({ row: 5, col: 1, color: '#26c6da', intensity: 0.85 });
     litSquares.push({ row: 0, col: 1, color: '#26c6da', intensity: 1.0 });
     litSquares.push({ row: 0, col: 4, color: '#ef5350', intensity: 0.9 }); // King in check!
-  } else if (frame >= 438 && frame < 498) {
+  } else if (frame >= 439 && frame < 499) {
     // Move 4: 16... Nxb8 forced
     litSquares.push({ row: 1, col: 3, color: '#ef5350', intensity: 0.6 });
     litSquares.push({ row: 0, col: 1, color: '#ef5350', intensity: 0.9 });
-  } else if (frame >= 498) {
+  } else if (frame >= 499) {
     // Move 5: 17. Rd8# CHECKMATE!!
     litSquares.push({ row: 7, col: 3, color: '#4caf50', intensity: 0.7 });
     litSquares.push({ row: 0, col: 3, color: '#4caf50', intensity: 1.0 }); // Rd8#
@@ -334,35 +335,35 @@ const Chess2DBoard: React.FC<{ frame: number }> = ({ frame }) => {
         {/* 3. White Bishop g5: [3, 6] (Pins the knight!) */}
         <PieceSlot row={3} col={6} piece="wB" />
 
-        {/* 4. White Bishop b5 (Moves to d7 at frame 178, captured at frame 258) */}
-        {frame < 258 && (
+        {/* 4. White Bishop b5 (Moves to d7 at frame 179, captured at frame 259) */}
+        {frame < 259 && (
           <PieceSlot
             row={wB_row}
             col={wB_col}
             piece="wB"
-            highlight={frame >= 178 ? '#ffd54f' : undefined}
-            scale={frame >= 170 && frame <= 178 ? 1.15 : 1}
+            highlight={frame >= 179 ? '#ffd54f' : undefined}
+            scale={frame >= 179 && frame < 186 ? interpolate(frame, [179, 186], [1.3, 1.0]) : 1}
           />
         )}
 
-        {/* 5. White Queen (Moves to b8 at frame 378, captured at frame 438) */}
-        {frame < 438 && (
+        {/* 5. White Queen (Moves to b8 at frame 379, captured at frame 439) */}
+        {frame < 439 && (
           <PieceSlot
             row={wQ_row}
             col={wQ_col}
             piece="wQ"
-            highlight={frame >= 378 ? '#26c6da' : undefined}
-            scale={frame >= 370 && frame <= 378 ? 1.25 : 1}
+            highlight={frame >= 379 ? '#26c6da' : undefined}
+            scale={frame >= 379 && frame < 388 ? interpolate(frame, [379, 388], [1.4, 1.0]) : 1}
           />
         )}
 
-        {/* 6. White Rook d1 (Moves to d8# at frame 498) */}
+        {/* 6. White Rook d1 (Moves to d8# at frame 499) */}
         <PieceSlot
           row={wR_row}
           col={wR_col}
           piece="wR"
-          highlight={frame >= 498 ? '#4caf50' : undefined}
-          scale={frame >= 490 && frame <= 498 ? 1.25 : 1}
+          highlight={frame >= 499 ? '#4caf50' : undefined}
+          scale={frame >= 499 && frame < 508 ? interpolate(frame, [499, 508], [1.4, 1.0]) : 1}
         />
 
         {/* --- BLACK PIECES --- */}
@@ -372,8 +373,8 @@ const Chess2DBoard: React.FC<{ frame: number }> = ({ frame }) => {
           row={0}
           col={4}
           piece="bK"
-          highlight={frame >= 498 ? '#ef5350' : undefined}
-          rotation={frame >= 498 ? 90 : 0}
+          highlight={frame >= 499 ? '#ef5350' : undefined}
+          rotation={frame >= 499 ? 90 : 0}
         />
 
         {/* 8. Black Pawns */}
@@ -392,15 +393,16 @@ const Chess2DBoard: React.FC<{ frame: number }> = ({ frame }) => {
         {/* 11. Black Queen e6: [2, 4] */}
         <PieceSlot row={2} col={4} piece="bQ" />
 
-        {/* 12. Black Rook d7: [1, 3] (Captured at frame 178) */}
-        {frame < 178 && <PieceSlot row={1} col={3} piece="bR" />}
+        {/* 12. Black Rook d7: [1, 3] (Captured at frame 179) */}
+        {frame < 179 && <PieceSlot row={1} col={3} piece="bR" />}
 
-        {/* 13. Black Knight (f6 -> d7 at frame 258, d7 -> b8 at frame 438) */}
+        {/* 13. Black Knight (f6 -> d7 at frame 259, d7 -> b8 at frame 439) */}
         <PieceSlot
           row={bN_row}
           col={bN_col}
           piece="bN"
-          highlight={frame >= 438 ? '#26c6da' : undefined}
+          highlight={frame >= 439 ? '#26c6da' : undefined}
+          scale={(frame >= 259 && frame < 267) || (frame >= 439 && frame < 447) ? 1.3 : 1}
         />
       </div>
     </div>
@@ -442,14 +444,14 @@ const PieceSlot: React.FC<{
 
 // --- DYNAMIC EVALUATION BAR COMPONENT ---
 const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
-  // Reversal happens ON THE EXACT BEAT DROP at frame 378
+  // Reversal happens ON THE EXACT BEAT DROP at frame 379
   const reversalSpring = spring({
-    frame: Math.max(0, frame - 378),
+    frame: Math.max(0, frame - 379),
     fps: 30,
     config: { damping: 9, mass: 0.45, stiffness: 220 },
   });
 
-  const isLanded = frame >= 378;
+  const isLanded = frame >= 379;
 
   // Before drop: 12% white / 88% black (-9.5)
   // After drop: rockets to 100% white (+M1 forced checkmate)
@@ -457,7 +459,7 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
     ? interpolate(frame, [0, 40], [50, 10], { extrapolateRight: 'clamp' })
     : interpolate(reversalSpring, [0, 1], [10, 100]);
 
-  const evalText = !isLanded ? '-9.5' : '+M1';
+  const evalText = !isLanded ? '-9.5' : (frame >= 499 ? '# 1-0' : '+M1');
 
   return (
     <div
@@ -484,10 +486,10 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
           width: `${evalPercent}%`,
           height: '100%',
           background: isLanded
-            ? 'linear-gradient(90deg, #26c6da 0%, #ffffff 100%)'
+            ? (frame >= 499 ? 'linear-gradient(90deg, #4caf50 0%, #26c6da 50%, #ffffff 100%)' : 'linear-gradient(90deg, #26c6da 0%, #ffffff 100%)')
             : 'linear-gradient(90deg, #1e293b 0%, #ffffff 100%)',
           borderRadius: 14,
-          boxShadow: isLanded ? '0 0 25px #26c6da' : 'none',
+          boxShadow: isLanded ? (frame >= 499 ? '0 0 25px #4caf50' : '0 0 25px #26c6da') : 'none',
         }}
       />
 
@@ -514,12 +516,12 @@ const EvalBar: React.FC<{ frame: number }> = ({ frame }) => {
           fontFamily: 'Montserrat, sans-serif',
           fontSize: 20,
           fontWeight: 800,
-          color: isLanded ? '#26c6da' : '#ef5350',
+          color: frame >= 499 ? '#4caf50' : (isLanded ? '#26c6da' : '#ef5350'),
           letterSpacing: '1px',
           zIndex: 5,
         }}
       >
-        {isLanded ? 'CHECKMATE IN 2 (FORCED)' : 'BLACK WIN ADVANTAGE'}
+        {isLanded ? (frame >= 499 ? 'WHITE WINS BY CHECKMATE' : 'CHECKMATE IN 2 (FORCED)') : 'BLACK WIN ADVANTAGE'}
       </div>
     </div>
   );
@@ -530,39 +532,61 @@ export const ChessPhonkEditVideo: React.FC = () => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
 
-  // Precise Beat Drops in LAST CHANCE FUNK (Slowed):
-  // Frame 378 (12.60s) - THE MAIN BASS DROP (Queen Sacrifice Qb8+!!)
-  // Frame 438 (14.60s) - Beat 1 (Nxb8)
-  // Frame 498 (16.60s) - Beat 2 (Rd8# Checkmate!)
-  // Frame 558 (18.60s) - Beat 3 (Outro Slam)
-  const drops = [378, 438, 498, 558];
+  // Exact 20-frame phonk beat grid in LAST CHANCE FUNK (Slowed, ~90 BPM):
+  // 179: Bishop Check (15. Bxd7+)
+  // 259: Knight Recapture (15... Nxd7)
+  // 319, 339: Build-up snares
+  // 359: Pre-drop snare slam
+  // 379: THE MAIN BASS DROP (16. Qb8+!! Queen Sacrifice)
+  // 399, 419: Post-drop driving bass
+  // 439: Knight Recapture (16... Nxb8)
+  // 459, 479: Driving bass
+  // 499: Rook Checkmate (17. Rd8#)
+  // 519, 539: Victory bass
+  // 559: Outro Slam
+  const allBeats = [179, 259, 319, 339, 359, 379, 399, 419, 439, 459, 479, 499, 519, 539, 559];
+
+  // Beat Zoom Punch (signature phonk beat pump)
+  let beatZoom = 1.0;
+  for (const b of allBeats) {
+    if (frame >= b && frame < b + 6) {
+      const p = (frame - b) / 6;
+      const intensity = b === 379 ? 0.08 : (b === 359 || b === 439 || b === 499 ? 0.045 : 0.025);
+      beatZoom += (1 - p) * intensity;
+    }
+  }
+
+  // Camera Shake on heavy hits
+  const heavyDrops = [359, 379, 439, 499, 559];
   let shakeIntensity = 0;
-  drops.forEach((d, idx) => {
-    if (frame >= d && frame < d + 16) {
-      const decay = (d + 16 - frame) / 16;
-      shakeIntensity = Math.max(shakeIntensity, (idx === 0 ? 30 : 16) * decay);
+  heavyDrops.forEach((d) => {
+    if (frame >= d && frame < d + 14) {
+      const decay = (d + 14 - frame) / 14;
+      shakeIntensity = Math.max(shakeIntensity, (d === 379 ? 34 : (d === 359 ? 18 : 16)) * decay);
     }
   });
 
-  const shakeX = Math.sin(frame * 1.8) * shakeIntensity;
-  const shakeY = Math.cos(frame * 1.9) * shakeIntensity;
+  const shakeX = Math.sin(frame * 2.2) * shakeIntensity;
+  const shakeY = Math.cos(frame * 2.4) * shakeIntensity;
 
-  // White Flash on the drop at frame 378
+  // White Flash on the drop at frame 379 and snare at 359
   const flashOpacity =
-    frame >= 378 && frame < 396
-      ? interpolate(frame, [378, 396], [0.95, 0], { extrapolateRight: 'clamp' })
-      : 0;
+    frame >= 379 && frame < 396
+      ? interpolate(frame, [379, 396], [0.95, 0], { extrapolateRight: 'clamp' })
+      : (frame >= 359 && frame < 365
+          ? interpolate(frame, [359, 365], [0.35, 0], { extrapolateRight: 'clamp' })
+          : 0);
 
   // Shockwave ring on the drop
   const shockwave =
-    frame >= 378 && frame < 415
-      ? spring({ frame: frame - 378, fps, config: { damping: 10, mass: 0.5 } })
+    frame >= 379 && frame < 415
+      ? spring({ frame: frame - 379, fps, config: { damping: 10, mass: 0.5 } })
       : 0;
 
   // Brilliant (!!) Badge Scale & Slam
   const brilliantSlam =
-    frame >= 378 && frame < 438
-      ? spring({ frame: frame - 378, fps, config: { damping: 11, mass: 0.5, stiffness: 240 } })
+    frame >= 379 && frame < 439
+      ? spring({ frame: frame - 379, fps, config: { damping: 11, mass: 0.5, stiffness: 240 } })
       : 0;
 
   // Dynamic Typography & Narrative
@@ -570,27 +594,31 @@ export const ChessPhonkEditVideo: React.FC = () => {
   let subText = 'EVALUATION: -9.5';
   let textColor = '#ef5350';
 
-  if (frame >= 178 && frame < 258) {
+  if (frame >= 179 && frame < 259) {
     mainText = '15. Bxd7+ !!';
     subText = 'SACRIFICING THE BISHOP';
     textColor = '#ffd54f';
-  } else if (frame >= 258 && frame < 378) {
+  } else if (frame >= 259 && frame < 359) {
     mainText = 'HE THOUGHT HE WAS SAFE...';
     subText = 'STOCKFISH 19 CALCULATING MATE';
     textColor = '#ffffff';
-  } else if (frame >= 378 && frame < 438) {
+  } else if (frame >= 359 && frame < 379) {
+    mainText = 'WAIT FOR IT...';
+    subText = 'STOCKFISH CALCULATING 100%';
+    textColor = '#26c6da';
+  } else if (frame >= 379 && frame < 439) {
     mainText = '16. Qb8+ !! — BRILLIANT';
     subText = 'THE IMMORTAL QUEEN SACRIFICE';
     textColor = '#26c6da';
-  } else if (frame >= 438 && frame < 498) {
+  } else if (frame >= 439 && frame < 499) {
     mainText = '16... Nxb8 (FORCED)';
     subText = 'ONLY ONE LEGAL MOVE';
     textColor = '#ffd54f';
-  } else if (frame >= 498 && frame < 560) {
+  } else if (frame >= 499 && frame < 559) {
     mainText = '17. Rd8 # — CHECKMATE';
     subText = 'MORPHY OPERA IMMORTAL MATE';
     textColor = '#4caf50';
-  } else if (frame >= 560) {
+  } else if (frame >= 559) {
     mainText = 'CHESS ANALYZER';
     subText = 'NEVER MISS A BRILLIANT SACRIFICE';
     textColor = '#26c6da';
@@ -601,7 +629,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       style={{
         background: '#04070b',
         overflow: 'hidden',
-        transform: `translate(${shakeX}px, ${shakeY}px)`,
+        transform: `translate(${shakeX}px, ${shakeY}px) scale(${beatZoom})`,
       }}
     >
       <Audio src={staticFile('phonk_track.mp3')} />
@@ -627,7 +655,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       />
 
       {/* Red Warning Vignette prior to the drop */}
-      {frame < 378 && (
+      {frame < 379 && (
         <div
           style={{
             position: 'absolute',
@@ -704,7 +732,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       </div>
 
       {/* Shockwave Blast Ring on Bass Drop */}
-      {frame >= 378 && frame < 415 && (
+      {frame >= 379 && frame < 415 && (
         <div
           style={{
             position: 'absolute',
@@ -723,8 +751,8 @@ export const ChessPhonkEditVideo: React.FC = () => {
         />
       )}
 
-      {/* Giant Brilliant (!!) Badge Slam at Frame 378 */}
-      {frame >= 378 && frame < 438 && (
+      {/* Giant Brilliant (!!) Badge Slam at Frame 379 */}
+      {frame >= 379 && frame < 439 && (
         <div
           style={{
             position: 'absolute',
@@ -755,14 +783,14 @@ export const ChessPhonkEditVideo: React.FC = () => {
         </div>
       )}
 
-      {/* Checkmate Victory Stamp at Frame 498+ */}
-      {frame >= 498 && frame < 560 && (
+      {/* Checkmate Victory Stamp at Frame 499+ */}
+      {frame >= 499 && frame < 559 && (
         <div
           style={{
             position: 'absolute',
             top: '49%',
             left: '50%',
-            transform: `translate(-50%, -50%) scale(${spring({ frame: frame - 498, fps, config: { damping: 9, mass: 0.5 } })})`,
+            transform: `translate(-50%, -50%) scale(${spring({ frame: frame - 499, fps, config: { damping: 9, mass: 0.5 } })})`,
             zIndex: 60,
             display: 'flex',
             flexDirection: 'column',
@@ -788,7 +816,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
       )}
 
       {/* Bottom Bold Phonk Typography HUD */}
-      {frame < 560 && (
+      {frame < 559 && (
         <div
           style={{
             position: 'absolute',
@@ -843,8 +871,8 @@ export const ChessPhonkEditVideo: React.FC = () => {
         </div>
       )}
 
-      {/* Outro Screen (frames 560 - 630 / 18.67s - 21.0s) */}
-      {frame >= 560 && (
+      {/* Outro Screen (frames 559 - 630 / 18.63s - 21.0s) */}
+      {frame >= 559 && (
         <div
           style={{
             position: 'absolute',
@@ -855,7 +883,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             zIndex: 70,
-            transform: `scale(${spring({ frame: frame - 560, fps, config: { damping: 11, mass: 0.55 } })})`,
+            transform: `scale(${spring({ frame: frame - 559, fps, config: { damping: 11, mass: 0.55 } })})`,
           }}
         >
           <Img
@@ -905,12 +933,12 @@ export const ChessPhonkEditVideo: React.FC = () => {
               background: 'rgba(255,255,255,0.08)',
               border: '2px solid rgba(255,255,255,0.2)',
               borderRadius: 30,
-              padding: '14px 34px',
+              padding: '14px 42px',
               boxShadow: '0 10px 30px rgba(0,0,0,0.7)',
             }}
           >
-            <span style={{ fontFamily: 'Montserrat, sans-serif', fontSize: 24, fontWeight: 800, color: '#f8fafc' }}>
-              💻 Windows .EXE &nbsp;•&nbsp; 📱 Android .APK &nbsp;•&nbsp; 🍏 iOS .IPA
+            <span style={{ fontFamily: 'Montserrat, sans-serif', fontSize: 26, fontWeight: 800, color: '#f8fafc', letterSpacing: '1.5px' }}>
+              💻 STANDALONE WINDOWS .EXE
             </span>
           </div>
         </div>
