@@ -4,11 +4,11 @@
 
   # Chess Game Analyzer
 
-  **Desktop chess analysis workstation powered by Stockfish 17.1, Lichess opening classification, and custom annotations.**
+  **Desktop chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, and an in-app game library.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.0.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.1.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows)
-  ![Engine](https://img.shields.io/badge/Stockfish-17.1%20AVX2-d32f2f?style=for-the-badge)
+  ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt-41cd52?style=for-the-badge&logo=qt)
   ![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)
 
@@ -31,28 +31,28 @@
       Every move is mapped through non-linear win-probability curves, detecting tactical turnarounds, sacrifices, misses, and book moves in real-time.
     </td>
     <td width="50%">
-      <h3>↗️ Alternative Move Hints</h3>
-      On blunders, mistakes, inaccuracies, or misses, visual on-board arrows point straight to the engine's recommended continuation.
+      <h3>📚 In-App Saved Games Library</h3>
+      Save analysed games directly inside the app with custom game names, instant reopening without re-running Stockfish, and per-game + lifetime <b>Brilliant (!!)</b> move tracking (total played &amp; yours).
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <h3>📈 Dynamic Evaluation & Accuracy</h3>
+      <h3>↗️ Alternative Move Hints</h3>
+      On blunders, mistakes, inaccuracies, or misses, visual on-board arrows point straight to the engine's recommended continuation.
+    </td>
+    <td width="50%">
+      <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
       Smooth live graph with hover inspections, synchronized dual-color POV eval bar, and phase-by-phase accuracy (Opening, Middlegame, Endgame, Rating).
     </td>
+  </tr>
+  <tr>
     <td width="50%">
       <h3>🎨 Hot-Reloadable MS Paint Customizer</h3>
       Edit any annotation badge directly in Microsoft Paint with one click, live in-app preview, and instant one-button reset.
     </td>
-  </tr>
-  <tr>
     <td width="50%">
       <h3>⚡ Unthrottled Background Queue</h3>
-      Windows PowerThrottling bypass ensures Stockfish continues calculating at maximum CPU speed even when tabbed out or minimized.
-    </td>
-    <td width="50%">
-      <h3>🔄 Perspective Auto-Flip</h3>
-      Automatically rotates the board to your perspective whenever your username matches PGN headers.
+      Windows PowerThrottling bypass ensures Stockfish 19 continues calculating at maximum CPU speed even when tabbed out or minimized.
     </td>
   </tr>
 </table>
@@ -86,6 +86,7 @@
 | <kbd>Page Up</kbd> / <kbd>Page Down</kbd> | Fast-forward / rewind 10 plies |
 | <kbd>F</kbd> | Flip board orientation |
 | <kbd>B</kbd> | Calculate & show 3 engine lines for current move |
+| <kbd>F2</kbd> | Rename current game (in main window or library) |
 | <kbd>Ctrl</kbd> + <kbd>O</kbd> | Open PGN file |
 | <kbd>Ctrl</kbd> + <kbd>S</kbd> | Save analysed game to Library |
 | <kbd>Ctrl</kbd> + <kbd>L</kbd> | Open Saved Games Library |
@@ -118,26 +119,9 @@ The compiled standalone binary will be created in `dist/ChessAnalyzer.exe`.
 
 ---
 
-## 🎬 Remotion Showcase Suite
-
-The showcase animation in this README is generated entirely through code using Remotion:
-
-```powershell
-cd showcase
-npm install
-
-# Live preview in browser with hot-reload
-npx remotion preview
-
-# Render to 1080p MP4
-npx remotion render src/index.ts ChessAnalyzerShowcase out/showcase.mp4
-```
-
----
-
 ## 📜 Credits & License
 
-- **Stockfish 17.1**: [official-stockfish/Stockfish](https://github.com/official-stockfish/Stockfish) (GPLv3)
+- **Stockfish 19**: [official-stockfish/Stockfish](https://github.com/official-stockfish/Stockfish) (GPLv3)
 - **Opening Encyclopedia**: [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0)
 - **Engine Bindings**: [niklasf/python-chess](https://github.com/niklasf/python-chess) (GPLv3)
 - **GUI Framework**: [Qt / PySide6](https://www.qt.io/) (LGPLv3)
