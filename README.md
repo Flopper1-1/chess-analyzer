@@ -4,12 +4,12 @@
 
   # Chess Game Analyzer
 
-  **Desktop chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, and an in-app game library.**
+  **Cross-platform chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, and an in-app game library.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.1.0-4caf50?style=for-the-badge)
-  ![Platform](https://img.shields.io/badge/Platform-Windows%20x64-0078D6?style=for-the-badge&logo=windows)
+  ![Version](https://img.shields.io/badge/Version-v1.2.0-4caf50?style=for-the-badge)
+  ![Platforms](https://img.shields.io/badge/Platforms-Windows%20.EXE%20%7C%20Android%20.APK%20%7C%20iOS%20.IPA-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
-  ![UI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt-41cd52?style=for-the-badge&logo=qt)
+  ![UI](https://img.shields.io/badge/GUI-PySide6%20%2F%20Capacitor-41cd52?style=for-the-badge)
   ![License](https://img.shields.io/badge/License-GPLv3-blue?style=for-the-badge)
 
   ---
@@ -37,12 +37,12 @@
   </tr>
   <tr>
     <td width="50%">
-      <h3>↗️ Alternative Move Hints</h3>
-      On blunders, mistakes, inaccuracies, or misses, visual on-board arrows point straight to the engine's recommended continuation.
+      <h3>📱 Desktop &amp; Mobile Port (Windows, Android, iOS)</h3>
+      Available as a standalone Windows executable (<code>ChessAnalyzer.exe</code>), Android package (<code>ChessAnalyzer.apk</code>), and iOS package (<code>ChessAnalyzer.ipa</code>).
     </td>
     <td width="50%">
       <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
-      Smooth live graph with hover inspections, synchronized dual-color POV eval bar, and phase-by-phase accuracy (Opening, Middlegame, Endgame, Rating).
+      Smooth live graph with hover/touch scrubbing, synchronized dual-color POV eval bar, and phase-by-phase accuracy (Opening, Middlegame, Endgame, Rating).
     </td>
   </tr>
   <tr>
@@ -95,27 +95,19 @@
 
 ## 🚀 Getting Started
 
-### Running from Source
+### Running from Source (Desktop)
 ```powershell
-# Clone the repository
 git clone https://github.com/Flopper1-1/chess-analyzer.git
 cd chess-analyzer
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the test suite
 python -m pytest tests -q
-
-# Launch the application
 python main.py
 ```
 
-### Building the Single-File Executable
+### Building the Single-File Windows Executable
 ```powershell
 .\build.ps1
 ```
-The compiled standalone binary will be created in `dist/ChessAnalyzer.exe`.
 
 ---
 
@@ -124,4 +116,4 @@ The compiled standalone binary will be created in `dist/ChessAnalyzer.exe`.
 - **Stockfish 19**: [official-stockfish/Stockfish](https://github.com/official-stockfish/Stockfish) (GPLv3)
 - **Opening Encyclopedia**: [lichess-org/chess-openings](https://github.com/lichess-org/chess-openings) (CC0)
 - **Engine Bindings**: [niklasf/python-chess](https://github.com/niklasf/python-chess) (GPLv3)
-- **GUI Framework**: [Qt / PySide6](https://www.qt.io/) (LGPLv3)
+- **GUI & Mobile Frameworks**: [Qt / PySide6](https://www.qt.io/) (LGPLv3) & [Capacitor](https://capacitorjs.com/) (MIT)
