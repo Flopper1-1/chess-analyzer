@@ -619,7 +619,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
     subText = 'MORPHY OPERA IMMORTAL MATE';
     textColor = '#4caf50';
   } else if (frame >= 559) {
-    mainText = 'CHESS ANALYZER';
+    mainText = "HOLLY'S CHESS ANALYZER";
     subText = 'NEVER MISS A BRILLIANT SACRIFICE';
     textColor = '#26c6da';
   }
@@ -909,7 +909,7 @@ export const ChessPhonkEditVideo: React.FC = () => {
               textShadow: '0 0 35px rgba(38,198,218,0.6)',
             }}
           >
-            CHESS ANALYZER
+            HOLLY'S CHESS ANALYZER
           </h1>
 
           <div
