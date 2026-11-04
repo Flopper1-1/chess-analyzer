@@ -2,7 +2,7 @@
 
   <img src="icon.png" width="130" alt="Holly's Chess Analyzer Logo" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);" />
 
-  # Holly's Chess Analyzer
+  # Chess Analyzer
 
   **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, and an in-app game library.**
 
