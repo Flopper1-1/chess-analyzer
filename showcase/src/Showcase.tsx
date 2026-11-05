@@ -127,7 +127,7 @@ const IntroScene: React.FC = () => {
             textShadow: '0 6px 28px rgba(0,0,0,0.65)',
           }}
         >
-          HOLLY'S CHESS ANALYZER
+          CHESS ANALYZER
         </h1>
         <p
           style={{
@@ -870,7 +870,7 @@ const OutroScene: React.FC = () => {
             margin: 0,
           }}
         >
-          Holly's Chess Analyzer v1.2
+          Chess Game Analyzer v1.2
         </h1>
 
         <div style={{ display: 'flex', gap: 18, marginTop: 26 }}>

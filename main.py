@@ -748,7 +748,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Holly's Chess Analyzer")
+        self.setWindowTitle("Chess Analyzer")
         self.resize(1180, 760)
         self.setAcceptDrops(True)
         qs = QSettings("ChessAnalyzer", "ChessAnalyzer")
@@ -888,7 +888,7 @@ class MainWindow(QMainWindow):
     def load_text(self, text):
         games = parse_input(text)
         if not games:
-            QMessageBox.warning(self, "Holly's Chess Analyzer", "No valid PGN or FEN found."); return
+            QMessageBox.warning(self, "Chess Analyzer", "No valid PGN or FEN found."); return
         self.stop()
         self.games = games
         self.jobs = [Job(g) for g in games]
@@ -1031,7 +1031,7 @@ class MainWindow(QMainWindow):
             self.worker.cancel_flag = True
             self.worker.wait(30000)
         winutil.keep_awake(False)
-        self.setWindowTitle("Holly's Chess Analyzer")
+        self.setWindowTitle("Chess Analyzer")
         for j in self.jobs:
             j.running = False
         if self.games:
@@ -1056,7 +1056,7 @@ class MainWindow(QMainWindow):
         job.progress = (a, b)
         self.refresh_combo(job)
         done = sum(1 for j in self.jobs if j.done)
-        self.setWindowTitle("Holly's Chess Analyzer – analysing %d/%d (%d%%)" % (
+        self.setWindowTitle("Chess Analyzer – analysing %d/%d (%d%%)" % (
             min(done + 1, len(self.jobs)), len(self.jobs), 100 * a // max(1, b)))
         if job is self.job:
             self.progress.setVisible(True)
@@ -1093,7 +1093,7 @@ class MainWindow(QMainWindow):
         if not any(not j.done for j in self.jobs):
             self.progress.setVisible(False)
             winutil.keep_awake(False)
-            self.setWindowTitle("Holly's Chess Analyzer")
+            self.setWindowTitle("Chess Analyzer")
             self.notify_done()
 
     def notify_done(self):
@@ -1105,7 +1105,7 @@ class MainWindow(QMainWindow):
             if getattr(self, "tray", None) is None:
                 self.tray = QSystemTrayIcon(self.windowIcon(), self)
             self.tray.show()
-            self.tray.showMessage("Holly's Chess Analyzer", "Analysis finished for %d game(s)." % len(self.jobs),
+            self.tray.showMessage("Chess Analyzer", "Analysis finished for %d game(s)." % len(self.jobs),
                                   QSystemTrayIcon.Information, 6000)
 
     def refresh_graph(self):
@@ -1211,13 +1211,13 @@ class MainWindow(QMainWindow):
                 node.comment = " ".join(parts)
         if last_open:
             copy.headers["ECO"], copy.headers["Opening"] = last_open
-        copy.headers["Annotator"] = "Holly's Chess Analyzer (Stockfish, depth %d)" % self.settings.depth
+        copy.headers["Annotator"] = "Chess Analyzer (Stockfish, depth %d)" % self.settings.depth
         exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
         return copy.accept(exporter)
 
     def save_game(self):
         if not self.games:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
         h = self.game.headers
         default = "%s-vs-%s.pgn" % (h.get("White", "White"), h.get("Black", "Black"))
         default = "".join(c if c.isalnum() or c in "-_. " else "_" for c in default)
@@ -1229,7 +1229,7 @@ class MainWindow(QMainWindow):
 
     def save_all(self):
         if not self.games:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
         path, _ = QFileDialog.getSaveFileName(self, "Save all analysed games", "analysed-games.pgn", "PGN files (*.pgn)")
         if path:
             with open(path, "w", encoding="utf-8") as f:
@@ -1238,7 +1238,7 @@ class MainWindow(QMainWindow):
 
     def rename_current_game(self):
         if not self.game or not self.job:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
         h = self.game.headers
         cur_name = self.job.title or ("%s vs %s" % (h.get("White", "?"), h.get("Black", "?")))
         new_name, ok = QInputDialog.getText(self, "Rename Game", "Enter a name for this game:", QLineEdit.Normal, cur_name)
@@ -1263,7 +1263,7 @@ class MainWindow(QMainWindow):
 
     def rename_current_game(self):
         if not self.game or not self.job:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
         h = self.game.headers
         cur = self.job.title or f"{h.get('White', '?')} vs {h.get('Black', '?')}"
         new_title, ok = QInputDialog.getText(self, "Rename Game", "Enter name for this game:", QLineEdit.Normal, cur)
@@ -1277,9 +1277,9 @@ class MainWindow(QMainWindow):
 
     def save_to_library(self):
         if not self.game or not self.job:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Open and analyse a game first."); return
+            QMessageBox.information(self, "Chess Analyzer", "Open and analyse a game first."); return
         if not self.job.done:
-            QMessageBox.information(self, "Holly's Chess Analyzer", "Wait for analysis to finish before saving to the library."); return
+            QMessageBox.information(self, "Chess Analyzer", "Wait for analysis to finish before saving to the library."); return
         h = self.game.headers
         mc = self.settings.matched_color(h)
         if mc == chess.WHITE:

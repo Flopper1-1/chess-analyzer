@@ -1,6 +1,6 @@
 <div align="center">
 
-  <img src="icon.png" width="130" alt="Holly's Chess Analyzer Logo" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);" />
+  <img src="icon.png" width="130" alt="Chess Analyzer Logo" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);" />
 
   # Chess Analyzer
 
@@ -16,7 +16,7 @@
 
   ### 🎬 Feature Showcase
 
-  <img src="assets/showcase_preview.gif" alt="Holly's Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
+  <img src="assets/showcase_preview.gif" alt="Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
 
 </div>
 
@@ -38,7 +38,7 @@
   <tr>
     <td width="50%">
       <h3>🖥️ Standalone Windows Desktop App</h3>
-      Available as a standalone Windows executable (<code>Holly's Chess Analyzer.exe</code>) with zero external dependencies required.
+      Available as a standalone Windows executable (<code>ChessAnalyzer.exe</code>) with zero external dependencies required.
     </td>
     <td width="50%">
       <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
@@ -108,6 +108,16 @@ python main.py
 ```powershell
 .\build.ps1
 ```
+
+---
+
+## 🗺️ Roadmap
+
+- [ ] **Manual alternate routes with live annotation** — Explore branching what-if lines on the board with real-time Stockfish evaluation and instant move classification badges.
+- [ ] **Custom chess bots with live annotation** — Practice against configurable bot personalities and ELO tiers with live eval feedback and move analysis.
+- [ ] **Move feedback** — Natural language explanations detailing why a move is a blunder, mistake, or best move (e.g. tactics, pins, forks, and hanging pieces).
+- [ ] **Advanced brilliant tracking** — Detailed breakdowns of brilliant (`!!`) moves, categorizing specific archetypes (piece sacrifices, tactical deflections, underpromotions, and king hunts).
+- [ ] **Fix brilliant tracking and best move route** — Improve multi-ply depth validation for brilliant move detection and ensure optimal continuity along the best move path.
 
 ---
 
