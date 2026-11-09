@@ -9,4 +9,8 @@ python -m PyInstaller --noconfirm --onefile --windowed --name "Holly's Chess Ana
   --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
   --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf `
   main.py
-Copy-Item "dist\Holly's Chess Analyzer.exe" "$env:USERPROFILE\Downloads\Holly's Chess Analyzer.exe" -Force
+try {
+    Copy-Item "dist\Holly's Chess Analyzer.exe" "$env:USERPROFILE\Downloads\Holly's Chess Analyzer.exe" -Force
+} catch {
+    Write-Warning "Could not overwrite $env:USERPROFILE\Downloads\Holly's Chess Analyzer.exe (file is currently running)."
+}

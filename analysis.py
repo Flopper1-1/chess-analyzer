@@ -15,8 +15,8 @@ from accuracy import phase_of
 
 @dataclass
 class Settings:
-    scope: str = "all"          # all | mine | mine_brilliant
-    side: str = "both"          # white | black | both
+    scope: str = "all"                  # all | mine | mine_brilliant
+    side: str = "both"                  # white | black | both
     player_name: str = ""
     depth: int = 16
     threads: int = 2
@@ -24,6 +24,8 @@ class Settings:
     engine_path: str = ""
     preset: str = "custom"
     lenient_brilliant: bool = False
+    eval_formula: str = "improved"      # improved | win_prob
+    annotation_system: str = "modern"   # modern | legacy
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""
@@ -71,6 +73,7 @@ class MoveResult:
     best_san: str = ""
     phase: str = "middlegame"
     brilliant_type: str = ""    # "" | "queen" | "rook" | "bishop" | "knight" | "underpromotion"
+    second_cp: Optional[int] = None     # mover POV centipawns for 2nd best MultiPV line
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
 
@@ -199,13 +202,18 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         after = infos.get(i + 1)
         if before:
             raw_before_pv = before[0].get("pv", [])
-            if C.is_deadlocked_position(b, raw_before_pv):
+            if i == 0 and C.is_standard_start(b):
+                r.eval_before = 0
+            elif C.is_deadlocked_position(b, raw_before_pv):
                 r.eval_before = 0
             else:
                 r.eval_before = before[0]["score"].white().score(mate_score=10000)
             r.pv, r.pv_uci = pv_to_san(b, raw_before_pv)
             if r.pv:
                 r.best_san = r.pv[0]
+        elif i == 0 and C.is_standard_start(b):
+            r.eval_before = 0
+
         played_info = None
         for inf in before:
             pv = inf.get("pv") or []
@@ -235,21 +243,47 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         elif before and is_full(i) and after_score is not None:
             best_cp = C.cp_of(before[0]["score"].pov(mover))
             after_cp = C.cp_of(after_score.pov(mover))
-            best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
             is_best = bool(before[0].get("pv")) and before[0]["pv"][0] == mv
+            if is_best:
+                after_cp = best_cp
+            best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
             loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
-            second_wp = C.win_pct(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
+            second_cp = C.cp_of(before[1]["score"].pov(mover)) if len(before) > 1 else None
+            r.second_cp = second_cp
+            second_wp = C.win_pct(second_cp) if second_cp is not None else None
+
+            # Determine wp_before from the prior position so a winning tactical sacrifice
+            # isn't disqualified by its own high best_wp.
+            if i == 0 and C.is_standard_start(b):
+                before_cp = 0
+                wp_before = 50.0
+            elif i > 0 and results[i - 1].eval_before is not None:
+                prev_w = results[i - 1].eval_before
+                before_cp = prev_w if mover == chess.WHITE else -prev_w
+                wp_before = C.win_pct(before_cp)
+            else:
+                before_cp = best_cp
+                wp_before = best_wp
+            if second_wp is not None and settings.annotation_system == "modern":
+                wp_before = min(wp_before, max(best_wp, second_wp))
+
             sac = C.is_sacrifice(b, mv, sac_threshold)
-            max_loss = 5 if settings.lenient_brilliant else 2
+            max_loss = 5.0 if settings.lenient_brilliant else 2.5
             underpromo = C.is_brilliant_underpromotion(b, mv, is_best, loss, max_loss)
             sym = C.classify(
-                loss, is_best, after_wp, best_wp, second_wp, sac, best_wp,
-                settings.lenient_brilliant, underpromo_brilliant=underpromo,
+                loss, is_best, after_wp, best_wp, second_wp, sac, wp_before,
+                lenient=settings.lenient_brilliant,
+                underpromo_brilliant=underpromo,
+                system=settings.annotation_system,
+                cp_before=before_cp,
+                cp_after=after_cp,
+                best_cp=best_cp,
             )
             if mover not in tracked and not all_scope and sym != "!!":
                 pass  # untracked opponent move: only brilliants are reported
             else:
                 r.symbol, r.loss, r.analysed = sym, loss, True
+                r.brilliant_type = ""
                 if r.book:
                     r.symbol = "/"
                 elif r.symbol == "!!":
@@ -277,6 +311,69 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         if progress:
             progress(i + 1, total)
     return results
+
+
+def reclassify_results(game, results: List[MoveResult], settings: Settings) -> None:
+    """Re-evaluate move symbols in-place when switching between 'modern' and 'legacy'
+    annotation systems or toggling 'lenient_brilliant', without re-running Stockfish."""
+    if not game or not results:
+        return
+    sac_threshold = 1 if settings.lenient_brilliant else 2
+    max_loss = 5.0 if settings.lenient_brilliant else 2.5
+    tracked = settings.tracked_colors(game.headers)
+    all_scope = settings.scope == "all"
+
+    b = game.board()
+    for i, r in enumerate(results):
+        try:
+            mv = chess.Move.from_uci(r.uci) if r.uci else b.parse_san(r.san)
+        except Exception:
+            break
+        mover = b.turn
+        if i == 0 and C.is_standard_start(b):
+            r.eval_before = 0
+        if b.legal_moves.count() == 1 and not r.book:
+            r.symbol = "forced"
+            r.brilliant_type = ""
+        elif r.book:
+            if all_scope or mover in tracked:
+                r.symbol = "/"
+                r.brilliant_type = ""
+        elif r.analysed and r.eval_after is not None:
+            raw_best_w = r.eval_before if r.eval_before is not None else r.eval_after
+            best_cp = raw_best_w if mover == chess.WHITE else -raw_best_w
+            after_cp = r.eval_after if mover == chess.WHITE else -r.eval_after
+            is_best = (r.best_san == r.san) or (bool(r.pv_uci) and r.pv_uci[0] == r.uci) or (r.loss == 0.0 and not r.best_san)
+            if is_best:
+                after_cp = best_cp
+            after_wp = C.win_pct(after_cp)
+            best_wp = max(after_wp + r.loss, C.win_pct(best_cp))
+            second_wp = C.win_pct(r.second_cp) if r.second_cp is not None else None
+            if i == 0 and C.is_standard_start(b):
+                before_cp = 0
+                wp_before = 50.0
+            elif i > 0 and results[i - 1].eval_before is not None:
+                prev_w = results[i - 1].eval_before
+                before_cp = prev_w if mover == chess.WHITE else -prev_w
+                wp_before = C.win_pct(before_cp)
+            else:
+                before_cp = best_cp
+                wp_before = best_wp
+
+            sac = C.is_sacrifice(b, mv, sac_threshold)
+            underpromo = C.is_brilliant_underpromotion(b, mv, is_best, r.loss, max_loss)
+            sym = C.classify(
+                r.loss, is_best, after_wp, best_wp, second_wp, sac, wp_before,
+                lenient=settings.lenient_brilliant,
+                underpromo_brilliant=underpromo,
+                system=settings.annotation_system,
+                cp_before=before_cp,
+                cp_after=after_cp,
+                best_cp=best_cp,
+            )
+            r.symbol = sym
+            r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""
+        b.push(mv)
 
 
 def best_line(engine, fen: str, depth: int, multipv=3):

@@ -6,7 +6,7 @@
 
   **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, sound effects, and an in-app game library with advanced Brilliant (`!!`) tracking.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.4.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.5.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20.EXE-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6-41cd52?style=for-the-badge)
@@ -28,7 +28,7 @@
   <tr>
     <td width="50%">
       <h3>🎯 Precision Move Classification</h3>
-      Every move is mapped through non-linear win-probability curves, detecting tactical turnarounds, piece sacrifices, brilliant underpromotions, misses, and book moves in real-time with smooth slide animations and sound effects.
+      Features the <b>Modern Expected-Points Annotation System</b> (default) alongside the <b>Legacy Annotation System</b> in Settings—detecting tactical turnarounds, piece sacrifices, brilliant underpromotions, misses, and book moves with smooth slide animations and sound effects.
     </td>
     <td width="50%">
       <h3>📚 In-App Saved Games Library</h3>
@@ -42,7 +42,7 @@
     </td>
     <td width="50%">
       <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
-      Smooth live graph with hover/touch scrubbing, synchronized dual-color POV eval bar, and phase-by-phase accuracy (Opening, Middlegame, Endgame, Rating).
+      Smooth live graph and dual-color POV eval bar starting strictly at <code>0.0</code> on move 0, with selectable <b>Improved Eval Determination</b> (default) or <b>Win Probability (Legacy)</b> formulas and phase-by-phase accuracy.
     </td>
   </tr>
   <tr>

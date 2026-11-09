@@ -1,4 +1,4 @@
-"""Win-probability conversion and move classification."""
+"""Win-probability conversion, evaluation bar formulas, and move classification."""
 import math
 import chess
 
@@ -10,6 +10,8 @@ PIECE_CATEGORY = {
     chess.KNIGHT: "knight",
 }
 BRILLIANT_CATEGORIES = ("queen", "rook", "bishop", "knight", "underpromotion")
+EVAL_FORMULAS = ("improved", "win_prob")
+ANNOTATION_SYSTEMS = ("modern", "legacy")
 MATE_CP = 1000
 
 
@@ -19,8 +21,59 @@ def cp_of(score):
 
 
 def win_pct(cp):
+    """Lichess logistic win-probability formula (0..100%)."""
+    if cp is None:
+        return 50.0
     cp = max(-MATE_CP * 10, min(MATE_CP * 10, cp))
-    return 50 + 50 * (2 / (1 + math.exp(-0.00368208 * cp)) - 1)
+    return 50.0 + 50.0 * (2.0 / (1.0 + math.exp(-0.00368208 * cp)) - 1.0)
+
+
+def is_standard_start(board: chess.Board) -> bool:
+    """True when the board is at the standard chess starting position with no moves played."""
+    if board is None:
+        return False
+    return (
+        board.board_fen() == chess.STARTING_BOARD_FEN
+        and board.turn == chess.WHITE
+        and board.fullmove_number == 1
+        and board.halfmove_clock == 0
+    )
+
+
+def eval_bar_pct(cp, mode: str = "improved", board: chess.Board = None, pv=None, is_start: bool = False) -> float:
+    """Convert White-POV centipawns to White's evaluation bar fill percentage (0.0..100.0).
+
+    Modes:
+    - 'improved' (default): Starts at 50% (0.0) on move 0, dampens tiny engine tempo noise
+      near 0.00, uses a calibrated WDL/tanh curve for smooth visual scaling, and reserves
+      0% / 100% exclusively for forced checkmate.
+    - 'win_prob': Legacy Lichess win-probability logistic curve (`win_pct(cp)`).
+    """
+    if is_start or cp is None or cp == 0:
+        return 50.0
+    if board is not None and (is_standard_start(board) or is_deadlocked_position(board, pv)):
+        return 50.0
+    if mode == "win_prob":
+        return win_pct(cp)
+
+    # Improved Eval Determination (default)
+    if abs(cp) >= 9000:
+        return 100.0 if cp > 0 else 0.0
+
+    abs_cp = float(abs(cp))
+    # Contempt / tempo deadzone dampening near 0.00 so tiny engine first-move noise
+    # (+0.10 to +0.20) in equal positions stays visually centered near 50%.
+    if abs_cp <= 15.0:
+        eff_cp = 0.0
+    elif abs_cp < 45.0:
+        t = (abs_cp - 15.0) / 30.0
+        eff_cp = math.copysign(abs_cp * (t * t), cp)
+    else:
+        eff_cp = float(cp)
+
+    # Smooth WDL-calibrated hyperbolic tangent curve; non-mate advantages clamp to [2.5%, 97.5%]
+    pct = 50.0 + 50.0 * math.tanh(eff_cp / 410.0)
+    return max(2.5, min(97.5, pct))
 
 
 def material(board, color):
@@ -55,7 +108,7 @@ def is_brilliant_underpromotion(board_before: chess.Board, move: chess.Move, is_
 
 def is_sacrifice(board_before, move, threshold=2):
     """True if the mover gives up >= threshold pawns of material net after the best
-    reply by the opponent (simple 1-ply capture search)."""
+    reply by the opponent (1-ply capture + recapture search)."""
     color = board_before.turn
     b = board_before.copy()
     start = material(b, color) - material(b, not color)
@@ -236,11 +289,9 @@ def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
     return False
 
 
-def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
-             lenient=False, underpromo_brilliant=False):
-    """Return a symbol. All win percentages are from the mover's point of view."""
-    # Miss: a winning move was available (>=70% win chance) but the move played threw most of it away
-    # without being an outright losing blunder.
+def classify_legacy(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
+                    lenient=False, underpromo_brilliant=False):
+    """Legacy win-probability threshold classification."""
     if loss > 5 and best_wp >= 70 and 30 <= played_wp_after < 60:
         return "miss"
     if loss > 20:
@@ -249,7 +300,6 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
         return "?"
     if loss > 5:
         return "?!"
-    # good-or-better territory
     max_loss, min_after, max_before = (5, 35, 95) if lenient else (2, 45, 90)
     if (sacrifice and loss <= max_loss and played_wp_after >= min_after and wp_before < max_before) or (
         underpromo_brilliant and loss <= max_loss and played_wp_after >= min_after
@@ -262,6 +312,113 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
     if loss <= 2:
         return "++"
     return "+"
+
+
+def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
+                    lenient=False, underpromo_brilliant=False,
+                    cp_before=None, cp_after=None, best_cp=None):
+    """Modern Expected-Points (Chess.com V2 / WintrCat style) context-aware move classification.
+
+    All win percentages (0..100) and centipawn values are from the mover's point of view.
+    Expected Points loss ΔEP = loss / 100.0.
+    """
+    eff_loss = max(0.0, float(loss))
+
+    # 1. Brilliant (!!): Sound piece sacrifice or tactical/stalemate-avoiding underpromotion
+    max_bril_loss = 5.0 if lenient else 2.5
+    min_bril_after = 38.0 if lenient else 45.0
+    max_bril_before = 95.0 if lenient else 90.0
+    if underpromo_brilliant and eff_loss <= max_bril_loss and played_wp_after >= min_bril_after:
+        return "!!"
+    if sacrifice and eff_loss <= max_bril_loss:
+        # Either the position after the sacrifice is non-losing (>= min_bril_after) and wasn't already
+        # trivially won (< max_bril_before), OR the sacrifice rescued a worse position.
+        if (played_wp_after >= min_bril_after and wp_before < max_bril_before) or (
+            wp_before < min_bril_after and played_wp_after >= wp_before - 1.0 and played_wp_after >= 35.0
+        ):
+            return "!!"
+
+    # 2. Already-decided Winning Position Protection:
+    # If a player is overwhelmingly winning before and after the move (>= +4.00 and >= 82% win prob),
+    # minor engine depth fluctuations should not be flagged as Inaccuracy/Mistake/Blunder.
+    if (
+        played_wp_after >= 82.0
+        and best_wp >= 86.0
+        and (cp_after is None or cp_after >= 400)
+        and eff_loss < 12.0
+    ):
+        eff_loss = min(eff_loss, 3.5)
+
+    # 3. Forced-mate blunder check: allowing forced checkmate from a playable position
+    if cp_after is not None and cp_after <= -9000 and best_wp >= 22.0 and (best_cp is None or best_cp > -8000):
+        return "??"
+
+    # 4. Miss (miss): Missing a clear tactical punishment or critical only-move opportunity
+    # without collapsing into a completely lost position.
+    missed_tactic = (
+        eff_loss > 5.0
+        and eff_loss <= 22.0
+        and 28.0 <= played_wp_after < 62.0
+        and (
+            best_wp >= 68.0
+            or (second_wp is not None and (best_wp - second_wp) >= 15.0 and best_wp >= 55.0)
+        )
+    )
+    if missed_tactic:
+        return "miss"
+
+    # 5. Negative Expected-Points loss buckets (Blunder / Mistake / Inaccuracy)
+    if eff_loss > 20.0:
+        return "??"
+    if eff_loss > 10.0:
+        return "?"
+    if eff_loss > 5.0:
+        return "?!"
+
+    # 6. Great Move (!): Finding the critical best move in a sharp or game-changing position
+    if is_best or eff_loss <= 0.8:
+        only_good_move = (
+            second_wp is not None
+            and (best_wp - second_wp) >= 12.0
+            and 20.0 <= best_wp <= 92.0
+        )
+        escaped_danger = (
+            wp_before < 44.0
+            and played_wp_after >= 51.0
+            and second_wp is not None
+            and (best_wp - second_wp) >= 8.0
+        )
+        punished_mistake = (
+            (best_wp - wp_before) >= 16.0
+            and played_wp_after >= 58.0
+            and second_wp is not None
+            and (best_wp - second_wp) >= 9.0
+        )
+        if only_good_move or escaped_danger or punished_mistake:
+            return "!"
+
+    # 7. Best / Excellent / Good
+    if is_best or eff_loss <= 0.5:
+        return "+++"
+    if eff_loss <= 2.0:
+        return "++"
+    return "+"
+
+
+def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
+             lenient=False, underpromo_brilliant=False, system: str = "modern",
+             cp_before=None, cp_after=None, best_cp=None):
+    """Return an annotation symbol using the selected classification system ('modern' or 'legacy')."""
+    if system == "legacy":
+        return classify_legacy(
+            loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
+            lenient=lenient, underpromo_brilliant=underpromo_brilliant,
+        )
+    return classify_modern(
+        loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
+        lenient=lenient, underpromo_brilliant=underpromo_brilliant,
+        cp_before=cp_before, cp_after=cp_after, best_cp=best_cp,
+    )
 
 
 SYMBOL_NAMES = {

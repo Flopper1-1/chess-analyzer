@@ -177,3 +177,102 @@ def test_deadlocked_eval_and_sounds():
             raw = f.read()
         assert not raw.startswith(b"ID3")
         assert raw[-128:-125] != b"TAG"
+
+
+def test_eval_bar_formulas_and_start_of_game_zero():
+    import chess
+    import classify as C
+
+    s = A.Settings()
+    assert s.eval_formula == "improved"
+    assert s.annotation_system == "modern"
+
+    # Standard starting position is strictly 50.0% (0.0) even if engine gives +28 cp
+    start_b = chess.Board()
+    assert C.is_standard_start(start_b) is True
+    assert C.eval_bar_pct(28, mode="improved", board=start_b) == 50.0
+    assert C.eval_bar_pct(28, mode="improved", is_start=True) == 50.0
+    assert C.eval_bar_pct(28, mode="win_prob", is_start=True) == 50.0
+
+    # After a move, board is no longer the start board
+    b_after = start_b.copy()
+    b_after.push_san("e4")
+    assert C.is_standard_start(b_after) is False
+
+    # Improved formula dampens tiny engine noise (<=15cp -> 50.0%) and clamps non-mate to [2.5, 97.5]
+    assert C.eval_bar_pct(12, mode="improved", board=b_after) == 50.0
+    assert C.eval_bar_pct(-12, mode="improved", board=b_after) == 50.0
+    assert C.eval_bar_pct(12, mode="win_prob", board=b_after) > 50.5
+    assert 50.0 < C.eval_bar_pct(200, mode="improved", board=b_after) < 97.5
+    assert C.eval_bar_pct(2500, mode="improved", board=b_after) == 97.5
+    assert C.eval_bar_pct(-2500, mode="improved", board=b_after) == 2.5
+
+    # Mate scores reach 100% / 0%
+    assert C.eval_bar_pct(10000, mode="improved", board=b_after) == 100.0
+    assert C.eval_bar_pct(-10000, mode="improved", board=b_after) == 0.0
+
+
+def test_modern_vs_legacy_annotations_and_reclassify():
+    import classify as C
+
+    # 1. A decisive sacrifice (best_wp=93%) from a balanced position (wp_before=52%)
+    # was falsely rejected by legacy when best_wp was passed as wp_before, but succeeds now:
+    sym_mod = C.classify(
+        0.0, True, 93.0, 93.0, 52.0, True, 52.0,
+        lenient=False, system="modern",
+    )
+    assert sym_mod == "!!"
+
+    # 2. Already-decided winning position (+7.00 -> +5.20):
+    # Modern system avoids flagging minor garbage-time CP drift as a Mistake/Inaccuracy,
+    # whereas legacy flags 6.5% win-prob drop as '?'.
+    sym_mod_win = C.classify(
+        6.5, False, 91.0, 97.5, 95.0, False, 96.0,
+        lenient=False, system="modern", cp_before=700, cp_after=520, best_cp=700,
+    )
+    sym_leg_win = C.classify(
+        6.5, False, 91.0, 97.5, 95.0, False, 96.0,
+        lenient=False, system="legacy",
+    )
+    assert sym_mod_win == "+"
+    assert sym_leg_win == "?!"
+
+    # 3. Great move (!) when escaping danger (wp_before=38% -> played_wp_after=55% with unique best move)
+    sym_great = C.classify(
+        0.0, True, 55.0, 55.0, 44.0, False, 38.0,
+        lenient=False, system="modern",
+    )
+    sym_leg_great = C.classify(
+        0.0, True, 55.0, 55.0, 44.0, False, 38.0,
+        lenient=False, system="legacy",
+    )
+    assert sym_great == "!"
+    assert sym_leg_great == "+++"
+
+    # 4. In-place reclassification between modern and legacy systems without Stockfish
+    pgn = '[White "A"]\n[Black "B"]\n\n1. e4 e5 2. Nf3 Nc6 *\n'
+    g = chess.pgn.read_game(io.StringIO(pgn))
+    b0 = g.board()
+    b1 = b0.copy(); b1.push_san("e4")
+    b2 = b1.copy(); b2.push_san("e5")
+    res = [
+        A.MoveResult(
+            ply=1, color=True, san="e4", uci="e2e4",
+            fen_before=b0.fen(), fen_after=b1.fen(),
+            symbol="+++", analysed=True, loss=0.0,
+            eval_before=30, eval_after=520, eval_after_text="+5.20",
+            best_san="e4", pv=["e4"], pv_uci=["e2e4"],
+        ),
+        A.MoveResult(
+            ply=2, color=False, san="e5", uci="e7e5",
+            fen_before=b1.fen(), fen_after=b2.fen(),
+            symbol="?!", analysed=True, loss=6.5,
+            eval_before=-700, eval_after=-520, eval_after_text="-5.20",
+            best_san="c5", second_cp=650, pv=["c5"], pv_uci=["c7c5"],
+        ),
+    ]
+    A.reclassify_results(g, res, A.Settings(annotation_system="modern"))
+    assert res[0].eval_before == 0
+    assert res[1].symbol == "+"
+    A.reclassify_results(g, res, A.Settings(annotation_system="legacy"))
+    assert res[1].symbol == "?!"

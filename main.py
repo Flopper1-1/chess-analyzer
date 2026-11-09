@@ -352,9 +352,17 @@ class EvalBar(QWidget):
         super().__init__()
         self.cp = 0
         self.text = "0.0"
+        self.formula = "improved"
+        self.is_start = True
         self.setFixedWidth(44)
 
-    def set_eval(self, cp, text=""):
+    def set_eval(self, cp, text="", is_start=False):
+        self.is_start = bool(is_start)
+        if self.is_start:
+            self.cp = 0
+            self.text = "0.0"
+            self.update()
+            return
         self.cp = 0 if cp is None else cp
         if text in ("+0.00", "-0.00", "0.00", "+0.0", "-0.0", "0.0"):
             self.cp = 0
@@ -370,9 +378,10 @@ class EvalBar(QWidget):
     def paintEvent(self, _):
         p = QPainter(self)
         h, w = self.height(), self.width()
-        white_h = h * C.win_pct(self.cp) / 100.0
+        pct = C.eval_bar_pct(self.cp, mode=self.formula, is_start=self.is_start)
+        white_h = h * pct / 100.0
         p.fillRect(0, 0, w, h, QColor("#333"))
-        p.fillRect(0, int(h - white_h), w, int(white_h) + 1, QColor("#eee"))
+        p.fillRect(0, int(round(h - white_h)), w, int(round(white_h)) + 1, QColor("#eee"))
         p.setFont(QFont("Segoe UI", 9, QFont.Bold))
         white_ahead = self.cp >= 0
         # number sits on the side of whoever is ahead: bottom for white, top for black
@@ -388,6 +397,7 @@ class GraphWidget(QWidget):
         super().__init__()
         self.values = []
         self.labels = []
+        self.formula = "improved"
         self.hover = -1
         self.setMouseTracking(True)
         self.setMinimumHeight(70)
@@ -426,7 +436,13 @@ class GraphWidget(QWidget):
         if len(self.values) < 2:
             return
         w, h = self.width(), self.height()
-        pts = [QPointF(i * w / (len(self.values) - 1), h - h * C.win_pct(v) / 100) for i, v in enumerate(self.values)]
+        pts = [
+            QPointF(
+                i * w / (len(self.values) - 1),
+                h - h * C.eval_bar_pct(v, mode=self.formula, is_start=(i == 0 and v == 0)) / 100.0,
+            )
+            for i, v in enumerate(self.values)
+        ]
         poly = [QPointF(0, h)] + pts + [QPointF(w, h)]
         from PySide6.QtGui import QPolygonF
         p.setPen(Qt.NoPen)
@@ -577,6 +593,16 @@ class SettingsDialog(QDialog):
         self.side.setCurrentIndex(max(0, self.side.findData(s.side)))
         self.name = QLineEdit(s.player_name)
         self.name.setPlaceholderText("optional: also flips the board to your side")
+        self.eval_formula = QComboBox()
+        self.eval_formula.addItem("Improved Eval Determination (Default)", "improved")
+        self.eval_formula.addItem("Win Probability (Legacy)", "win_prob")
+        self.eval_formula.setCurrentIndex(max(0, self.eval_formula.findData(getattr(s, "eval_formula", "improved"))))
+        self.annotation_system = QComboBox()
+        self.annotation_system.addItem("Modern Expected-Points System (Default)", "modern")
+        self.annotation_system.addItem("Legacy Annotation System", "legacy")
+        self.annotation_system.setCurrentIndex(
+            max(0, self.annotation_system.findData(getattr(s, "annotation_system", "modern")))
+        )
         self.lenient = QCheckBox("Lenient brilliants (smaller sacrifices and near-best moves count)")
         self.lenient.setChecked(s.lenient_brilliant)
         self.preset = QComboBox()
@@ -597,6 +623,8 @@ class SettingsDialog(QDialog):
         f.addRow("Analysis scope", self.scope)
         f.addRow("My side", self.side)
         f.addRow("My player name", self.name)
+        f.addRow("Eval bar formula", self.eval_formula)
+        f.addRow("Annotation system", self.annotation_system)
         f.addRow("", self.lenient)
         f.addRow("Preset", self.preset)
         f.addRow("Depth (slider)", srow)
@@ -610,6 +638,16 @@ class SettingsDialog(QDialog):
         # ---- annotations tab
         page2 = QWidget(); l2 = QVBoxLayout(page2)
         tabs.addTab(page2, "Annotations")
+        self.annotation_system_tab2 = QComboBox()
+        self.annotation_system_tab2.addItem("Modern Expected-Points System (Default)", "modern")
+        self.annotation_system_tab2.addItem("Legacy Annotation System", "legacy")
+        self.annotation_system_tab2.setCurrentIndex(self.annotation_system.currentIndex())
+        self.annotation_system.currentIndexChanged.connect(self.annotation_system_tab2.setCurrentIndex)
+        self.annotation_system_tab2.currentIndexChanged.connect(self.annotation_system.setCurrentIndex)
+        sys_row = QHBoxLayout()
+        sys_row.addWidget(QLabel("Annotation system:"))
+        sys_row.addWidget(self.annotation_system_tab2, 1)
+        l2.addLayout(sys_row)
         self.mode = QComboBox()
         self.mode.addItem("Icons (new)", "icons")
         self.mode.addItem("Legacy (symbols and colours)", "legacy")
@@ -740,9 +778,19 @@ class SettingsDialog(QDialog):
         return {k: (r[0].text() or styles.DEFAULTS[k][1], r[2]) for k, r in self.style_rows.items()}
 
     def result_settings(self):
-        return A.Settings(self.scope.currentData(), self.side.currentData(), self.name.text(),
-                          self.slider.value(), self.threads.value(), self.hash.value(), self.path.text(),
-                          self.preset.currentData(), self.lenient.isChecked())
+        return A.Settings(
+            self.scope.currentData(),
+            self.side.currentData(),
+            self.name.text(),
+            self.slider.value(),
+            self.threads.value(),
+            self.hash.value(),
+            self.path.text(),
+            self.preset.currentData(),
+            self.lenient.isChecked(),
+            eval_formula=self.eval_formula.currentData(),
+            annotation_system=self.annotation_system.currentData(),
+        )
 
 
 class PasteDialog(QDialog):
@@ -1068,9 +1116,19 @@ class MainWindow(QMainWindow):
         self.setAcceptDrops(True)
         qs = QSettings("ChessAnalyzer", "ChessAnalyzer")
         self.qs = qs
-        self.settings = A.Settings(qs.value("scope", "all"), qs.value("side", "both"), qs.value("name", ""),
-                                   int(qs.value("depth", 16)), int(qs.value("threads", 2)),
-                                   int(qs.value("hash", 128)), qs.value("engine", ""), qs.value("preset", "custom"), qs.value("lenient", False, type=bool))
+        self.settings = A.Settings(
+            qs.value("scope", "all"),
+            qs.value("side", "both"),
+            qs.value("name", ""),
+            int(qs.value("depth", 16)),
+            int(qs.value("threads", 2)),
+            int(qs.value("hash", 128)),
+            qs.value("engine", ""),
+            qs.value("preset", "custom"),
+            qs.value("lenient", False, type=bool),
+            eval_formula=qs.value("eval_formula", "improved"),
+            annotation_system=qs.value("annotation_system", "modern"),
+        )
         styles.load(qs)
         self.sound = SoundPlayer()
         self.holder = EngineHolder()
@@ -1090,6 +1148,7 @@ class MainWindow(QMainWindow):
         left.addWidget(self.players)
         bh = QHBoxLayout()
         self.evalbar = EvalBar()
+        self.evalbar.formula = self.settings.eval_formula
         self.board = BoardWidget()
         bh.addWidget(self.evalbar); bh.addWidget(self.board, 1)
         left.addLayout(bh, 1)
@@ -1100,7 +1159,9 @@ class MainWindow(QMainWindow):
                       ("Flip", self.flip)):
             b = QPushButton(t); b.clicked.connect(fn); nav.addWidget(b)
         left.addLayout(nav)
-        self.graph = GraphWidget(); self.graph.clicked.connect(self.goto)
+        self.graph = GraphWidget()
+        self.graph.formula = self.settings.eval_formula
+        self.graph.clicked.connect(self.goto)
         left.addWidget(self.graph)
         root.addLayout(left, 3)
 
@@ -1423,7 +1484,9 @@ class MainWindow(QMainWindow):
         results = self.results
         if not results:
             self.graph.set_values([]); return
-        vals = [results[0].eval_before if results[0].eval_before is not None else 0]
+        is_std = C.is_standard_start(getattr(self, "start_board", None))
+        start_val = 0 if is_std else (results[0].eval_before if results[0].eval_before is not None else 0)
+        vals = [start_val]
         labels = ["Start position"]
         for r in results:
             vals.append(r.eval_after if r.eval_after is not None else vals[-1])
@@ -1686,14 +1749,19 @@ class MainWindow(QMainWindow):
         self.table.blockSignals(True)
         self.table.selectRow(idx)
         self.table.blockSignals(False)
-        cp, txt = None, ""
-        if r and r.eval_after is not None:
+        cp, txt, is_start = None, "", False
+        if idx == 0:
+            if C.is_standard_start(b):
+                cp, txt, is_start = 0, "0.0", True
+            elif self.results and self.results[0].eval_before is not None:
+                cp = self.results[0].eval_before
+            else:
+                cp, txt, is_start = 0, "0.0", True
+        elif r and r.eval_after is not None:
             cp, txt = r.eval_after, r.eval_after_text
-        elif idx == 0 and self.results and self.results[0].eval_before is not None:
-            cp = self.results[0].eval_before
         if C.is_deadlocked_position(b, r.pv_uci if (r and r.pv_uci) else None):
             cp, txt = 0, "0.0"
-        self.evalbar.set_eval(cp, txt)
+        self.evalbar.set_eval(cp, txt, is_start=is_start)
         name = "–"
         for k in range(idx, 0, -1):
             if k - 1 < len(self.results) and self.results[k - 1].opening:
@@ -1722,23 +1790,25 @@ class MainWindow(QMainWindow):
 
     def show_win_guide(self):
         msg = (
-            "<h3>What is Win Chance?</h3>"
-            "<p>Stockfish scores positions in centipawns (100 = 1 pawn advantage). "
-            "To measure the real impact of a move, centipawns are converted to an "
-            "<b>expected win percentage (0–100%)</b> using the Lichess win-probability formula:</p>"
-            "<p><code>win% = 50 + 50 · (2 / (1 + e^(-0.00368208 · cp)) - 1)</code></p>"
+            "<h3>Evaluation Bar &amp; Move Annotations Guide</h3>"
+            "<p><b>Evaluation Bar Formulas (selectable in Settings):</b></p>"
             "<ul>"
-            "<li><b>0.00 eval</b> → 50% win chance</li>"
-            "<li><b>+1.00 eval</b> → ~59% win chance</li>"
-            "<li><b>+2.00 eval</b> → ~68% win chance</li>"
-            "<li><b>+3.00 eval</b> → ~75% win chance</li>"
-            "<li><b>+5.00 eval</b> → ~86% win chance</li>"
+            "<li><b>Improved Eval Determination (Default):</b> Starts strictly at <code>0.0</code> (50%/50%) before any moves are played, "
+            "dampens tiny engine tempo noise near <code>0.00</code>, uses a WDL-calibrated smooth curve, and clamps non-mate advantages "
+            "to <code>[2.5%, 97.5%]</code> so <code>100%</code> is reserved exclusively for forced checkmate.</li>"
+            "<li><b>Win Probability (Legacy):</b> Uses the Lichess logistic formula "
+            "<code>win% = 50 + 50 · (2 / (1 + e^(-0.00368208 · cp)) - 1)</code>.</li>"
             "</ul>"
-            "<p>A move's <b>loss</b> is how much win% it gave away compared with the engine's best move: "
-            "<b>Inaccuracy (?!)</b> 5–10%, <b>Mistake (?)</b> 10–20%, <b>Blunder (??)</b> &gt;20%, and "
-            "<b>Miss</b> when a winning move (&ge;70% win%) was missed leaving &lt;60%.</p>"
+            "<p><b>Annotation Systems (selectable in Settings):</b></p>"
+            "<ul>"
+            "<li><b>Modern Expected-Points System (Default):</b> Context-aware classification using Expected Points loss (ΔEP), "
+            "true pre-move position evaluation, MultiPV uniqueness for <b>Great (!)</b> and <b>Miss</b>, winning-position protection, "
+            "and sound sacrifice / underpromotion verification for <b>Brilliant (!!)</b>.</li>"
+            "<li><b>Legacy Annotation System:</b> Classic fixed win-percentage drop thresholds "
+            "(<b>Inaccuracy (?!)</b> 5–10%, <b>Mistake (?)</b> 10–20%, <b>Blunder (??)</b> &gt;20%).</li>"
+            "</ul>"
         )
-        QMessageBox.information(self, "Win Chance & Annotations Guide", msg)
+        QMessageBox.information(self, "Evaluation & Annotations Guide", msg)
 
     def show_keys(self):
         lines = []
@@ -1801,17 +1871,18 @@ class MainWindow(QMainWindow):
             self.settings = s
             for k, v in (("scope", s.scope), ("side", s.side), ("name", s.player_name), ("depth", s.depth),
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
-                         ("preset", s.preset)):
+                         ("preset", s.preset), ("eval_formula", s.eval_formula),
+                         ("annotation_system", s.annotation_system)):
                 self.qs.setValue(k, v)
             styles.set_all(d.result_styles())
             styles.save(self.qs)
             self.qs.setValue("lenient", s.lenient_brilliant)
             styles.mode = d.mode.currentData()
             styles.save(self.qs)
+            self.evalbar.formula = s.eval_formula
+            self.graph.formula = s.eval_formula
 
-            # Only re-analyze if engine/analysis parameters changed.
-            # Changing annotation style (Icons vs Legacy, custom icons, colors/symbols)
-            # or player name/side under 'all' scope refreshes the UI in-place!
+            # Only re-analyze with Stockfish if engine or search-depth/scope parameters changed.
             engine_changed = (
                 old.threads != s.threads
                 or old.hash_mb != s.hash_mb
@@ -1821,7 +1892,7 @@ class MainWindow(QMainWindow):
                 engine_changed
                 or old.scope != s.scope
                 or old.depth != s.depth
-                or old.lenient_brilliant != s.lenient_brilliant
+                or (s.scope == "mine_brilliant" and old.lenient_brilliant != s.lenient_brilliant)
                 or (
                     s.scope != "all"
                     and (
@@ -1829,6 +1900,10 @@ class MainWindow(QMainWindow):
                         or (old.player_name or "").strip().lower() != (s.player_name or "").strip().lower()
                     )
                 )
+            )
+            reclassify_needed = (
+                old.annotation_system != s.annotation_system
+                or old.lenient_brilliant != s.lenient_brilliant
             )
             if analysis_changed:
                 self.stop()
@@ -1838,11 +1913,20 @@ class MainWindow(QMainWindow):
                     self.orient()
                     self.restart_all()
             else:
+                if reclassify_needed:
+                    for j in self.jobs:
+                        if j.results:
+                            A.reclassify_results(j.game, j.results, s)
                 if self.game:
                     self.orient()
                     for k in range(len(self.basic)):
                         self.set_row(k)
+                    self.refresh_graph()
+                    self.update_accuracy(final=bool(self.job and self.job.done))
                     self.goto(self.cur, animate=False, play_sound=False)
+                else:
+                    self.evalbar.update()
+                    self.graph.update()
 
     def closeEvent(self, e):
         try:
