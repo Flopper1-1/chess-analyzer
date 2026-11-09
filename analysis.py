@@ -82,7 +82,10 @@ def eval_text(score: Optional[chess.engine.PovScore]) -> str:
     if w.is_mate():
         m = w.mate()
         return ("#%d" % m) if m > 0 else ("-#%d" % -m)
-    return "%+.2f" % (w.score() / 100.0)
+    cp = w.score()
+    if cp == 0:
+        return "0.0"
+    return "%+.2f" % (cp / 100.0)
 
 
 def find_engine(settings: Settings) -> str:
@@ -195,8 +198,12 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         before = infos.get(i) or []
         after = infos.get(i + 1)
         if before:
-            r.eval_before = before[0]["score"].white().score(mate_score=10000)
-            r.pv, r.pv_uci = pv_to_san(b, before[0].get("pv", []))
+            raw_before_pv = before[0].get("pv", [])
+            if C.is_deadlocked_position(b, raw_before_pv):
+                r.eval_before = 0
+            else:
+                r.eval_before = before[0]["score"].white().score(mate_score=10000)
+            r.pv, r.pv_uci = pv_to_san(b, raw_before_pv)
             if r.pv:
                 r.best_san = r.pv[0]
         played_info = None
@@ -204,17 +211,24 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             pv = inf.get("pv") or []
             if pv and pv[0] == mv:
                 played_info = inf
+        after_pv = []
         if played_info is not None:
             after_score = played_info["score"]
+            after_pv = (played_info.get("pv") or [])[1:]
         elif after:
             after_score = after[0]["score"]
+            after_pv = after[0].get("pv") or []
         elif boards[i + 1].is_game_over():
             after_score = terminal_score(boards[i + 1])
         else:
             after_score = None
         if after_score is not None:
-            r.eval_after = after_score.white().score(mate_score=10000)
-            r.eval_after_text = eval_text(after_score)
+            if C.is_deadlocked_position(boards[i + 1], after_pv):
+                r.eval_after = 0
+                r.eval_after_text = "0.0"
+            else:
+                r.eval_after = after_score.white().score(mate_score=10000)
+                r.eval_after_text = eval_text(after_score)
         if b.legal_moves.count() == 1 and not r.book:
             # only one legal move: forced, never judged
             r.symbol, r.analysed = "forced", tracked_mover(i)

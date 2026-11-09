@@ -152,3 +152,28 @@ def test_library_username_tracks_both_colors_and_breakdown(tmp_path):
     # Total across library for Holly: 4 brilliants (1 queen, 1 rook, 1 knight, 1 underpromotion)
     total_yours = sum(r["brilliant_yours"] for r in rows)
     assert total_yours == 4
+
+
+def test_deadlocked_eval_and_sounds():
+    import chess
+    import classify as C
+    from openings import resource_path
+
+    # Locked pawn chain where neither player can progress without a bad sacrifice
+    locked_fen = "4k3/8/1p1p1p1p/p1p1p1p1/P1P1P1P1/1P1P1P1P/8/4K2B w - - 0 30"
+    b_locked = chess.Board(locked_fen)
+    assert C.is_deadlocked_position(b_locked, ["e1d2", "e8d7", "d2e1", "d7e8"]) is True
+
+    # Open starting position is NOT deadlocked
+    assert C.is_deadlocked_position(chess.Board(), ["e2e4", "e7e5"]) is False
+
+    # Verify all 8 Default sounds exist and have no ID3 headers
+    for name in ("brilliant", "Capture", "Castle", "Check", "Checkmate", "draw", "Game_load", "Move"):
+        mp3_p = resource_path(os.path.join("assets", "sounds", f"{name}.mp3"))
+        wav_p = resource_path(os.path.join("assets", "sounds", f"{name}.wav"))
+        assert os.path.exists(mp3_p), f"Missing {mp3_p}"
+        assert os.path.exists(wav_p), f"Missing {wav_p}"
+        with open(mp3_p, "rb") as f:
+            raw = f.read()
+        assert not raw.startswith(b"ID3")
+        assert raw[-128:-125] != b"TAG"

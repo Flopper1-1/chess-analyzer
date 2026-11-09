@@ -132,6 +132,110 @@ def brilliant_category(board_before: chess.Board, move: chess.Move) -> str:
     return "knight"
 
 
+def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
+    """Return True when neither player can make progress without committing a bad move
+    (e.g., PV repeats/shuffles, locked pawn fortress with no safe break, or draw state)."""
+    if board is None:
+        return False
+    if board.is_checkmate():
+        return False
+    if (
+        board.is_stalemate()
+        or board.is_insufficient_material()
+        or board.is_fifty_moves()
+        or board.is_repetition(2)
+        or board.halfmove_clock >= 20
+    ):
+        return True
+
+    # Normalize pv into a list of chess.Move
+    pv_moves = []
+    if pv:
+        sim_parse = board.copy()
+        for item in pv:
+            try:
+                mv = chess.Move.from_uci(item) if isinstance(item, str) else item
+                if mv in sim_parse.legal_moves:
+                    pv_moves.append(mv)
+                    sim_parse.push(mv)
+                else:
+                    break
+            except Exception:
+                break
+
+    # Check if the engine's best line (PV) repeats positions or shuffles pieces back and forth
+    if pv_moves:
+        sim = board.copy()
+        seen_fens = {sim.board_fen()}
+        quiet_streak = 0
+        origin_squares = {chess.WHITE: set(), chess.BLACK: set()}
+        returned_to_origin = {chess.WHITE: False, chess.BLACK: False}
+        for mv in pv_moves:
+            mover = sim.turn
+            is_cap = sim.is_capture(mv)
+            is_pawn = sim.piece_type_at(mv.from_square) == chess.PAWN
+            if not is_cap and not is_pawn and not mv.promotion:
+                quiet_streak += 1
+                if mv.to_square in origin_squares[mover]:
+                    returned_to_origin[mover] = True
+                origin_squares[mover].add(mv.from_square)
+            else:
+                quiet_streak = 0
+            sim.push(mv)
+            if sim.is_checkmate():
+                return False
+            if sim.is_stalemate() or sim.is_insufficient_material() or sim.is_repetition(2):
+                return True
+            bfen = sim.board_fen()
+            if bfen in seen_fens:
+                return True
+            seen_fens.add(bfen)
+        # If the top engine line makes 6+ quiet non-pawn moves and shuffles pieces back
+        if len(pv_moves) >= 6 and quiet_streak >= len(pv_moves) and (
+            returned_to_origin[chess.WHITE] or returned_to_origin[chess.BLACK]
+        ):
+            return True
+
+    # Check for locked pawn structure / fortress where neither side has a safe pawn advance or winning capture
+    if not board.is_check() and board.pawns:
+        any_safe_progress = False
+        for side in (chess.WHITE, chess.BLACK):
+            tb = board.copy(stack=False)
+            tb.turn = side
+            for m in tb.legal_moves:
+                pt = tb.piece_type_at(m.from_square)
+                if pt == chess.PAWN:
+                    # A pawn move is safe progress if it doesn't immediately lose material
+                    if not is_sacrifice(tb, m, threshold=1):
+                        any_safe_progress = True
+                        break
+                elif tb.is_capture(m):
+                    victim = tb.piece_at(m.to_square)
+                    if victim is not None:
+                        # Winning capture or safe capture of undefended piece
+                        if PIECE_VAL.get(victim.piece_type, 0) > PIECE_VAL.get(pt, 0) or not tb.is_attacked_by(not side, m.to_square):
+                            if not is_sacrifice(tb, m, threshold=1):
+                                any_safe_progress = True
+                                break
+            if any_safe_progress:
+                break
+        if not any_safe_progress:
+            # Confirm PV also doesn't find a forced tactical breakthrough in the first 4 plies
+            if not pv_moves:
+                return True
+            sim2 = board.copy()
+            pv_breaks = False
+            for mv in pv_moves[:4]:
+                if sim2.is_capture(mv) or sim2.piece_type_at(mv.from_square) == chess.PAWN or mv.promotion:
+                    pv_breaks = True
+                    break
+                sim2.push(mv)
+            if not pv_breaks:
+                return True
+
+    return False
+
+
 def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
              lenient=False, underpromo_brilliant=False):
     """Return a symbol. All win percentages are from the mover's point of view."""

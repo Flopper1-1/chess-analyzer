@@ -94,23 +94,75 @@ with open(os.path.join(REPO_DIR, "icon.ico"), "wb") as f:
     f.write(ico_header + ico_body)
 print("Saved icon.png, icon.ico, assets/fluent.png, showcase/public/icon.png")
 
-# 2. Process Sounds
-sounds_src = os.path.join(EXTRACT_DIR, "Sounds", "Default")
+# 2. Process Sounds (Default + Legacy) & Strip Metadata
+DOWNLOAD_SOUNDS_DIR = r"C:\Users\pierr\Downloads\Assets\Sounds"
+
+
+def strip_mp3_metadata(mp3_path: str) -> None:
+    """Remove all ID3v1, ID3v2, and APE metadata tags from an MP3 file in-place."""
+    with open(mp3_path, "rb") as f:
+        data = f.read()
+    # Strip any ID3v2 header(s) at the start of the file
+    while data.startswith(b"ID3") and len(data) >= 10:
+        flags = data[5]
+        size = (
+            ((data[6] & 0x7F) << 21)
+            | ((data[7] & 0x7F) << 14)
+            | ((data[8] & 0x7F) << 7)
+            | (data[9] & 0x7F)
+        )
+        total = 10 + size + (10 if (flags & 0x10) else 0)
+        data = data[total:]
+    # Strip any ID3v1 footer (last 128 bytes starting with 'TAG')
+    if len(data) >= 128 and data[-128:-125] == b"TAG":
+        data = data[:-128]
+    with open(mp3_path, "wb") as f:
+        f.write(data)
+
+
+sounds_default_src = os.path.join(DOWNLOAD_SOUNDS_DIR, "Default")
+sounds_legacy_src = os.path.join(DOWNLOAD_SOUNDS_DIR, "Legacy")
 sounds_dst = os.path.join(REPO_DIR, "assets", "sounds")
+sounds_legacy_dst = os.path.join(sounds_dst, "legacy")
 os.makedirs(sounds_dst, exist_ok=True)
-for fname in ("brilliant.mp3", "Castle.mp3", "Check.mp3", "Move.mp3"):
-    s_path = os.path.join(sounds_src, fname)
-    d_mp3 = os.path.join(sounds_dst, fname)
+os.makedirs(sounds_legacy_dst, exist_ok=True)
+
+for folder in (sounds_default_src, sounds_legacy_src):
+    if os.path.isdir(folder):
+        for fn in os.listdir(folder):
+            if fn.lower().endswith(".mp3"):
+                strip_mp3_metadata(os.path.join(folder, fn))
+
+for fn in sorted(os.listdir(sounds_default_src)):
+    if not fn.lower().endswith(".mp3"):
+        continue
+    s_path = os.path.join(sounds_default_src, fn)
+    d_mp3 = os.path.join(sounds_dst, fn)
     shutil.copyfile(s_path, d_mp3)
-    # Also generate wav for instant low-latency playback
-    stem = os.path.splitext(fname)[0]
+    strip_mp3_metadata(d_mp3)
+    stem = os.path.splitext(fn)[0]
     d_wav = os.path.join(sounds_dst, stem + ".wav")
     subprocess.run(
-        ["ffmpeg", "-y", "-i", d_mp3, "-ar", "44100", "-ac", "2", d_wav],
+        [
+            "ffmpeg", "-y", "-i", d_mp3,
+            "-map_metadata", "-1",
+            "-ar", "44100", "-ac", "2", d_wav,
+        ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        check=True,
     )
-print("Copied and converted sounds in assets/sounds/")
+
+if os.path.isdir(sounds_legacy_src):
+    for fn in sorted(os.listdir(sounds_legacy_src)):
+        if not fn.lower().endswith(".mp3"):
+            continue
+        s_path = os.path.join(sounds_legacy_src, fn)
+        d_mp3 = os.path.join(sounds_legacy_dst, fn)
+        shutil.copyfile(s_path, d_mp3)
+        strip_mp3_metadata(d_mp3)
+
+print("Cleaned metadata and updated all Default + Legacy sounds in assets/sounds/")
 
 # 3. Process Annotations (copy 256x256 clean PNGs to assets/icons/)
 ann_src = os.path.join(EXTRACT_DIR, "Annotations")

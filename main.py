@@ -37,9 +37,18 @@ PIECES = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙"
 
 
 class SoundPlayer:
-    """Zero-latency sound effect player for move navigation and Brilliant (!!) moves."""
+    """Zero-latency sound effect player for game events, moves, and Brilliant (!!) moves."""
 
-    NAMES = ("brilliant", "Castle", "Check", "Move")
+    NAMES = (
+        "brilliant",
+        "Capture",
+        "Castle",
+        "Check",
+        "Checkmate",
+        "draw",
+        "Game_load",
+        "Move",
+    )
 
     def __init__(self):
         self.enabled = True
@@ -83,13 +92,13 @@ class BoardWidget(QWidget):
         self.alt_move = None
         self.end_badges = []
         self.flipped = False
-        # Piece slide animation state (especially for Brilliant !! moves)
+        # Piece slide & flashy Brilliant (!!) animation state
         self.anim_move = None
         self.anim_piece = None
         self.anim_progress = 1.0
         self.anim_is_brilliant = False
         self.anim_start_time = 0.0
-        self.anim_duration = 0.28
+        self.anim_duration = 0.56
         self.anim_timer = QTimer(self)
         self.anim_timer.setInterval(16)
         self.anim_timer.timeout.connect(self._tick_anim)
@@ -107,7 +116,7 @@ class BoardWidget(QWidget):
                 self.anim_is_brilliant = (badge == "!!")
                 self.anim_progress = 0.0
                 self.anim_start_time = time.perf_counter()
-                self.anim_duration = 0.34 if self.anim_is_brilliant else 0.16
+                self.anim_duration = 0.56 if self.anim_is_brilliant else 0.16
                 if not self.anim_timer.isActive():
                     self.anim_timer.start()
             else:
@@ -137,23 +146,40 @@ class BoardWidget(QWidget):
         scale = 1.0
         offset_x = 0.0
         offset_y = 0.0
+        opacity = 1.0
         if slide_t < 1.0:
-            # Smoothly slide & pop the badge in as the piece lands
-            bt = max(0.0, min(1.0, (slide_t - 0.25) / 0.75))
+            # Elastic pop-in after piece impact (t = 0.30..1.0)
+            bt = max(0.0, min(1.0, (slide_t - 0.30) / 0.70))
+            if bt <= 0.0:
+                return
+            opacity = min(1.0, bt * 2.2)
+            # Elastic overshoot: rises to ~1.34x then settles at 1.0x
+            overshoot = math.sin(bt * math.pi) * 0.34 * (1.0 - bt * 0.4)
             ease = 1.0 - (1.0 - bt) ** 3
-            scale = 0.5 + 0.5 * ease
-            offset_x = (1.0 - ease) * (-d * 0.45)
-            offset_y = (1.0 - ease) * (d * 0.35)
+            scale = 0.35 + 0.65 * ease + overshoot
+            offset_x = (1.0 - ease) * (-d * 0.55)
+            offset_y = (1.0 - ease) * (d * 0.45)
         w = d * scale
         x = (r.right() - d * 0.9 if corner == "tr" else r.left() - d * 0.1) + (d - w) * 0.5 + offset_x
         y = (r.top() - d * 0.1) + (d - w) * 0.5 + offset_y
         c = QRectF(x, y, w, w)
+        if key == "!!" and slide_t < 1.0:
+            # Expanding cyan halo behind the Brilliant badge
+            bt = max(0.0, min(1.0, (slide_t - 0.30) / 0.70))
+            halo_r = d * (0.55 + 0.65 * bt)
+            halo_alpha = int(200 * (1.0 - bt) ** 1.4)
+            if halo_alpha > 0:
+                p.save()
+                p.setPen(QPen(QColor(38, 198, 218, halo_alpha), max(1.5, d * 0.10)))
+                p.setBrush(Qt.NoBrush)
+                p.drawEllipse(c.center(), halo_r, halo_r)
+                p.restore()
         if styles.mode == "icons":
             pm = icons.pixmap_for_key(key, max(8, int(d * 2)))
             if pm is not None:
                 p.save()
-                if slide_t < 1.0:
-                    p.setOpacity(max(0.0, min(1.0, (slide_t - 0.2) / 0.8)))
+                if opacity < 1.0:
+                    p.setOpacity(opacity)
                 p.drawPixmap(c.toRect(), pm)
                 p.restore()
                 return
@@ -162,8 +188,8 @@ class BoardWidget(QWidget):
         else:
             sym, bg, fg = styles.symbol(key), styles.color(key), "#ffffff"
         p.save()
-        if slide_t < 1.0:
-            p.setOpacity(max(0.0, min(1.0, (slide_t - 0.2) / 0.8)))
+        if opacity < 1.0:
+            p.setOpacity(opacity)
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(bg))
         p.drawEllipse(c)
@@ -175,15 +201,21 @@ class BoardWidget(QWidget):
         p.restore()
 
     @staticmethod
-    def _draw_piece_glyph(p, r, pc):
+    def _draw_piece_glyph(p, r, pc, scale=1.0):
         sym = pc.symbol()
         glyph = PIECES[sym.lower()]
+        p.save()
+        if abs(scale - 1.0) > 0.005:
+            f = QFont(p.font())
+            f.setPointSizeF(max(8.0, f.pointSizeF() * scale))
+            p.setFont(f)
         outline = QColor("#000") if pc.color else QColor("#fff")
         p.setPen(outline)
         for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
             p.drawText(r.translated(dx, dy), Qt.AlignCenter, glyph)
         p.setPen(QColor("#ffffff") if pc.color else QColor("#000000"))
         p.drawText(r, Qt.AlignCenter, glyph)
+        p.restore()
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -199,7 +231,16 @@ class BoardWidget(QWidget):
             return QRectF(ox + f * s, oy + (7 - r) * s, s, s)
 
         animating = self.anim_move is not None and self.anim_progress < 1.0
-        ease = 1.0 - (1.0 - self.anim_progress) ** 3 if animating else 1.0
+        if animating and self.anim_is_brilliant:
+            # Flight completes in first 45% of duration; impact shockwaves & sparkles run 38%..100%
+            flight_raw = min(1.0, self.anim_progress / 0.45)
+            flight_ease = 1.0 - (1.0 - flight_raw) ** 3
+        elif animating:
+            flight_raw = self.anim_progress
+            flight_ease = 1.0 - (1.0 - self.anim_progress) ** 3
+        else:
+            flight_raw = 1.0
+            flight_ease = 1.0
 
         for sq in chess.SQUARES:
             light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
@@ -211,19 +252,62 @@ class BoardWidget(QWidget):
                     col = QColor("#cdd26a") if light else QColor("#aaa23a")
             p.fillRect(rect(sq), col)
 
-        # Brilliant move slide trail & destination glow
+        # Flashy Brilliant (!!) trail, impact flash, dual shockwave rings & starburst sparks
         if self.badge == "!!" and self.last_move:
             r_from = rect(self.last_move.from_square)
             r_to = rect(self.last_move.to_square)
-            if animating:
+            if animating and self.anim_is_brilliant:
                 cur_center = QPointF(
-                    r_from.center().x() + (r_to.center().x() - r_from.center().x()) * ease,
-                    r_from.center().y() + (r_to.center().y() - r_from.center().y()) * ease,
+                    r_from.center().x() + (r_to.center().x() - r_from.center().x()) * flight_ease,
+                    r_from.center().y() + (r_to.center().y() - r_from.center().y()) * flight_ease,
                 )
-                trail_pen = QPen(QColor(38, 198, 218, int(150 * (1.0 - ease * 0.4))), s * 0.18, Qt.SolidLine, Qt.RoundCap)
-                p.setPen(trail_pen)
-                p.drawLine(r_from.center(), cur_center)
-            glow_pen = QPen(QColor(38, 198, 218, 220), max(2.0, s * 0.06))
+                fade = max(0.0, 1.0 - max(0.0, (self.anim_progress - 0.35) / 0.65))
+                if fade > 0.0:
+                    # Outer cyan comet glow
+                    outer_pen = QPen(QColor(38, 198, 218, int(185 * fade)), s * 0.28, Qt.SolidLine, Qt.RoundCap)
+                    p.setPen(outer_pen)
+                    p.drawLine(r_from.center(), cur_center)
+                    # Inner bright cyan-white core
+                    core_pen = QPen(QColor(224, 247, 250, int(235 * fade)), s * 0.11, Qt.SolidLine, Qt.RoundCap)
+                    p.setPen(core_pen)
+                    p.drawLine(r_from.center(), cur_center)
+
+                # Impact effects once the piece reaches the destination square
+                if self.anim_progress >= 0.36:
+                    imp_t = min(1.0, (self.anim_progress - 0.36) / 0.64)
+                    # 1. Square white-cyan impact flash
+                    flash_alpha = int(195 * (1.0 - imp_t) ** 2.2)
+                    if flash_alpha > 0:
+                        p.fillRect(r_to, QColor(224, 247, 250, flash_alpha))
+                    # 2. Primary expanding cyan shockwave ring
+                    ring1_r = s * (0.38 + 1.05 * (1.0 - (1.0 - imp_t) ** 2))
+                    ring1_alpha = int(240 * (1.0 - imp_t) ** 1.5)
+                    if ring1_alpha > 0:
+                        p.setPen(QPen(QColor(38, 198, 218, ring1_alpha), max(2.0, s * 0.09 * (1.0 - imp_t * 0.6))))
+                        p.setBrush(Qt.NoBrush)
+                        p.drawEllipse(r_to.center(), ring1_r, ring1_r)
+                    # 3. Secondary bright shockwave ring
+                    if imp_t > 0.12:
+                        imp2_t = min(1.0, (imp_t - 0.12) / 0.88)
+                        ring2_r = s * (0.30 + 0.85 * imp2_t)
+                        ring2_alpha = int(210 * (1.0 - imp2_t) ** 1.6)
+                        if ring2_alpha > 0:
+                            p.setPen(QPen(QColor(178, 235, 242, ring2_alpha), max(1.5, s * 0.05 * (1.0 - imp2_t * 0.5))))
+                            p.drawEllipse(r_to.center(), ring2_r, ring2_r)
+                    # 4. 8-ray starburst sparks radiating from destination square
+                    spark_alpha = int(245 * (1.0 - imp_t) ** 1.4)
+                    if spark_alpha > 0:
+                        p.setPen(QPen(QColor(224, 247, 250, spark_alpha), max(2.0, s * 0.055), Qt.SolidLine, Qt.RoundCap))
+                        cx, cy = r_to.center().x(), r_to.center().y()
+                        r_in = s * (0.34 + 0.58 * imp_t)
+                        r_out = s * (0.52 + 0.84 * imp_t)
+                        for k in range(8):
+                            ang = k * (math.pi / 4.0)
+                            p1 = QPointF(cx + math.cos(ang) * r_in, cy + math.sin(ang) * r_in)
+                            p2 = QPointF(cx + math.cos(ang) * r_out, cy + math.sin(ang) * r_out)
+                            p.drawLine(p1, p2)
+
+            glow_pen = QPen(QColor(38, 198, 218, 230), max(2.5, s * 0.065))
             p.setPen(glow_pen)
             p.setBrush(Qt.NoBrush)
             p.drawRect(r_to.adjusted(1.5, 1.5, -1.5, -1.5))
@@ -238,10 +322,13 @@ class BoardWidget(QWidget):
         if animating and self.anim_move and self.anim_piece is not None:
             r_from = rect(self.anim_move.from_square)
             r_to = rect(self.anim_move.to_square)
-            ix = r_from.x() + (r_to.x() - r_from.x()) * ease
-            iy = r_from.y() + (r_to.y() - r_from.y()) * ease
+            ix = r_from.x() + (r_to.x() - r_from.x()) * flight_ease
+            iy = r_from.y() + (r_to.y() - r_from.y()) * flight_ease
             anim_rect = QRectF(ix, iy, s, s)
-            self._draw_piece_glyph(p, anim_rect, self.anim_piece)
+            p_scale = 1.0
+            if self.anim_is_brilliant and flight_raw < 1.0:
+                p_scale = 1.0 + 0.30 * math.sin(flight_raw * math.pi)
+            self._draw_piece_glyph(p, anim_rect, self.anim_piece, scale=p_scale)
 
         # best alternative: arrow + icon on the destination square
         if self.alt_move:
@@ -254,7 +341,7 @@ class BoardWidget(QWidget):
                 p.drawLine(b, QPointF(b.x() + math.cos(ang + da) * s * 0.3, b.y() + math.sin(ang + da) * s * 0.3))
             self.draw_badge(p, rect(self.alt_move.to_square), "alt", "tl")
         if self.badge and self.last_move:
-            slide_t = ease if (animating and self.anim_is_brilliant) else 1.0
+            slide_t = self.anim_progress if (animating and self.anim_is_brilliant) else 1.0
             self.draw_badge(p, rect(self.last_move.to_square), self.badge, "tr", slide_t=slide_t)
         for sq, key in self.end_badges:
             self.draw_badge(p, rect(sq), key, "tr")
@@ -269,8 +356,14 @@ class EvalBar(QWidget):
 
     def set_eval(self, cp, text=""):
         self.cp = 0 if cp is None else cp
-        if not text:
-            text = "" if cp is None else ("%+.1f" % (cp / 100.0) if abs(cp) < 9000 else ("M" if cp > 0 else "-M"))
+        if text in ("+0.00", "-0.00", "0.00", "+0.0", "-0.0", "0.0"):
+            self.cp = 0
+            text = "0.0"
+        elif not text:
+            if cp is None or cp == 0:
+                text = "0.0"
+            else:
+                text = ("%+.1f" % (cp / 100.0)) if abs(cp) < 9000 else ("M" if cp > 0 else "-M")
         self.text = text or "0.0"
         self.update()
 
@@ -671,12 +764,13 @@ class LibraryDialog(QDialog):
         "Brilliant (!!)", "Your !!", "Opening",
         "White Acc", "Black Acc", "Est. Rating", "Moves",
     ]
+    BRIL_COLOR = "#26c6da"
     BRIL_SPECS = [
-        ("queen", "♛ Queen Sacrifices", "#f06292"),
-        ("rook", "♜ Rook Sacrifices", "#ffb74d"),
-        ("bishop", "♝ Bishop Sacrifices", "#ba68c8"),
-        ("knight", "♞ Knight Sacrifices", "#4dd0e1"),
-        ("underpromotion", "⬆️ Underpromotions", "#81c784"),
+        ("queen", "♛ Queen Sacrifices"),
+        ("rook", "♜ Rook Sacrifices"),
+        ("bishop", "♝ Bishop Sacrifices"),
+        ("knight", "♞ Knight Sacrifices"),
+        ("underpromotion", "⇧ Underpromotions"),
     ]
 
     def __init__(self, lib: LIB.GameLibrary, parent=None):
@@ -708,7 +802,7 @@ class LibraryDialog(QDialog):
         # ---- Brilliant Moves Breakdown Section ----
         self.bril_panel = QFrame()
         self.bril_panel.setStyleSheet(
-            "QFrame#BrilPanel { background:#1e262c; border:1px solid #26c6da; border-radius:8px; padding:6px; }"
+            "QFrame#BrilPanel { background:#1f1f1f; border:1px solid #444; border-radius:4px; padding:6px; }"
         )
         self.bril_panel.setObjectName("BrilPanel")
         bp_lay = QVBoxLayout(self.bril_panel)
@@ -722,7 +816,7 @@ class LibraryDialog(QDialog):
             self.bril_icon.setPixmap(pm)
         self.summary_label = QLabel()
         self.summary_label.setTextFormat(Qt.RichText)
-        self.summary_label.setStyleSheet("font-size:13px; color:#26c6da;")
+        self.summary_label.setStyleSheet(f"font-size:13px; color:{self.BRIL_COLOR};")
         banner.addWidget(self.bril_icon)
         banner.addWidget(self.summary_label, 1)
         bp_lay.addLayout(banner)
@@ -730,18 +824,18 @@ class LibraryDialog(QDialog):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)
         self.cat_labels = {}
-        for key, title, color in self.BRIL_SPECS:
+        for key, title in self.BRIL_SPECS:
             card = QFrame()
             card.setStyleSheet(
-                f"QFrame {{ background:#151b1f; border:1px solid #2d3a42; border-left:3px solid {color}; border-radius:6px; padding:4px 8px; }}"
+                f"QFrame {{ background:#262626; border:1px solid #444; border-left:3px solid {self.BRIL_COLOR}; border-radius:4px; padding:4px 8px; }}"
             )
             cl = QVBoxLayout(card)
             cl.setContentsMargins(6, 4, 6, 4)
             cl.setSpacing(2)
             t_lbl = QLabel(title)
-            t_lbl.setStyleSheet("font-size:11px; color:#b0bec5; border:none;")
+            t_lbl.setStyleSheet("font-size:11px; color:#ccc; border:none;")
             v_lbl = QLabel("0")
-            v_lbl.setStyleSheet(f"font-size:15px; font-weight:bold; color:{color}; border:none;")
+            v_lbl.setStyleSheet(f"font-size:15px; font-weight:bold; color:{self.BRIL_COLOR}; border:none;")
             cl.addWidget(t_lbl)
             cl.addWidget(v_lbl)
             cards_row.addWidget(card, 1)
@@ -816,7 +910,7 @@ class LibraryDialog(QDialog):
             f"<b>Your Brilliant Moves (!!): {yours_bril_all}</b> {user_tag} "
             f"&nbsp;•&nbsp; <b>All Players:</b> {total_bril_all} across {len(self.rows)} game(s)"
         )
-        for key, _title, _col in self.BRIL_SPECS:
+        for key, _title in self.BRIL_SPECS:
             mine_n = cat_yours.get(key, 0)
             all_n = cat_total.get(key, 0)
             lbl = self.cat_labels.get(key)
@@ -1001,8 +1095,8 @@ class MainWindow(QMainWindow):
         left.addLayout(bh, 1)
         left.addWidget(self.opening_label)
         nav = QHBoxLayout()
-        for t, fn in (("⏮", lambda: self.goto(0)), ("◀", lambda: self.goto(self.cur - 1)),
-                      ("▶", lambda: self.goto(self.cur + 1)), ("⏭", lambda: self.goto(len(self.results))),
+        for t, fn in (("|◂", lambda: self.goto(0)), ("◂", lambda: self.goto(self.cur - 1)),
+                      ("▸", lambda: self.goto(self.cur + 1)), ("▸|", lambda: self.goto(len(self.results))),
                       ("Flip", self.flip)):
             b = QPushButton(t); b.clicked.connect(fn); nav.addWidget(b)
         left.addLayout(nav)
@@ -1045,10 +1139,10 @@ class MainWindow(QMainWindow):
         self.save_act = None
         for t, fn in (("Open PGN…", self.open_file), ("Paste PGN/FEN…", self.paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
-                      ("Save to Library", self.save_to_library), ("Rename Game…", self.rename_current_game),
+                      ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
                       ("Library…", self.open_library), ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
-            if t == "Save to Library":
+            if t == "Save Game":
                 self.save_act = act
         self.game_combo = QComboBox(); self.game_combo.setVisible(False)
         self.game_combo.currentIndexChanged.connect(self.pick_game)
@@ -1123,13 +1217,15 @@ class MainWindow(QMainWindow):
         self.game_combo.blockSignals(False)
         self.game_combo.setCurrentIndex(0)
         self.pick_game(0)
+        if hasattr(self, "sound"):
+            self.sound.play("Game_load")
         self.start_queue()
 
     def combo_text(self, i):
         h = self.games[i].headers
         j = self.jobs[i]
         if j.done:
-            st = "✓ saved" if j.lib_id else "✓"
+            st = "saved" if j.lib_id else "done"
         elif j.running:
             a, b = j.progress
             st = "… %d%%" % (100 * a // max(1, b))
@@ -1155,24 +1251,17 @@ class MainWindow(QMainWindow):
         else:
             text = f"<b>{base}</b>"
         if self.job.lib_id is not None:
-            text += " &nbsp; <span style='background:#2e7d32;color:#fff;padding:1px 6px;border-radius:4px;font-size:11px;'>✓ Saved</span>"
+            text += " &nbsp; <span style='color:#aaa;font-size:12px;'>(Saved)</span>"
         self.players.setTextFormat(Qt.RichText)
         self.players.setText(text)
-        self.update_save_button(self.job.lib_id is not None)
 
-    def update_save_button(self, saved: bool, flash: bool = False):
+    def update_save_button(self, flash: bool = False):
         if not self.save_act:
             return
         w = self.tb.widgetForAction(self.save_act)
-        if saved:
-            self.save_act.setText("✓ Saved in Library" if not flash else "✓ Game Saved!")
-            if w:
-                bg = "#43a047" if flash else "#2e7d32"
-                w.setStyleSheet(f"QToolButton {{ background: {bg}; color: #ffffff; font-weight: bold; border-radius: 4px; padding: 3px 8px; }}")
-        else:
-            self.save_act.setText("Save to Library")
-            if w:
-                w.setStyleSheet("")
+        if w:
+            w.setStyleSheet("")
+        self.save_act.setText("Saved" if flash else "Save Game")
 
     def pick_game(self, i):
         if i < 0 or i >= len(self.games):
@@ -1510,13 +1599,11 @@ class MainWindow(QMainWindow):
                     self.job.title = row["title"]
                     break
         self.update_players_header()
-        self.update_save_button(True, flash=True)
-        QTimer.singleShot(1800, lambda: self.job and self.job.lib_id == gid and self.update_save_button(True, flash=False))
+        self.update_save_button(flash=True)
+        QTimer.singleShot(1800, lambda: self.update_save_button(flash=False))
         self.refresh_combo(self.job)
         name = self.job.title or f"{h.get('White', '?')} vs {h.get('Black', '?')}"
-        self.status.setStyleSheet("color: #66bb6a; font-weight: bold;")
-        self.status.setText(f"✓ Saved '{name}' to library (#{gid}).")
-        QTimer.singleShot(3000, lambda: self.status.setStyleSheet(""))
+        self.status.setText(f"Saved '{name}' to library (#{gid}).")
 
     def open_library(self):
         d = LibraryDialog(self.library, self)
@@ -1545,6 +1632,8 @@ class MainWindow(QMainWindow):
         self.game_combo.setVisible(False)
         self.game_combo.blockSignals(False)
         self.pick_game(0)
+        if hasattr(self, "sound"):
+            self.sound.play("Game_load")
         self.status.setText("Loaded saved game from library (%d moves, instant)." % len(results))
 
     def best_button(self, row):
@@ -1572,16 +1661,28 @@ class MainWindow(QMainWindow):
         do_anim = bool(animate and mv is not None and (sym == "!!" or idx != prev_idx))
         self.board.set_position(b, mv, sym, self.alt_for(r), self.end_badges(b, idx), animate=do_anim)
         if play_sound and idx > 0 and mv is not None and idx != prev_idx and hasattr(self, "sound"):
+            b_before = self.board_at(idx - 1)
+            is_draw_end = (
+                b.is_stalemate()
+                or b.is_insufficient_material()
+                or b.is_fifty_moves()
+                or b.is_repetition(3)
+                or (idx == len(self.basic) and self.game and self.game.headers.get("Result") == "1/2-1/2")
+            )
             if sym == "!!":
                 self.sound.play("brilliant")
+            elif b.is_checkmate():
+                self.sound.play("Checkmate")
+            elif is_draw_end:
+                self.sound.play("draw")
             elif b.is_check():
                 self.sound.play("Check")
+            elif b_before.is_castling(mv):
+                self.sound.play("Castle")
+            elif b_before.is_capture(mv):
+                self.sound.play("Capture")
             else:
-                b_before = self.board_at(idx - 1)
-                if b_before.is_castling(mv):
-                    self.sound.play("Castle")
-                else:
-                    self.sound.play("Move")
+                self.sound.play("Move")
         self.table.blockSignals(True)
         self.table.selectRow(idx)
         self.table.blockSignals(False)
@@ -1590,6 +1691,8 @@ class MainWindow(QMainWindow):
             cp, txt = r.eval_after, r.eval_after_text
         elif idx == 0 and self.results and self.results[0].eval_before is not None:
             cp = self.results[0].eval_before
+        if C.is_deadlocked_position(b, r.pv_uci if (r and r.pv_uci) else None):
+            cp, txt = 0, "0.0"
         self.evalbar.set_eval(cp, txt)
         name = "–"
         for k in range(idx, 0, -1):
