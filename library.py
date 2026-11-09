@@ -14,6 +14,7 @@ import chess.pgn
 
 import accuracy as ACC
 import analysis as A
+import classify as C
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS games (
@@ -62,6 +63,80 @@ def game_key(game: chess.pgn.Game) -> str:
         movetext,
     ])
     return hashlib.sha1(ident.encode("utf-8")).hexdigest()
+
+
+def resolve_user_color(white: str, black: str, player_name: str = "",
+                       fallback_color: str = "white") -> Tuple[str, bool]:
+    """Resolve which color ('white' or 'black') belongs to the user.
+
+    If `player_name` matches either `white` or `black` (case-insensitive exact match
+    first, then substring match), returns that color and `True`. Otherwise returns
+    `(fallback_color, False)`.
+    """
+    fb = "black" if (fallback_color or "").strip().lower() == "black" else "white"
+    pname = (player_name or "").strip().lower()
+    w = (white or "").strip().lower()
+    b = (black or "").strip().lower()
+    if pname:
+        # 1. Exact case-insensitive match
+        w_exact = (w == pname)
+        b_exact = (b == pname)
+        if w_exact and not b_exact:
+            return "white", True
+        if b_exact and not w_exact:
+            return "black", True
+        # 2. Substring match
+        w_sub = pname in w
+        b_sub = pname in b
+        if w_sub and not b_sub:
+            return "white", True
+        if b_sub and not w_sub:
+            return "black", True
+    return fb, False
+
+
+def _empty_breakdown() -> dict:
+    return {cat: 0 for cat in C.BRILLIANT_CATEGORIES}
+
+
+def _extract_brilliants(analysis_json: str) -> dict:
+    """Parse serialized analysis JSON and return brilliant counts & category breakdowns."""
+    bd_white = _empty_breakdown()
+    bd_black = _empty_breakdown()
+    bw = 0
+    bb = 0
+    try:
+        raw = json.loads(analysis_json or "{}")
+        items = raw.get("results", []) if isinstance(raw, dict) else raw
+        for it in items:
+            if it.get("symbol") != "!!":
+                continue
+            is_white = bool(it.get("color"))
+            cat = (it.get("brilliant_type") or "").strip().lower()
+            if cat not in C.BRILLIANT_CATEGORIES:
+                fen_before = it.get("fen_before") or ""
+                uci = it.get("uci") or ""
+                if fen_before and uci:
+                    try:
+                        cat = C.brilliant_category(chess.Board(fen_before), chess.Move.from_uci(uci))
+                    except Exception:
+                        cat = "knight"
+                else:
+                    cat = "knight"
+            if is_white:
+                bw += 1
+                bd_white[cat] = bd_white.get(cat, 0) + 1
+            else:
+                bb += 1
+                bd_black[cat] = bd_black.get(cat, 0) + 1
+    except Exception:
+        pass
+    return {
+        "bw": bw,
+        "bb": bb,
+        "white": bd_white,
+        "black": bd_black,
+    }
 
 
 class GameLibrary:
@@ -138,17 +213,24 @@ class GameLibrary:
         w_rat = summ[chess.WHITE]["rating"]
         b_rat = summ[chess.BLACK]["rating"]
 
+        for r in results:
+            if r.symbol == "!!" and not r.brilliant_type:
+                try:
+                    r.brilliant_type = C.brilliant_category(
+                        chess.Board(r.fen_before), chess.Move.from_uci(r.uci)
+                    )
+                except Exception:
+                    r.brilliant_type = "knight"
+
         bw = sum(1 for r in results if r.symbol == "!!" and r.color == chess.WHITE)
         bb = sum(1 for r in results if r.symbol == "!!" and r.color == chess.BLACK)
 
         if user_color not in ("white", "black"):
             user_color = None
             if settings is not None:
-                mc = settings.matched_color(h)
-                if mc == chess.WHITE:
-                    user_color = "white"
-                elif mc == chess.BLACK:
-                    user_color = "black"
+                resolved_uc, matched = resolve_user_color(white, black, settings.player_name, "")
+                if matched:
+                    user_color = resolved_uc
                 elif settings.side in ("white", "black"):
                     user_color = settings.side
             user_color = user_color or "white"
@@ -229,12 +311,12 @@ class GameLibrary:
             with conn:
                 conn.execute("UPDATE games SET user_color = ? WHERE id = ?", (color, game_id))
 
-    def list(self, search: str = "") -> List[dict]:
+    def list(self, search: str = "", player_name: str = "") -> List[dict]:
         q = (search or "").strip().lower()
         sql = """
             SELECT id, saved_at, title, white, black, result, date, event,
                    eco, opening, moves, white_acc, black_acc, white_rating, black_rating,
-                   brilliant_white, brilliant_black, user_color, engine
+                   brilliant_white, brilliant_black, user_color, analysis, engine
             FROM games
         """
         params: tuple = ()
@@ -250,13 +332,34 @@ class GameLibrary:
             out = []
             for r in conn.execute(sql, params).fetchall():
                 d = dict(r)
-                bw = int(d.get("brilliant_white") or 0)
-                bb = int(d.get("brilliant_black") or 0)
-                uc = (d.get("user_color") or "white").lower()
+                analysis_raw = d.pop("analysis", None) or "{}"
+                binfo = _extract_brilliants(analysis_raw)
+                bw = binfo["bw"]
+                bb = binfo["bb"]
+                # Fallback to stored columns only if analysis JSON had no items
+                if bw == 0 and bb == 0:
+                    bw = int(d.get("brilliant_white") or 0)
+                    bb = int(d.get("brilliant_black") or 0)
+                d["brilliant_white"] = bw
+                d["brilliant_black"] = bb
+                uc, matched_by_name = resolve_user_color(
+                    d.get("white", ""),
+                    d.get("black", ""),
+                    player_name,
+                    d.get("user_color") or "white",
+                )
                 d["title"] = (d.get("title") or "").strip() or f"{d.get('white', '?')} vs {d.get('black', '?')}"
                 d["brilliant_total"] = bw + bb
                 d["brilliant_yours"] = bb if uc == "black" else bw
-                d["user_color"] = "black" if uc == "black" else "white"
+                d["user_color"] = uc
+                d["matched_by_name"] = matched_by_name
+                d["brilliant_breakdown_white"] = binfo["white"]
+                d["brilliant_breakdown_black"] = binfo["black"]
+                d["brilliant_breakdown_yours"] = binfo["black"] if uc == "black" else binfo["white"]
+                d["brilliant_breakdown_total"] = {
+                    cat: binfo["white"][cat] + binfo["black"][cat]
+                    for cat in C.BRILLIANT_CATEGORIES
+                }
                 out.append(d)
             return out
 
@@ -271,10 +374,17 @@ class GameLibrary:
         raw = json.loads(row["analysis"])
         items = raw.get("results", []) if isinstance(raw, dict) else raw
         fields = set(A.MoveResult.__dataclass_fields__.keys())
-        results = [
-            A.MoveResult(**{k: v for k, v in item.items() if k in fields})
-            for item in items
-        ]
+        results = []
+        for item in items:
+            mr = A.MoveResult(**{k: v for k, v in item.items() if k in fields})
+            if mr.symbol == "!!" and not mr.brilliant_type:
+                try:
+                    mr.brilliant_type = C.brilliant_category(
+                        chess.Board(mr.fen_before), chess.Move.from_uci(mr.uci)
+                    )
+                except Exception:
+                    mr.brilliant_type = "knight"
+            results.append(mr)
         return game, results
 
     def delete(self, game_id: int) -> None:

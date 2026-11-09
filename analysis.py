@@ -70,6 +70,7 @@ class MoveResult:
     eval_after_text: str = ""
     best_san: str = ""
     phase: str = "middlegame"
+    brilliant_type: str = ""    # "" | "queen" | "rook" | "bishop" | "knight" | "underpromotion"
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
 
@@ -168,7 +169,10 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             return False
         if i not in full_cache:
             full_cache[i] = tracked_mover(i) or (
-                settings.scope == "mine_brilliant" and C.is_sacrifice(boards[i], moves[i], sac_threshold))
+                settings.scope == "mine_brilliant" and (
+                    C.is_sacrifice(boards[i], moves[i], sac_threshold)
+                    or C.is_underpromotion(moves[i])
+                ))
         return full_cache[i]
 
     results: List[MoveResult] = []
@@ -222,13 +226,20 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
             second_wp = C.win_pct(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
             sac = C.is_sacrifice(b, mv, sac_threshold)
-            sym = C.classify(loss, is_best, after_wp, best_wp, second_wp, sac, best_wp, settings.lenient_brilliant)
+            max_loss = 5 if settings.lenient_brilliant else 2
+            underpromo = C.is_brilliant_underpromotion(b, mv, is_best, loss, max_loss)
+            sym = C.classify(
+                loss, is_best, after_wp, best_wp, second_wp, sac, best_wp,
+                settings.lenient_brilliant, underpromo_brilliant=underpromo,
+            )
             if mover not in tracked and not all_scope and sym != "!!":
                 pass  # untracked opponent move: only brilliants are reported
             else:
                 r.symbol, r.loss, r.analysed = sym, loss, True
                 if r.book:
                     r.symbol = "/"
+                elif r.symbol == "!!":
+                    r.brilliant_type = C.brilliant_category(b, mv)
         elif r.book and tracked_mover(i):
             r.symbol, r.analysed = "/", True
         return r

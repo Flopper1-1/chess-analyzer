@@ -1,12 +1,17 @@
 import io
+import math
+import os
 import sys
 import threading
+import time
+try:
+    import winsound
+except ImportError:
+    winsound = None
 
 import chess
 import chess.pgn
-import os
-import time
-from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRectF, QPointF, QSize, QEvent, QTimer
+from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRectF, QPointF, QSize, QEvent, QTimer, QUrl
 from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -25,8 +30,42 @@ import winutil
 import accuracy as ACC
 import library as LIB
 
+APP_TITLE = "Holly's Chess Analyzer"
+
 PIECES = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
           "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟"}
+
+
+class SoundPlayer:
+    """Zero-latency sound effect player for move navigation and Brilliant (!!) moves."""
+
+    NAMES = ("brilliant", "Castle", "Check", "Move")
+
+    def __init__(self):
+        self.enabled = True
+        self._wav_paths = {}
+        self._mp3_paths = {}
+        for name in self.NAMES:
+            wav = resource_path(os.path.join("assets", "sounds", f"{name}.wav"))
+            mp3 = resource_path(os.path.join("assets", "sounds", f"{name}.mp3"))
+            if os.path.exists(wav):
+                self._wav_paths[name] = wav
+            if os.path.exists(mp3):
+                self._mp3_paths[name] = mp3
+
+    def play(self, name: str) -> None:
+        if not self.enabled:
+            return
+        wav = self._wav_paths.get(name)
+        if wav and winsound is not None:
+            try:
+                winsound.PlaySound(
+                    wav,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
+                return
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------- widgets
@@ -44,35 +83,107 @@ class BoardWidget(QWidget):
         self.alt_move = None
         self.end_badges = []
         self.flipped = False
+        # Piece slide animation state (especially for Brilliant !! moves)
+        self.anim_move = None
+        self.anim_piece = None
+        self.anim_progress = 1.0
+        self.anim_is_brilliant = False
+        self.anim_start_time = 0.0
+        self.anim_duration = 0.28
+        self.anim_timer = QTimer(self)
+        self.anim_timer.setInterval(16)
+        self.anim_timer.timeout.connect(self._tick_anim)
         self.setMinimumSize(380, 380)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-    def set_position(self, board, last_move=None, badge="", alt_move=None, end_badges=None):
+    def set_position(self, board, last_move=None, badge="", alt_move=None, end_badges=None, animate=True):
         self.board, self.last_move, self.badge = board, last_move, badge
         self.alt_move, self.end_badges = alt_move, end_badges or []
+        if animate and last_move is not None and board is not None:
+            pc = board.piece_at(last_move.to_square)
+            if pc is not None:
+                self.anim_move = last_move
+                self.anim_piece = pc
+                self.anim_is_brilliant = (badge == "!!")
+                self.anim_progress = 0.0
+                self.anim_start_time = time.perf_counter()
+                self.anim_duration = 0.34 if self.anim_is_brilliant else 0.16
+                if not self.anim_timer.isActive():
+                    self.anim_timer.start()
+            else:
+                self._stop_anim()
+        else:
+            self._stop_anim()
         self.update()
 
-    def draw_badge(self, p, r, key, corner="tr"):
+    def _stop_anim(self):
+        if self.anim_timer.isActive():
+            self.anim_timer.stop()
+        self.anim_move = None
+        self.anim_piece = None
+        self.anim_progress = 1.0
+        self.anim_is_brilliant = False
+
+    def _tick_anim(self):
+        elapsed = time.perf_counter() - self.anim_start_time
+        if elapsed >= self.anim_duration:
+            self._stop_anim()
+        else:
+            self.anim_progress = max(0.0, min(1.0, elapsed / max(0.001, self.anim_duration)))
+        self.update()
+
+    def draw_badge(self, p, r, key, corner="tr", slide_t=1.0):
         d = r.width() * 0.42
-        x = r.right() - d * 0.9 if corner == "tr" else r.left() - d * 0.1
-        c = QRectF(x, r.top() - d * 0.1, d, d)
+        scale = 1.0
+        offset_x = 0.0
+        offset_y = 0.0
+        if slide_t < 1.0:
+            # Smoothly slide & pop the badge in as the piece lands
+            bt = max(0.0, min(1.0, (slide_t - 0.25) / 0.75))
+            ease = 1.0 - (1.0 - bt) ** 3
+            scale = 0.5 + 0.5 * ease
+            offset_x = (1.0 - ease) * (-d * 0.45)
+            offset_y = (1.0 - ease) * (d * 0.35)
+        w = d * scale
+        x = (r.right() - d * 0.9 if corner == "tr" else r.left() - d * 0.1) + (d - w) * 0.5 + offset_x
+        y = (r.top() - d * 0.1) + (d - w) * 0.5 + offset_y
+        c = QRectF(x, y, w, w)
         if styles.mode == "icons":
             pm = icons.pixmap_for_key(key, max(8, int(d * 2)))
             if pm is not None:
+                p.save()
+                if slide_t < 1.0:
+                    p.setOpacity(max(0.0, min(1.0, (slide_t - 0.2) / 0.8)))
                 p.drawPixmap(c.toRect(), pm)
+                p.restore()
                 return
         if key in LEGACY_END:
             sym, bg, fg = LEGACY_END[key]
         else:
             sym, bg, fg = styles.symbol(key), styles.color(key), "#ffffff"
+        p.save()
+        if slide_t < 1.0:
+            p.setOpacity(max(0.0, min(1.0, (slide_t - 0.2) / 0.8)))
         p.setPen(Qt.NoPen)
         p.setBrush(QColor(bg))
         p.drawEllipse(c)
         p.setPen(QColor(fg))
-        f = QFont("Segoe UI", max(6, int(d * 0.38)), QFont.Bold)
+        f = QFont("Segoe UI", max(6, int(w * 0.38)), QFont.Bold)
         f.setFamilies(["Segoe UI", "Segoe UI Emoji", "Segoe UI Symbol"])
         p.setFont(f)
         p.drawText(c, Qt.AlignCenter, sym)
+        p.restore()
+
+    @staticmethod
+    def _draw_piece_glyph(p, r, pc):
+        sym = pc.symbol()
+        glyph = PIECES[sym.lower()]
+        outline = QColor("#000") if pc.color else QColor("#fff")
+        p.setPen(outline)
+        for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            p.drawText(r.translated(dx, dy), Qt.AlignCenter, glyph)
+        p.setPen(QColor("#ffffff") if pc.color else QColor("#000000"))
+        p.drawText(r, Qt.AlignCenter, glyph)
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -87,37 +198,64 @@ class BoardWidget(QWidget):
                 f, r = 7 - f, 7 - r
             return QRectF(ox + f * s, oy + (7 - r) * s, s, s)
 
+        animating = self.anim_move is not None and self.anim_progress < 1.0
+        ease = 1.0 - (1.0 - self.anim_progress) ** 3 if animating else 1.0
+
         for sq in chess.SQUARES:
             light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
             col = QColor("#f0d9b5") if light else QColor("#b58863")
             if self.last_move and sq in (self.last_move.from_square, self.last_move.to_square):
-                col = QColor("#cdd26a") if light else QColor("#aaa23a")
+                if self.badge == "!!":
+                    col = QColor("#5cd6e5") if light else QColor("#26a6b8")
+                else:
+                    col = QColor("#cdd26a") if light else QColor("#aaa23a")
             p.fillRect(rect(sq), col)
+
+        # Brilliant move slide trail & destination glow
+        if self.badge == "!!" and self.last_move:
+            r_from = rect(self.last_move.from_square)
+            r_to = rect(self.last_move.to_square)
+            if animating:
+                cur_center = QPointF(
+                    r_from.center().x() + (r_to.center().x() - r_from.center().x()) * ease,
+                    r_from.center().y() + (r_to.center().y() - r_from.center().y()) * ease,
+                )
+                trail_pen = QPen(QColor(38, 198, 218, int(150 * (1.0 - ease * 0.4))), s * 0.18, Qt.SolidLine, Qt.RoundCap)
+                p.setPen(trail_pen)
+                p.drawLine(r_from.center(), cur_center)
+            glow_pen = QPen(QColor(38, 198, 218, 220), max(2.0, s * 0.06))
+            p.setPen(glow_pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(r_to.adjusted(1.5, 1.5, -1.5, -1.5))
+
         font = QFont("Segoe UI Symbol", int(s * 0.62))
         p.setFont(font)
         for sq, pc in self.board.piece_map().items():
-            sym = pc.symbol()
-            glyph = PIECES[sym.lower()]
-            r = rect(sq)
-            outline = QColor("#000") if pc.color else QColor("#fff")
-            p.setPen(outline)
-            for dx, dy in ((-1, 0), (1, 0), (0, -1), (0, 1)):
-                p.drawText(r.translated(dx, dy), Qt.AlignCenter, glyph)
-            p.setPen(QColor("#ffffff") if pc.color else QColor("#000000"))
-            p.drawText(r, Qt.AlignCenter, glyph)
+            if animating and self.anim_move and sq == self.anim_move.to_square:
+                continue
+            self._draw_piece_glyph(p, rect(sq), pc)
+
+        if animating and self.anim_move and self.anim_piece is not None:
+            r_from = rect(self.anim_move.from_square)
+            r_to = rect(self.anim_move.to_square)
+            ix = r_from.x() + (r_to.x() - r_from.x()) * ease
+            iy = r_from.y() + (r_to.y() - r_from.y()) * ease
+            anim_rect = QRectF(ix, iy, s, s)
+            self._draw_piece_glyph(p, anim_rect, self.anim_piece)
+
         # best alternative: arrow + icon on the destination square
         if self.alt_move:
             a, b = rect(self.alt_move.from_square).center(), rect(self.alt_move.to_square).center()
             pen = QPen(QColor(107, 163, 107, 190), s * 0.14, Qt.SolidLine, Qt.RoundCap)
             p.setPen(pen)
             p.drawLine(a, b)
-            import math
             ang = math.atan2(b.y() - a.y(), b.x() - a.x())
             for da in (2.6, -2.6):
                 p.drawLine(b, QPointF(b.x() + math.cos(ang + da) * s * 0.3, b.y() + math.sin(ang + da) * s * 0.3))
             self.draw_badge(p, rect(self.alt_move.to_square), "alt", "tl")
         if self.badge and self.last_move:
-            self.draw_badge(p, rect(self.last_move.to_square), self.badge, "tr")
+            slide_t = ease if (animating and self.anim_is_brilliant) else 1.0
+            self.draw_badge(p, rect(self.last_move.to_square), self.badge, "tr", slide_t=slide_t)
         for sq, key in self.end_badges:
             self.draw_badge(p, rect(sq), key, "tr")
 
@@ -533,14 +671,21 @@ class LibraryDialog(QDialog):
         "Brilliant (!!)", "Your !!", "Opening",
         "White Acc", "Black Acc", "Est. Rating", "Moves",
     ]
+    BRIL_SPECS = [
+        ("queen", "♛ Queen Sacrifices", "#f06292"),
+        ("rook", "♜ Rook Sacrifices", "#ffb74d"),
+        ("bishop", "♝ Bishop Sacrifices", "#ba68c8"),
+        ("knight", "♞ Knight Sacrifices", "#4dd0e1"),
+        ("underpromotion", "⬆️ Underpromotions", "#81c784"),
+    ]
 
     def __init__(self, lib: LIB.GameLibrary, parent=None):
         super().__init__(parent)
         self.lib = lib
         self.main_win = parent
         self.selected_id = None
-        self.setWindowTitle("Saved Games Library")
-        self.resize(1080, 540)
+        self.setWindowTitle(f"{APP_TITLE} — Saved Games Library")
+        self.resize(1120, 620)
         lay = QVBoxLayout(self)
 
         top = QHBoxLayout()
@@ -548,8 +693,27 @@ class LibraryDialog(QDialog):
         self.search.setPlaceholderText("Search by game name, player, opening, ECO, or event…")
         self.search.textChanged.connect(self.refresh)
         top.addWidget(QLabel("Search:"))
-        top.addWidget(self.search, 1)
+        top.addWidget(self.search, 2)
+        top.addSpacing(12)
+        top.addWidget(QLabel("My Username:"))
+        init_user = ""
+        if self.main_win and getattr(self.main_win, "settings", None):
+            init_user = self.main_win.settings.player_name or ""
+        self.user_edit = QLineEdit(init_user)
+        self.user_edit.setPlaceholderText("Enter your chess username to track both White & Black games…")
+        self.user_edit.textChanged.connect(self._on_username_changed)
+        top.addWidget(self.user_edit, 1)
         lay.addLayout(top)
+
+        # ---- Brilliant Moves Breakdown Section ----
+        self.bril_panel = QFrame()
+        self.bril_panel.setStyleSheet(
+            "QFrame#BrilPanel { background:#1e262c; border:1px solid #26c6da; border-radius:8px; padding:6px; }"
+        )
+        self.bril_panel.setObjectName("BrilPanel")
+        bp_lay = QVBoxLayout(self.bril_panel)
+        bp_lay.setContentsMargins(10, 8, 10, 8)
+        bp_lay.setSpacing(6)
 
         banner = QHBoxLayout()
         self.bril_icon = QLabel()
@@ -558,10 +722,32 @@ class LibraryDialog(QDialog):
             self.bril_icon.setPixmap(pm)
         self.summary_label = QLabel()
         self.summary_label.setTextFormat(Qt.RichText)
-        self.summary_label.setStyleSheet("font-size:13px; color:#26c6da; padding:2px 0;")
+        self.summary_label.setStyleSheet("font-size:13px; color:#26c6da;")
         banner.addWidget(self.bril_icon)
         banner.addWidget(self.summary_label, 1)
-        lay.addLayout(banner)
+        bp_lay.addLayout(banner)
+
+        cards_row = QHBoxLayout()
+        cards_row.setSpacing(8)
+        self.cat_labels = {}
+        for key, title, color in self.BRIL_SPECS:
+            card = QFrame()
+            card.setStyleSheet(
+                f"QFrame {{ background:#151b1f; border:1px solid #2d3a42; border-left:3px solid {color}; border-radius:6px; padding:4px 8px; }}"
+            )
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(6, 4, 6, 4)
+            cl.setSpacing(2)
+            t_lbl = QLabel(title)
+            t_lbl.setStyleSheet("font-size:11px; color:#b0bec5; border:none;")
+            v_lbl = QLabel("0")
+            v_lbl.setStyleSheet(f"font-size:15px; font-weight:bold; color:{color}; border:none;")
+            cl.addWidget(t_lbl)
+            cl.addWidget(v_lbl)
+            cards_row.addWidget(card, 1)
+            self.cat_labels[key] = v_lbl
+        bp_lay.addLayout(cards_row)
+        lay.addWidget(self.bril_panel)
 
         self.table = QTableWidget(0, len(self.COLS))
         self.table.setHorizontalHeaderLabels(self.COLS)
@@ -600,17 +786,43 @@ class LibraryDialog(QDialog):
         QShortcut(QKeySequence(Qt.Key_F2), self, activated=self.rename_selected)
         self.refresh()
 
+    def _on_username_changed(self, text: str):
+        clean = text.strip()
+        if self.main_win and getattr(self.main_win, "settings", None):
+            self.main_win.settings.player_name = clean
+            if getattr(self.main_win, "qs", None):
+                self.main_win.qs.setValue("name", clean)
+        self.refresh()
+
     def refresh(self):
-        self.rows = self.lib.list(self.search.text())
+        uname = self.user_edit.text().strip() if hasattr(self, "user_edit") else ""
+        self.rows = self.lib.list(self.search.text(), player_name=uname)
         self.table.setRowCount(len(self.rows))
         fmt_acc = lambda v: "–" if v is None else f"{v:.1f}%"
         bril_pm = icons.pixmap_for_key("!!", 18)
         total_bril_all = sum(r.get("brilliant_total", 0) for r in self.rows)
         yours_bril_all = sum(r.get("brilliant_yours", 0) for r in self.rows)
+        cat_yours = {cat: 0 for cat in C.BRILLIANT_CATEGORIES}
+        cat_total = {cat: 0 for cat in C.BRILLIANT_CATEGORIES}
+        for r in self.rows:
+            by = r.get("brilliant_breakdown_yours") or {}
+            bt = r.get("brilliant_breakdown_total") or {}
+            for cat in C.BRILLIANT_CATEGORIES:
+                cat_yours[cat] += int(by.get(cat, 0))
+                cat_total[cat] += int(bt.get(cat, 0))
+
+        user_tag = f"for <b>{uname}</b> (White &amp; Black)" if uname else "(set My Username above to auto-match your White &amp; Black games)"
         self.summary_label.setText(
-            f"<b>Brilliant Moves (!!):</b> {total_bril_all} played across {len(self.rows)} game(s) "
-            f"&nbsp;•&nbsp; <b>Yours:</b> {yours_bril_all}"
+            f"<b>Your Brilliant Moves (!!): {yours_bril_all}</b> {user_tag} "
+            f"&nbsp;•&nbsp; <b>All Players:</b> {total_bril_all} across {len(self.rows)} game(s)"
         )
+        for key, _title, _col in self.BRIL_SPECS:
+            mine_n = cat_yours.get(key, 0)
+            all_n = cat_total.get(key, 0)
+            lbl = self.cat_labels.get(key)
+            if lbl is not None:
+                lbl.setText(f"{mine_n}" if mine_n == all_n else f"{mine_n}  (all: {all_n})")
+
         for r_idx, row in enumerate(self.rows):
             opening = f"{row['eco']} {row['opening']}".strip() or "–"
             w_r = row["white_rating"]
@@ -621,6 +833,7 @@ class LibraryDialog(QDialog):
             btot = int(row.get("brilliant_total") or 0)
             byours = int(row.get("brilliant_yours") or 0)
             uc = (row.get("user_color") or "white").title()
+            matched_by_name = bool(row.get("matched_by_name"))
             bril_str = f"{btot} ({bw}W / {bb}B)" if btot > 0 else "0"
             yours_str = f"{byours} ({uc})"
             vals = [
@@ -637,6 +850,14 @@ class LibraryDialog(QDialog):
                 rat,
                 str(row["moves"] or 0),
             ]
+            bd_yours = row.get("brilliant_breakdown_yours") or {}
+            bd_parts = [
+                f"{bd_yours.get(k, 0)} {k.title()}"
+                for k in C.BRILLIANT_CATEGORIES
+                if bd_yours.get(k, 0) > 0
+            ]
+            bd_desc = (", ".join(bd_parts)) if bd_parts else "No brilliant moves"
+            match_note = f"matched username '{uname}'" if matched_by_name else "click 'Switch My Side (W/B)' or set My Username"
             for c_idx, val in enumerate(vals):
                 it = QTableWidgetItem(val)
                 if c_idx in (1, 4, 5, 6, 8, 9, 10, 11):
@@ -644,7 +865,7 @@ class LibraryDialog(QDialog):
                 if c_idx == 5 and btot > 0 and bril_pm is not None:
                     it.setIcon(QIcon(bril_pm))
                 if c_idx == 6:
-                    it.setToolTip(f"Counting {uc}'s brilliant moves as yours. Click 'Switch My Side (W/B)' to toggle.")
+                    it.setToolTip(f"Tracking {uc} ({match_note}).\nBreakdown: {bd_desc}")
                     if byours > 0:
                         it.setForeground(QColor("#26c6da"))
                         f = it.font(); f.setBold(True); it.setFont(f)
@@ -748,7 +969,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Chess Analyzer")
+        self.setWindowTitle(APP_TITLE)
         self.resize(1180, 760)
         self.setAcceptDrops(True)
         qs = QSettings("ChessAnalyzer", "ChessAnalyzer")
@@ -757,6 +978,7 @@ class MainWindow(QMainWindow):
                                    int(qs.value("depth", 16)), int(qs.value("threads", 2)),
                                    int(qs.value("hash", 128)), qs.value("engine", ""), qs.value("preset", "custom"), qs.value("lenient", False, type=bool))
         styles.load(qs)
+        self.sound = SoundPlayer()
         self.holder = EngineHolder()
         self.library = LIB.GameLibrary()
         self.book = None
@@ -888,7 +1110,7 @@ class MainWindow(QMainWindow):
     def load_text(self, text):
         games = parse_input(text)
         if not games:
-            QMessageBox.warning(self, "Chess Analyzer", "No valid PGN or FEN found."); return
+            QMessageBox.warning(self, APP_TITLE, "No valid PGN or FEN found."); return
         self.stop()
         self.games = games
         self.jobs = [Job(g) for g in games]
@@ -1031,7 +1253,7 @@ class MainWindow(QMainWindow):
             self.worker.cancel_flag = True
             self.worker.wait(30000)
         winutil.keep_awake(False)
-        self.setWindowTitle("Chess Analyzer")
+        self.setWindowTitle(APP_TITLE)
         for j in self.jobs:
             j.running = False
         if self.games:
@@ -1056,8 +1278,8 @@ class MainWindow(QMainWindow):
         job.progress = (a, b)
         self.refresh_combo(job)
         done = sum(1 for j in self.jobs if j.done)
-        self.setWindowTitle("Chess Analyzer – analysing %d/%d (%d%%)" % (
-            min(done + 1, len(self.jobs)), len(self.jobs), 100 * a // max(1, b)))
+        self.setWindowTitle("%s – analysing %d/%d (%d%%)" % (
+            APP_TITLE, min(done + 1, len(self.jobs)), len(self.jobs), 100 * a // max(1, b)))
         if job is self.job:
             self.progress.setVisible(True)
             self.progress.setMaximum(b); self.progress.setValue(a)
@@ -1088,12 +1310,12 @@ class MainWindow(QMainWindow):
                     self.set_row(k)
                 self.refresh_graph()
                 self.update_accuracy(final=True)
-                self.goto(self.cur)
+                self.goto(self.cur, animate=False, play_sound=False)
             self.update_status()
         if not any(not j.done for j in self.jobs):
             self.progress.setVisible(False)
             winutil.keep_awake(False)
-            self.setWindowTitle("Chess Analyzer")
+            self.setWindowTitle(APP_TITLE)
             self.notify_done()
 
     def notify_done(self):
@@ -1105,7 +1327,7 @@ class MainWindow(QMainWindow):
             if getattr(self, "tray", None) is None:
                 self.tray = QSystemTrayIcon(self.windowIcon(), self)
             self.tray.show()
-            self.tray.showMessage("Chess Analyzer", "Analysis finished for %d game(s)." % len(self.jobs),
+            self.tray.showMessage(APP_TITLE, "Analysis finished for %d game(s)." % len(self.jobs),
                                   QSystemTrayIcon.Information, 6000)
 
     def refresh_graph(self):
@@ -1172,6 +1394,10 @@ class MainWindow(QMainWindow):
                 it.setForeground(QColor(styles.color(sym)))
                 f = it.font(); f.setBold(True); it.setFont(f)
             tip = styles.name(sym)
+            if sym == "!!" and getattr(r, "brilliant_type", ""):
+                bt = r.brilliant_type
+                bt_label = "Underpromotion" if bt == "underpromotion" else f"{bt.title()} Sacrifice"
+                tip += f" ({bt_label})"
             if r.best_san and self.alt_for(r):
                 tip += " – best was " + r.best_san
             it.setToolTip(tip)
@@ -1211,13 +1437,13 @@ class MainWindow(QMainWindow):
                 node.comment = " ".join(parts)
         if last_open:
             copy.headers["ECO"], copy.headers["Opening"] = last_open
-        copy.headers["Annotator"] = "Chess Analyzer (Stockfish, depth %d)" % self.settings.depth
+        copy.headers["Annotator"] = "%s (Stockfish, depth %d)" % (APP_TITLE, self.settings.depth)
         exporter = chess.pgn.StringExporter(headers=True, variations=False, comments=True)
         return copy.accept(exporter)
 
     def save_game(self):
         if not self.games:
-            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, APP_TITLE, "Open a game first."); return
         h = self.game.headers
         default = "%s-vs-%s.pgn" % (h.get("White", "White"), h.get("Black", "Black"))
         default = "".join(c if c.isalnum() or c in "-_. " else "_" for c in default)
@@ -1229,26 +1455,12 @@ class MainWindow(QMainWindow):
 
     def save_all(self):
         if not self.games:
-            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, APP_TITLE, "Open a game first."); return
         path, _ = QFileDialog.getSaveFileName(self, "Save all analysed games", "analysed-games.pgn", "PGN files (*.pgn)")
         if path:
             with open(path, "w", encoding="utf-8") as f:
                 f.write("\n\n".join(self.annotated_pgn(i) for i in range(len(self.games))) + "\n")
             self.status.setText("Saved %d game(s) to %s" % (len(self.games), path))
-
-    def rename_current_game(self):
-        if not self.game or not self.job:
-            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
-        h = self.game.headers
-        cur_name = self.job.title or ("%s vs %s" % (h.get("White", "?"), h.get("Black", "?")))
-        new_name, ok = QInputDialog.getText(self, "Rename Game", "Enter a name for this game:", QLineEdit.Normal, cur_name)
-        if ok and new_name.strip():
-            self.job.title = new_name.strip()
-            self.update_players_header()
-            self.refresh_combo(self.job)
-            if self.job.lib_id is not None:
-                self.library.rename(self.job.lib_id, self.job.title)
-            self.status.setText("Renamed game to '%s'." % self.job.title)
 
     def _current_user_color(self):
         if self.game:
@@ -1263,7 +1475,7 @@ class MainWindow(QMainWindow):
 
     def rename_current_game(self):
         if not self.game or not self.job:
-            QMessageBox.information(self, "Chess Analyzer", "Open a game first."); return
+            QMessageBox.information(self, APP_TITLE, "Open a game first."); return
         h = self.game.headers
         cur = self.job.title or f"{h.get('White', '?')} vs {h.get('Black', '?')}"
         new_title, ok = QInputDialog.getText(self, "Rename Game", "Enter name for this game:", QLineEdit.Normal, cur)
@@ -1277,9 +1489,9 @@ class MainWindow(QMainWindow):
 
     def save_to_library(self):
         if not self.game or not self.job:
-            QMessageBox.information(self, "Chess Analyzer", "Open and analyse a game first."); return
+            QMessageBox.information(self, APP_TITLE, "Open and analyse a game first."); return
         if not self.job.done:
-            QMessageBox.information(self, "Chess Analyzer", "Wait for analysis to finish before saving to the library."); return
+            QMessageBox.information(self, APP_TITLE, "Wait for analysis to finish before saving to the library."); return
         h = self.game.headers
         mc = self.settings.matched_color(h)
         if mc == chess.WHITE:
@@ -1347,16 +1559,32 @@ class MainWindow(QMainWindow):
             b.push(self.basic[k][3])
         return b
 
-    def goto(self, idx):
+    def goto(self, idx, animate=True, play_sound=True):
         if not self.game:
             return
         idx = max(0, min(idx, len(self.basic)))
+        prev_idx = self.cur
         self.cur = idx
         b = self.board_at(idx)
         mv = self.basic[idx - 1][3] if idx else None
         r = self.results[idx - 1] if idx and idx - 1 < len(self.results) else None
-        self.board.set_position(b, mv, r.symbol if r else "", self.alt_for(r), self.end_badges(b, idx))
+        sym = r.symbol if r else ""
+        do_anim = bool(animate and mv is not None and (sym == "!!" or idx != prev_idx))
+        self.board.set_position(b, mv, sym, self.alt_for(r), self.end_badges(b, idx), animate=do_anim)
+        if play_sound and idx > 0 and mv is not None and idx != prev_idx and hasattr(self, "sound"):
+            if sym == "!!":
+                self.sound.play("brilliant")
+            elif b.is_check():
+                self.sound.play("Check")
+            else:
+                b_before = self.board_at(idx - 1)
+                if b_before.is_castling(mv):
+                    self.sound.play("Castle")
+                else:
+                    self.sound.play("Move")
+        self.table.blockSignals(True)
         self.table.selectRow(idx)
+        self.table.blockSignals(False)
         cp, txt = None, ""
         if r and r.eval_after is not None:
             cp, txt = r.eval_after, r.eval_after_text
@@ -1465,8 +1693,9 @@ class MainWindow(QMainWindow):
     def open_settings(self):
         d = SettingsDialog(self.settings, self)
         if d.exec():
-            self.settings = d.result_settings()
-            s = self.settings
+            old = self.settings
+            s = d.result_settings()
+            self.settings = s
             for k, v in (("scope", s.scope), ("side", s.side), ("name", s.player_name), ("depth", s.depth),
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
                          ("preset", s.preset)):
@@ -1476,11 +1705,41 @@ class MainWindow(QMainWindow):
             self.qs.setValue("lenient", s.lenient_brilliant)
             styles.mode = d.mode.currentData()
             styles.save(self.qs)
-            self.stop()
-            self.holder.close()
-            if self.game:
-                self.orient()
-                self.restart_all()
+
+            # Only re-analyze if engine/analysis parameters changed.
+            # Changing annotation style (Icons vs Legacy, custom icons, colors/symbols)
+            # or player name/side under 'all' scope refreshes the UI in-place!
+            engine_changed = (
+                old.threads != s.threads
+                or old.hash_mb != s.hash_mb
+                or old.engine_path != s.engine_path
+            )
+            analysis_changed = (
+                engine_changed
+                or old.scope != s.scope
+                or old.depth != s.depth
+                or old.lenient_brilliant != s.lenient_brilliant
+                or (
+                    s.scope != "all"
+                    and (
+                        old.side != s.side
+                        or (old.player_name or "").strip().lower() != (s.player_name or "").strip().lower()
+                    )
+                )
+            )
+            if analysis_changed:
+                self.stop()
+                if engine_changed:
+                    self.holder.close()
+                if self.game:
+                    self.orient()
+                    self.restart_all()
+            else:
+                if self.game:
+                    self.orient()
+                    for k in range(len(self.basic)):
+                        self.set_row(k)
+                    self.goto(self.cur, animate=False, play_sound=False)
 
     def closeEvent(self, e):
         try:

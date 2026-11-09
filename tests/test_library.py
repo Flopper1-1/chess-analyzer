@@ -84,3 +84,71 @@ def test_mistake_and_miss_icon_mapping():
     assert os.path.exists(icons.default_path("mistake"))
     assert os.path.exists(icons.default_path("incorrect"))
     assert not os.path.exists(icons.default_path("miss"))
+
+
+def test_underpromotion_brilliant_and_categories():
+    import chess
+    import classify as C
+
+    # Stalemate-avoidance rook underpromotion:
+    # White king a6, pawn c7, Black king a8.
+    # c8=Q is stalemate; c8=R! avoids stalemate and wins!
+    b = chess.Board("k7/2P5/K7/8/8/8/8/8 w - - 0 1")
+    mv_r = chess.Move.from_uci("c7c8r")
+    assert C.is_underpromotion(mv_r)
+    assert C.is_brilliant_underpromotion(b, mv_r, is_best=False, loss=0.5, max_loss=2.0)
+    assert C.brilliant_category(b, mv_r) == "underpromotion"
+    sym = C.classify(
+        0.5, False, 98.0, 98.5, 50.0, False, 98.5,
+        lenient=False, underpromo_brilliant=True,
+    )
+    assert sym == "!!"
+
+
+def test_library_username_tracks_both_colors_and_breakdown(tmp_path):
+    db_file = str(tmp_path / "test_user_bril.db")
+    lib = LIB.GameLibrary(db_file)
+
+    # Game 1: Holly is White (1 Queen sacrifice + 1 Underpromotion)
+    pgn1 = '[White "Holly"]\n[Black "OpponentA"]\n[Result "1-0"]\n\n1. e4 e5 1-0\n'
+    g1 = chess.pgn.read_game(io.StringIO(pgn1))
+    res1 = [
+        A.MoveResult(ply=1, color=True, san="Qxe5", uci="d1e5", fen_before="", fen_after="", symbol="!!", brilliant_type="queen", analysed=True),
+        A.MoveResult(ply=2, color=True, san="c8=N+", uci="c7c8n", fen_before="", fen_after="", symbol="!!", brilliant_type="underpromotion", analysed=True),
+        A.MoveResult(ply=3, color=False, san="Rxe4", uci="a8e4", fen_before="", fen_after="", symbol="!!", brilliant_type="rook", analysed=True),
+    ]
+    lib.save(g1, res1, A.Settings(depth=12))  # saved without player_name initially
+
+    # Game 2: Holly is Black (1 Rook sacrifice + 1 Knight sacrifice)
+    pgn2 = '[White "OpponentB"]\n[Black "Holly"]\n[Result "0-1"]\n\n1. d4 d5 0-1\n'
+    g2 = chess.pgn.read_game(io.StringIO(pgn2))
+    res2 = [
+        A.MoveResult(ply=1, color=True, san="Bxh7+", uci="d3h7", fen_before="", fen_after="", symbol="!!", brilliant_type="bishop", analysed=True),
+        A.MoveResult(ply=2, color=False, san="Rxd4", uci="d8d4", fen_before="", fen_after="", symbol="!!", brilliant_type="rook", analysed=True),
+        A.MoveResult(ply=3, color=False, san="Nxf2", uci="g4f2", fen_before="", fen_after="", symbol="!!", brilliant_type="knight", analysed=True),
+    ]
+    lib.save(g2, res2, A.Settings(depth=12))  # saved with default user_color='white'
+
+    # Query with player_name="Holly" — should match White in Game 1 and Black in Game 2!
+    rows = lib.list(player_name="holly")
+    by_white = {r["white"]: r for r in rows}
+
+    r_g1 = by_white["Holly"]
+    assert r_g1["user_color"] == "white"
+    assert r_g1["matched_by_name"] is True
+    assert r_g1["brilliant_yours"] == 2
+    assert r_g1["brilliant_breakdown_yours"] == {
+        "queen": 1, "rook": 0, "bishop": 0, "knight": 0, "underpromotion": 1,
+    }
+
+    r_g2 = by_white["OpponentB"]
+    assert r_g2["user_color"] == "black"
+    assert r_g2["matched_by_name"] is True
+    assert r_g2["brilliant_yours"] == 2
+    assert r_g2["brilliant_breakdown_yours"] == {
+        "queen": 0, "rook": 1, "bishop": 0, "knight": 1, "underpromotion": 0,
+    }
+
+    # Total across library for Holly: 4 brilliants (1 queen, 1 rook, 1 knight, 1 underpromotion)
+    total_yours = sum(r["brilliant_yours"] for r in rows)
+    assert total_yours == 4

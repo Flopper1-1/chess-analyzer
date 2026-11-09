@@ -1,12 +1,12 @@
 <div align="center">
 
-  <img src="icon.png" width="130" alt="Chess Analyzer Logo" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);" />
+  <img src="icon.png" width="130" alt="Holly's Chess Analyzer Logo" style="border-radius: 28px; box-shadow: 0 10px 30px rgba(0,0,0,0.3);" />
 
-  # Chess Analyzer
+  # Holly's Chess Analyzer
 
-  **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, and an in-app game library.**
+  **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, sound effects, and an in-app game library with advanced Brilliant (`!!`) tracking.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.2.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.3.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20.EXE-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6-41cd52?style=for-the-badge)
@@ -16,7 +16,7 @@
 
   ### 🎬 Feature Showcase
 
-  <img src="assets/showcase_preview.gif" alt="Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
+  <img src="assets/showcase_preview.gif" alt="Holly's Chess Analyzer Showcase Animation" width="100%" style="border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); box-shadow: 0 15px 40px rgba(0,0,0,0.5);" />
 
 </div>
 
@@ -28,17 +28,17 @@
   <tr>
     <td width="50%">
       <h3>🎯 Precision Move Classification</h3>
-      Every move is mapped through non-linear win-probability curves, detecting tactical turnarounds, sacrifices, misses, and book moves in real-time.
+      Every move is mapped through non-linear win-probability curves, detecting tactical turnarounds, piece sacrifices, brilliant underpromotions, misses, and book moves in real-time with smooth slide animations and sound effects.
     </td>
     <td width="50%">
       <h3>📚 In-App Saved Games Library</h3>
-      Save analysed games directly inside the app with custom game names, instant reopening without re-running Stockfish, and per-game + lifetime <b>Brilliant (!!)</b> move tracking (total played &amp; yours).
+      Save analysed games directly inside the app with custom game names, instant reopening without re-running Stockfish, username-based <b>Brilliant (!!)</b> tracking across both White &amp; Black games, and a full breakdown of <b>Queen, Rook, Bishop, Knight sacrifices &amp; Underpromotions</b>.
     </td>
   </tr>
   <tr>
     <td width="50%">
       <h3>🖥️ Standalone Windows Desktop App</h3>
-      Available as a standalone Windows executable (<code>ChessAnalyzer.exe</code>) with zero external dependencies required.
+      Available as a standalone Windows executable (<code>Holly's Chess Analyzer.exe</code>) with zero external dependencies required.
     </td>
     <td width="50%">
       <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
@@ -48,7 +48,7 @@
   <tr>
     <td width="50%">
       <h3>🎨 Hot-Reloadable MS Paint Customizer</h3>
-      Edit any annotation badge directly in Microsoft Paint with one click, live in-app preview, and instant one-button reset.
+      Switch between Icons and Legacy styles or edit any annotation badge directly in Microsoft Paint with live in-app preview—all without re-analyzing the current game.
     </td>
     <td width="50%">
       <h3>⚡ Unthrottled Background Queue</h3>
@@ -63,7 +63,7 @@
 
 | Badge | Annotation | Win% Loss / Criteria | Description |
 |:---:|:---|:---:|:---|
-| <img src="assets/icons/brilliant.png" width="30"/> | **Brilliant (`!!`)** | Loss ≤ 2% | Sound piece sacrifice leading to decisive advantage |
+| <img src="assets/icons/brilliant.png" width="30"/> | **Brilliant (`!!`)** | Loss ≤ 2% | Sound piece sacrifice or tactical underpromotion leading to decisive advantage |
 | <img src="assets/icons/great_find.png" width="30"/> | **Great (`!`)** | Best move | Only winning move or major tactical turnaround |
 | <img src="assets/icons/best.png" width="30"/> | **Best (`★`)** | Best line | Top move selected by Stockfish MultiPV |
 | <img src="assets/icons/excellent.png" width="30"/> | **Excellent (`👍`)** | Loss ≤ 2% | Strong strategic choice keeping high win chance |
@@ -116,7 +116,7 @@ python main.py
 - [ ] **Manual alternate routes with live annotation** — Explore branching what-if lines on the board with real-time Stockfish evaluation and instant move classification badges.
 - [ ] **Custom chess bots with live annotation** — Practice against configurable bot personalities and ELO tiers with live eval feedback and move analysis.
 - [ ] **Move feedback** — Natural language explanations detailing why a move is a blunder, mistake, or best move (e.g. tactics, pins, forks, and hanging pieces).
-- [ ] **Advanced brilliant tracking** — Detailed breakdowns of brilliant (`!!`) moves, categorizing specific archetypes (piece sacrifices, tactical deflections, underpromotions, and king hunts).
+- [x] **Advanced brilliant tracking** — Detailed breakdowns of brilliant (`!!`) moves, categorizing specific archetypes (Queen, Rook, Bishop, Knight sacrifices, and Underpromotions).
 - [ ] **Fix brilliant tracking and best move route** — Improve multi-ply depth validation for brilliant move detection and ensure optimal continuity along the best move path.
 
 ---
