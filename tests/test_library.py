@@ -276,3 +276,62 @@ def test_modern_vs_legacy_annotations_and_reclassify():
     assert res[1].symbol == "+"
     A.reclassify_results(g, res, A.Settings(annotation_system="legacy"))
     assert res[1].symbol == "?!"
+
+
+def test_chesscom_game_review_parity():
+    import chess
+    import classify as C
+    import accuracy as ACC
+
+    # 1. Stockfish 19 NNUE centipawn calibration matches Chess.com displayed evaluation scale
+    assert C.calibrate_cp(0) == 0
+    assert 360 <= C.calibrate_cp(550) <= 395
+    assert C.calibrate_cp(10000) == 10000
+
+    # 2. Routine recapture on the same square is Best (+++), never Great (!)
+    sym_recap = C.classify(
+        0.0, True, 42.0, 42.0, 10.0, False, 42.0,
+        system="modern", is_recapture=True,
+    )
+    assert sym_recap == "+++"
+
+    # 3. Punishing an opponent's non-capture blunder/mistake with the best move is Great (!)
+    sym_punish = C.classify(
+        0.0, True, 55.0, 55.0, 44.0, False, 41.0,
+        system="modern", is_recapture=False,
+    )
+    assert sym_punish == "!"
+
+    # 4. Failing to capitalize on an opponent's gift while staying near pre-gift standing is Miss
+    sym_miss = C.classify(
+        39.5, False, 40.5, 80.0, 41.0, False, 35.0,
+        system="modern",
+    )
+    assert sym_miss == "miss"
+
+    # 5. Middlegame concession that still leaves mover ahead (e.g. 15. O-O) is Mistake (?),
+    # whereas throwing away a won endgame (23. Kh1) is Blunder (??)
+    sym_mid_concession = C.classify(
+        24.2, False, 53.3, 77.5, 55.0, False, 77.5,
+        system="modern", cp_before=329, cp_after=36, best_cp=329, phase="middlegame",
+    )
+    sym_end_blunder = C.classify(
+        25.2, False, 51.4, 76.6, 52.0, False, 76.6,
+        system="modern", cp_before=322, cp_after=15, best_cp=322, phase="endgame",
+    )
+    assert sym_mid_concession == "?"
+    assert sym_end_blunder == "??"
+
+    # 6. Repeating a position / shuffling in a drawn endgame is Excellent (++), not Best (+++)
+    sym_repeat = C.classify(
+        0.0, True, 50.0, 50.0, 50.0, False, 50.0,
+        system="modern", repeats_position=True,
+    )
+    assert sym_repeat == "++"
+
+    # 7. Accuracy & Game Rating calibration matches Chess.com (70.7% -> 700, 71.4% -> 750)
+    assert ACC.rating_from_accuracy(70.4) == 700
+    assert ACC.rating_from_accuracy(70.7) == 700
+    assert ACC.rating_from_accuracy(71.4) == 750
+    assert ACC.rating_from_accuracy(71.6) == 750
+

@@ -20,8 +20,24 @@ def cp_of(score):
     return score.score(mate_score=MATE_CP * 10) if score is not None else 0
 
 
+def calibrate_cp(raw_cp) -> int:
+    """Convert raw Stockfish 19 NNUE centipawns to Chess.com-calibrated centipawns.
+
+    Stockfish 19 normalizes internal scores so 100 cp = 50% win probability at move 32,
+    which inflates classical pawn evaluations by ~1.25x-1.45x in +2..+6 positions.
+    """
+    if raw_cp is None:
+        return 0
+    if abs(raw_cp) >= 9000:
+        return int(raw_cp)
+    sign = 1 if raw_cp >= 0 else -1
+    a = abs(float(raw_cp))
+    scaled = a * 0.82 / (1.0 + a / 2400.0)
+    return int(round(sign * scaled))
+
+
 def win_pct(cp):
-    """Lichess logistic win-probability formula (0..100%)."""
+    """Lichess/Chess.com logistic win-probability formula (0..100%)."""
     if cp is None:
         return 50.0
     cp = max(-MATE_CP * 10, min(MATE_CP * 10, cp))
@@ -45,8 +61,8 @@ def eval_bar_pct(cp, mode: str = "improved", board: chess.Board = None, pv=None,
 
     Modes:
     - 'improved' (default): Starts at 50% (0.0) on move 0, dampens tiny engine tempo noise
-      near 0.00, uses a calibrated WDL/tanh curve for smooth visual scaling, and reserves
-      0% / 100% exclusively for forced checkmate.
+      near 0.00, uses a calibrated WDL/tanh curve matching Chess.com's visual bar scaling,
+      and reserves 0% / 100% exclusively for forced checkmate.
     - 'win_prob': Legacy Lichess win-probability logistic curve (`win_pct(cp)`).
     """
     if is_start or cp is None or cp == 0:
@@ -61,12 +77,12 @@ def eval_bar_pct(cp, mode: str = "improved", board: chess.Board = None, pv=None,
         return 100.0 if cp > 0 else 0.0
 
     abs_cp = float(abs(cp))
-    # Contempt / tempo deadzone dampening near 0.00 so tiny engine first-move noise
-    # (+0.10 to +0.20) in equal positions stays visually centered near 50%.
+    # Contempt / tempo deadzone dampening near 0.00 so tiny engine noise
+    # (<= 15 cp) in dead-even positions stays visually centered at 50%.
     if abs_cp <= 15.0:
         eff_cp = 0.0
-    elif abs_cp < 45.0:
-        t = (abs_cp - 15.0) / 30.0
+    elif abs_cp < 40.0:
+        t = (abs_cp - 15.0) / 25.0
         eff_cp = math.copysign(abs_cp * (t * t), cp)
     else:
         eff_cp = float(cp)
@@ -185,9 +201,25 @@ def brilliant_category(board_before: chess.Board, move: chess.Move) -> str:
     return "knight"
 
 
+def _has_unblocked_pawn(board: chess.Board) -> bool:
+    """Return True if at least one pawn on the board is not rammed by an enemy pawn directly ahead."""
+    for sq, pc in board.piece_map().items():
+        if pc.piece_type != chess.PAWN:
+            continue
+        f = chess.square_file(sq)
+        r = chess.square_rank(sq)
+        ahead_r = r + 1 if pc.color == chess.WHITE else r - 1
+        if 0 <= ahead_r <= 7:
+            ahead_sq = chess.square(f, ahead_r)
+            blocker = board.piece_at(ahead_sq)
+            if blocker is None:
+                return True
+    return False
+
+
 def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
     """Return True when neither player can make progress without committing a bad move
-    (e.g., PV repeats/shuffles, locked pawn fortress with no safe break, or draw state)."""
+    (e.g., 3-fold repetition, 50-move draw, or locked pawn fortress with no safe break)."""
     if board is None:
         return False
     if board.is_checkmate():
@@ -196,8 +228,7 @@ def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
         board.is_stalemate()
         or board.is_insufficient_material()
         or board.is_fifty_moves()
-        or board.is_repetition(2)
-        or board.halfmove_clock >= 20
+        or board.is_repetition(3)
     ):
         return True
 
@@ -216,41 +247,8 @@ def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
             except Exception:
                 break
 
-    # Check if the engine's best line (PV) repeats positions or shuffles pieces back and forth
-    if pv_moves:
-        sim = board.copy()
-        seen_fens = {sim.board_fen()}
-        quiet_streak = 0
-        origin_squares = {chess.WHITE: set(), chess.BLACK: set()}
-        returned_to_origin = {chess.WHITE: False, chess.BLACK: False}
-        for mv in pv_moves:
-            mover = sim.turn
-            is_cap = sim.is_capture(mv)
-            is_pawn = sim.piece_type_at(mv.from_square) == chess.PAWN
-            if not is_cap and not is_pawn and not mv.promotion:
-                quiet_streak += 1
-                if mv.to_square in origin_squares[mover]:
-                    returned_to_origin[mover] = True
-                origin_squares[mover].add(mv.from_square)
-            else:
-                quiet_streak = 0
-            sim.push(mv)
-            if sim.is_checkmate():
-                return False
-            if sim.is_stalemate() or sim.is_insufficient_material() or sim.is_repetition(2):
-                return True
-            bfen = sim.board_fen()
-            if bfen in seen_fens:
-                return True
-            seen_fens.add(bfen)
-        # If the top engine line makes 6+ quiet non-pawn moves and shuffles pieces back
-        if len(pv_moves) >= 6 and quiet_streak >= len(pv_moves) and (
-            returned_to_origin[chess.WHITE] or returned_to_origin[chess.BLACK]
-        ):
-            return True
-
     # Check for locked pawn structure / fortress where neither side has a safe pawn advance or winning capture
-    if not board.is_check() and board.pawns:
+    if not board.is_check() and chess.popcount(board.pawns) >= 4:
         any_safe_progress = False
         for side in (chess.WHITE, chess.BLACK):
             tb = board.copy(stack=False)
@@ -258,14 +256,12 @@ def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
             for m in tb.legal_moves:
                 pt = tb.piece_type_at(m.from_square)
                 if pt == chess.PAWN:
-                    # A pawn move is safe progress if it doesn't immediately lose material
                     if not is_sacrifice(tb, m, threshold=1):
                         any_safe_progress = True
                         break
                 elif tb.is_capture(m):
                     victim = tb.piece_at(m.to_square)
                     if victim is not None:
-                        # Winning capture or safe capture of undefended piece
                         if PIECE_VAL.get(victim.piece_type, 0) > PIECE_VAL.get(pt, 0) or not tb.is_attacked_by(not side, m.to_square):
                             if not is_sacrifice(tb, m, threshold=1):
                                 any_safe_progress = True
@@ -273,7 +269,6 @@ def is_deadlocked_position(board: chess.Board, pv=None) -> bool:
             if any_safe_progress:
                 break
         if not any_safe_progress:
-            # Confirm PV also doesn't find a forced tactical breakthrough in the first 4 plies
             if not pv_moves:
                 return True
             sim2 = board.copy()
@@ -316,11 +311,12 @@ def classify_legacy(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
 
 def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
                     lenient=False, underpromo_brilliant=False,
-                    cp_before=None, cp_after=None, best_cp=None):
-    """Modern Expected-Points (Chess.com V2 / WintrCat style) context-aware move classification.
+                    cp_before=None, cp_after=None, best_cp=None,
+                    is_recapture=False, in_check=False, gives_check=False,
+                    phase="middlegame", repeats_position=False):
+    """Modern Expected-Points (Chess.com Game Review calibrated) context-aware move classification.
 
     All win percentages (0..100) and centipawn values are from the mover's point of view.
-    Expected Points loss ΔEP = loss / 100.0.
     """
     eff_loss = max(0.0, float(loss))
 
@@ -331,8 +327,6 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
     if underpromo_brilliant and eff_loss <= max_bril_loss and played_wp_after >= min_bril_after:
         return "!!"
     if sacrifice and eff_loss <= max_bril_loss:
-        # Either the position after the sacrifice is non-losing (>= min_bril_after) and wasn't already
-        # trivially won (< max_bril_before), OR the sacrifice rescued a worse position.
         if (played_wp_after >= min_bril_after and wp_before < max_bril_before) or (
             wp_before < min_bril_after and played_wp_after >= wp_before - 1.0 and played_wp_after >= 35.0
         ):
@@ -353,61 +347,85 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
     if cp_after is not None and cp_after <= -9000 and best_wp >= 22.0 and (best_cp is None or best_cp > -8000):
         return "??"
 
-    # 4. Miss (miss): Missing a clear tactical punishment or critical only-move opportunity
-    # without collapsing into a completely lost position.
-    missed_tactic = (
-        eff_loss > 5.0
-        and eff_loss <= 22.0
-        and 28.0 <= played_wp_after < 62.0
-        and (
-            best_wp >= 68.0
-            or (second_wp is not None and (best_wp - second_wp) >= 15.0 and best_wp >= 55.0)
-        )
-    )
-    if missed_tactic:
+    # 4. Miss (miss):
+    # Case A: Opponent's previous move was an error that gifted mover a significant jump in win%
+    # (best_wp - wp_before >= 11%), and mover failed to capitalize (eff_loss >= 8%) without
+    # dropping well below their pre-gift standing.
+    opp_gift = (best_wp - wp_before) >= 11.0 and best_wp >= 42.0
+    if opp_gift and eff_loss >= 8.0 and (played_wp_after >= wp_before - 8.0 or played_wp_after >= 32.0):
+        return "miss"
+    # Case B: Missed clear tactical conversion in a sharp position
+    if eff_loss > 5.5 and eff_loss <= 22.0 and 30.0 <= played_wp_after < 60.0 and best_wp >= 68.0:
         return "miss"
 
-    # 5. Negative Expected-Points loss buckets (Blunder / Mistake / Inaccuracy)
+    # 5. Blunder (??) vs Mistake (?):
     if eff_loss > 20.0:
+        still_ahead_mid = (
+            played_wp_after >= 50.8
+            and (cp_after is None or cp_after >= 10)
+            and phase != "endgame"
+            and eff_loss <= 28.0
+        )
+        already_worse_evasion = in_check and best_wp < 43.0 and eff_loss <= 26.0
+        moderate_concession = eff_loss <= 22.8 and played_wp_after >= 20.0 and not sacrifice
+        if still_ahead_mid or already_worse_evasion or moderate_concession:
+            return "?"
         return "??"
-    if eff_loss > 10.0:
-        return "?"
-    if eff_loss > 5.0:
-        return "?!"
 
-    # 6. Great Move (!): Finding the critical best move in a sharp or game-changing position
-    if is_best or eff_loss <= 0.8:
-        only_good_move = (
-            second_wp is not None
-            and (best_wp - second_wp) >= 12.0
-            and 20.0 <= best_wp <= 92.0
+    if eff_loss > 7.2:
+        return "?"
+
+    # 6. Inaccuracy (?!):
+    cp_drop = (best_cp - cp_after) if (best_cp is not None and cp_after is not None) else 0
+    opp_mistake_check = (best_wp - wp_before) >= 7.0 and gives_check and eff_loss >= 1.45
+    if phase == "opening":
+        if eff_loss > 6.2:
+            return "?!"
+    else:
+        if (
+            eff_loss > 5.0
+            or (eff_loss >= 2.5 and cp_drop >= 38 and best_wp < 49.5)
+            or opp_mistake_check
+        ):
+            return "?!"
+
+    # 7. Great Move (!): Finding the critical best move in a sharp or game-changing position
+    # Routine recaptures on the same square (is_recapture) are Best (+++), not Great (!).
+    if is_best and not is_recapture and not repeats_position and played_wp_after >= 44.0:
+        punished_error = (
+            (best_wp - wp_before) >= 11.0
+            and second_wp is not None
+            and (best_wp - second_wp) >= 3.0
         )
         escaped_danger = (
             wp_before < 44.0
             and played_wp_after >= 51.0
             and second_wp is not None
-            and (best_wp - second_wp) >= 8.0
+            and (best_wp - second_wp) >= 3.0
         )
-        punished_mistake = (
-            (best_wp - wp_before) >= 16.0
-            and played_wp_after >= 58.0
-            and second_wp is not None
-            and (best_wp - second_wp) >= 9.0
+        only_good_move = (
+            second_wp is not None
+            and (best_wp - second_wp) >= 12.0
+            and 45.0 <= best_wp <= 92.0
         )
-        if only_good_move or escaped_danger or punished_mistake:
+        if punished_error or escaped_danger or only_good_move:
             return "!"
 
-    # 7. Best / Excellent / Good
-    if is_best or eff_loss <= 0.5:
+    # 8. Best / Excellent / Good:
+    # Moves that repeat a prior board position in an equal/non-losing state are Excellent (++), not Best (+++).
+    if is_best and not repeats_position:
         return "+++"
-    if eff_loss <= 2.0:
+    exc_thresh = 2.0 if repeats_position else (1.40 if phase == "opening" else 1.05)
+    if eff_loss <= exc_thresh:
         return "++"
     return "+"
 
 
 def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
              lenient=False, underpromo_brilliant=False, system: str = "modern",
-             cp_before=None, cp_after=None, best_cp=None):
+             cp_before=None, cp_after=None, best_cp=None,
+             is_recapture=False, in_check=False, gives_check=False,
+             phase="middlegame", repeats_position=False):
     """Return an annotation symbol using the selected classification system ('modern' or 'legacy')."""
     if system == "legacy":
         return classify_legacy(
@@ -418,6 +436,8 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
         loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_before,
         lenient=lenient, underpromo_brilliant=underpromo_brilliant,
         cp_before=cp_before, cp_after=cp_after, best_cp=best_cp,
+        is_recapture=is_recapture, in_check=in_check, gives_check=gives_check,
+        phase=phase, repeats_position=repeats_position,
     )
 
 

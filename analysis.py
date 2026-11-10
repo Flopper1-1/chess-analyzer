@@ -19,7 +19,7 @@ class Settings:
     side: str = "both"                  # white | black | both
     player_name: str = ""
     depth: int = 16
-    threads: int = 2
+    threads: int = 1
     hash_mb: int = 128
     engine_path: str = ""
     preset: str = "custom"
@@ -78,14 +78,30 @@ class MoveResult:
     pv_uci: List[str] = field(default_factory=list)
 
 
-def eval_text(score: Optional[chess.engine.PovScore]) -> str:
+def format_cp_text(cp: Optional[int], score: Optional[chess.engine.PovScore] = None) -> str:
+    if score is not None:
+        w = score.white()
+        if w.is_mate():
+            m = w.mate()
+            return ("#%d" % m) if m > 0 else ("-#%d" % -m)
+    if cp is None:
+        return ""
+    if abs(cp) >= 9000:
+        return "#1" if cp > 0 else "-#1"
+    if cp == 0:
+        return "0.0"
+    return "%+.2f" % (cp / 100.0)
+
+
+def eval_text(score: Optional[chess.engine.PovScore], calibrate: bool = True) -> str:
     if score is None:
         return ""
     w = score.white()
     if w.is_mate():
         m = w.mate()
         return ("#%d" % m) if m > 0 else ("-#%d" % -m)
-    cp = w.score()
+    raw = w.score()
+    cp = C.calibrate_cp(raw) if calibrate else raw
     if cp == 0:
         return "0.0"
     return "%+.2f" % (cp / 100.0)
@@ -128,7 +144,10 @@ def analyse_position(engine, board, depth, multipv=1):
     """-> list of infos (sorted best first). For terminal positions returns []."""
     if board.is_game_over(claim_draw=False):
         return []
-    info = engine.analyse(board, chess.engine.Limit(depth=depth), multipv=multipv)
+    # Only strip move stack when a 2-fold repetition has occurred so Stockfish doesn't
+    # score non-terminal 2-fold repetitions as 0.00 draws prematurely.
+    fen_board = board.copy(stack=False) if board.is_repetition(2) else board.copy()
+    info = engine.analyse(fen_board, chess.engine.Limit(depth=depth), multipv=multipv)
     if isinstance(info, dict):
         info = [info]
     return info
@@ -164,6 +183,12 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
     fast_depth = max(8, full_depth - 4)
     all_scope = settings.scope == "all"
     sac_threshold = 1 if settings.lenient_brilliant else 2
+    use_cal = (settings.annotation_system == "modern") or (settings.eval_formula == "improved")
+
+    def _norm_cp(raw_cp: Optional[int]) -> Optional[int]:
+        if raw_cp is None:
+            return None
+        return C.calibrate_cp(raw_cp) if use_cal else int(raw_cp)
 
     def tracked_mover(i):
         return all_scope or boards[i].turn in tracked
@@ -207,53 +232,79 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             elif C.is_deadlocked_position(b, raw_before_pv):
                 r.eval_before = 0
             else:
-                r.eval_before = before[0]["score"].white().score(mate_score=10000)
+                r.eval_before = _norm_cp(before[0]["score"].white().score(mate_score=10000))
             r.pv, r.pv_uci = pv_to_san(b, raw_before_pv)
             if r.pv:
                 r.best_san = r.pv[0]
         elif i == 0 and C.is_standard_start(b):
             r.eval_before = 0
 
+        is_best = bool(before and before[0].get("pv") and before[0]["pv"][0] == mv)
         played_info = None
         for inf in before:
             pv = inf.get("pv") or []
             if pv and pv[0] == mv:
                 played_info = inf
+
         after_pv = []
-        if played_info is not None:
-            after_score = played_info["score"]
-            after_pv = (played_info.get("pv") or [])[1:]
-        elif after:
+        # Prefer the direct evaluation of boards[i + 1] (`after[0]`) so every position has a
+        # single consistent score across consecutive plies, matching Chess.com Game Review.
+        if after:
             after_score = after[0]["score"]
             after_pv = after[0].get("pv") or []
+        elif played_info is not None:
+            after_score = played_info["score"]
+            after_pv = (played_info.get("pv") or [])[1:]
         elif boards[i + 1].is_game_over():
             after_score = terminal_score(boards[i + 1])
         else:
             after_score = None
+
         if after_score is not None:
             if C.is_deadlocked_position(boards[i + 1], after_pv):
                 r.eval_after = 0
                 r.eval_after_text = "0.0"
             else:
-                r.eval_after = after_score.white().score(mate_score=10000)
-                r.eval_after_text = eval_text(after_score)
+                r.eval_after = _norm_cp(after_score.white().score(mate_score=10000))
+                r.eval_after_text = format_cp_text(r.eval_after, after_score)
+
         if b.legal_moves.count() == 1 and not r.book:
             # only one legal move: forced, never judged
             r.symbol, r.analysed = "forced", tracked_mover(i)
         elif before and is_full(i) and after_score is not None:
-            best_cp = C.cp_of(before[0]["score"].pov(mover))
-            after_cp = C.cp_of(after_score.pov(mover))
-            is_best = bool(before[0].get("pv")) and before[0]["pv"][0] == mv
+            best_cp = _norm_cp(C.cp_of(before[0]["score"].pov(mover)))
+            after_cp = _norm_cp(C.cp_of(after_score.pov(mover)))
+            repeats_pos = bool(
+                boards[i + 1].is_repetition(2)
+                or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
+                or (
+                    b.halfmove_clock >= 4
+                    and i >= 4
+                    and (mv.to_square == moves[i - 2].from_square or mv.to_square == moves[i - 4].to_square)
+                )
+            )
             if is_best:
+                after_cp = best_cp
+            elif (
+                after_cp >= best_cp
+                and not repeats_pos
+                and (
+                    r.phase == "opening"
+                    or (
+                        b.halfmove_clock < 5
+                        and b.piece_type_at(mv.from_square) in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                        and chess.square_rank(mv.to_square) not in (0, 7)
+                    )
+                )
+            ):
+                is_best = True
                 after_cp = best_cp
             best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
             loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
-            second_cp = C.cp_of(before[1]["score"].pov(mover)) if len(before) > 1 else None
+            second_cp = _norm_cp(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
             r.second_cp = second_cp
             second_wp = C.win_pct(second_cp) if second_cp is not None else None
 
-            # Determine wp_before from the prior position so a winning tactical sacrifice
-            # isn't disqualified by its own high best_wp.
             if i == 0 and C.is_standard_start(b):
                 before_cp = 0
                 wp_before = 50.0
@@ -264,9 +315,14 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             else:
                 before_cp = best_cp
                 wp_before = best_wp
-            if second_wp is not None and settings.annotation_system == "modern":
-                wp_before = min(wp_before, max(best_wp, second_wp))
 
+            is_recapture = bool(
+                i > 0
+                and boards[i - 1].is_capture(moves[i - 1])
+                and mv.to_square == moves[i - 1].to_square
+            )
+            in_check = b.is_check()
+            gives_check = boards[i + 1].is_check()
             sac = C.is_sacrifice(b, mv, sac_threshold)
             max_loss = 5.0 if settings.lenient_brilliant else 2.5
             underpromo = C.is_brilliant_underpromotion(b, mv, is_best, loss, max_loss)
@@ -278,6 +334,11 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 cp_before=before_cp,
                 cp_after=after_cp,
                 best_cp=best_cp,
+                is_recapture=is_recapture,
+                in_check=in_check,
+                gives_check=gives_check,
+                phase=r.phase,
+                repeats_position=repeats_pos,
             )
             if mover not in tracked and not all_scope and sym != "!!":
                 pass  # untracked opponent move: only brilliants are reported
@@ -288,6 +349,21 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                     r.symbol = "/"
                 elif r.symbol == "!!":
                     r.brilliant_type = C.brilliant_category(b, mv)
+
+                # Chess.com Game Review continuity: when a non-book move is the engine's top move
+                # (Best, Great, or Brilliant), the position's evaluation remains unchanged from the
+                # evaluation entering the move.
+                if (
+                    is_best
+                    and not r.book
+                    and r.symbol in ("+++", "!", "!!")
+                    and i > 0
+                    and results[i - 1].eval_after is not None
+                    and not C.is_deadlocked_position(boards[i + 1], after_pv)
+                ):
+                    r.eval_before = results[i - 1].eval_after
+                    r.eval_after = results[i - 1].eval_after
+                    r.eval_after_text = results[i - 1].eval_after_text
         elif r.book and tracked_mover(i):
             r.symbol, r.analysed = "/", True
         return r
@@ -324,6 +400,8 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
     all_scope = settings.scope == "all"
 
     b = game.board()
+    prev_move = None
+    prev_was_capture = False
     for i, r in enumerate(results):
         try:
             mv = chess.Move.from_uci(r.uci) if r.uci else b.parse_san(r.san)
@@ -360,6 +438,15 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 before_cp = best_cp
                 wp_before = best_wp
 
+            is_recapture = bool(prev_move is not None and prev_was_capture and mv.to_square == prev_move.to_square)
+            in_check = b.is_check()
+            b_next = b.copy()
+            b_next.push(mv)
+            gives_check = b_next.is_check()
+            repeats_pos = bool(
+                b_next.is_repetition(2)
+                or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
+            )
             sac = C.is_sacrifice(b, mv, sac_threshold)
             underpromo = C.is_brilliant_underpromotion(b, mv, is_best, r.loss, max_loss)
             sym = C.classify(
@@ -370,9 +457,16 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 cp_before=before_cp,
                 cp_after=after_cp,
                 best_cp=best_cp,
+                is_recapture=is_recapture,
+                in_check=in_check,
+                gives_check=gives_check,
+                phase=r.phase,
+                repeats_position=repeats_pos,
             )
             r.symbol = sym
             r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""
+        prev_was_capture = b.is_capture(mv)
+        prev_move = mv
         b.push(mv)
 
 
