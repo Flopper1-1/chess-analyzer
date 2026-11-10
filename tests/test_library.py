@@ -335,3 +335,42 @@ def test_chesscom_game_review_parity():
     assert ACC.rating_from_accuracy(71.4) == 750
     assert ACC.rating_from_accuracy(71.6) == 750
 
+    # 8. Hikaru Brilliant (36... Qh7!!) leaving g5-knight en prise -> '!!' ('knight' sacrifice)
+    b_qh7 = chess.Board("5k2/p5q1/8/Pp1p1Pn1/2pP2NQ/8/2r1r2P/3R2RK b - - 2 36")
+    mv_qh7 = chess.Move.from_uci("g7h7")
+    assert C.is_sacrifice(b_qh7, mv_qh7, 2) is True
+    assert C.brilliant_category(b_qh7, mv_qh7) == "knight"
+    sym_qh7 = C.classify(
+        0.0, True, 50.0, 50.0, 50.0, True, 50.0,
+        system="modern",
+    )
+    assert sym_qh7 == "!!"
+
+    # 9. Hikaru Great moves & non-Great exclusions (26... h5!, 35. Nxf6+!, 37. Qg3!, 37... Qe7!, 56. Nxh8, 67... Qxb7#)
+    # 26... h5! (pawn kicks knight defender after opponent blunder)
+    assert C.classify(
+        0.0, True, 59.1, 59.1, 59.1, False, 50.9,
+        system="modern", attacks_piece=True,
+    ) == "!"
+    # 35. Nxf6+! (discovered attack saving a lost position from -3.20 to 0.00)
+    assert C.classify(
+        0.0, True, 50.0, 50.0, 50.0, False, 24.6,
+        system="modern", is_capture=True, gives_check=True,
+    ) == "!"
+    # 37... Qe7! (critical non-capture defense immediately after a Brilliant/Great move)
+    assert C.classify(
+        0.0, True, 50.0, 50.0, 46.6, False, 50.0,
+        system="modern", best_cp=0, prev_critical=True,
+    ) == "!"
+    # 56. Nxh8 (capturing an already-attacked undefended piece is Best +++, not Great !)
+    assert C.classify(
+        0.0, True, 55.8, 55.8, 19.0, False, 55.8,
+        system="modern", is_capture=True, pre_attacked_free_piece=True,
+    ) == "+++"
+    # 67... Qxb7# (mate in 1 is Best +++, not Great !)
+    assert C.classify(
+        0.0, True, 100.0, 100.0, 5.0, False, 10.0,
+        system="modern", best_cp=10000,
+    ) == "+++"
+
+

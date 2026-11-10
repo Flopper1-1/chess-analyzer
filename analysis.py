@@ -274,6 +274,17 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         elif before and is_full(i) and after_score is not None:
             best_cp = _norm_cp(C.cp_of(before[0]["score"].pov(mover)))
             after_cp = _norm_cp(C.cp_of(after_score.pov(mover)))
+            is_capture = b.is_capture(mv)
+            attacks_piece = bool(
+                b.piece_type_at(mv.from_square) == chess.PAWN
+                and not is_capture
+                and any(
+                    boards[i + 1].piece_at(sq) is not None
+                    and boards[i + 1].piece_at(sq).color != mover
+                    and boards[i + 1].piece_at(sq).piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                    for sq in boards[i + 1].attacks(mv.to_square)
+                )
+            )
             repeats_pos = bool(
                 boards[i + 1].is_repetition(2)
                 or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
@@ -290,6 +301,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 and not repeats_pos
                 and (
                     r.phase == "opening"
+                    or attacks_piece
                     or (
                         b.halfmove_clock < 5
                         and b.piece_type_at(mv.from_square) in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
@@ -321,6 +333,23 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 and boards[i - 1].is_capture(moves[i - 1])
                 and mv.to_square == moves[i - 1].to_square
             )
+            victim = b.piece_at(mv.to_square) if is_capture else None
+            pre_attacked_free_piece = bool(
+                is_capture
+                and victim is not None
+                and victim.piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                and not b.is_attacked_by(not mover, mv.to_square)
+                and i >= 2
+                and boards[i - 1].piece_at(mv.to_square) == victim
+                and boards[i - 1].is_attacked_by(mover, mv.to_square)
+            )
+            pendulum_return = bool(
+                i >= 2
+                and not is_capture
+                and mv.from_square == moves[i - 2].to_square
+                and mv.to_square == moves[i - 2].from_square
+            )
+            prev_critical = bool(i > 0 and results[i - 1].symbol in ("!!", "!"))
             in_check = b.is_check()
             gives_check = boards[i + 1].is_check()
             sac = C.is_sacrifice(b, mv, sac_threshold)
@@ -339,6 +368,11 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 gives_check=gives_check,
                 phase=r.phase,
                 repeats_position=repeats_pos,
+                is_capture=is_capture,
+                pre_attacked_free_piece=pre_attacked_free_piece,
+                pendulum_return=pendulum_return,
+                attacks_piece=attacks_piece,
+                prev_critical=prev_critical,
             )
             if mover not in tracked and not all_scope and sym != "!!":
                 pass  # untracked opponent move: only brilliants are reported
@@ -354,7 +388,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 # (Best, Great, or Brilliant), the position's evaluation remains unchanged from the
                 # evaluation entering the move.
                 if (
-                    is_best
+                    (is_best or r.symbol == "!!")
                     and not r.book
                     and r.symbol in ("+++", "!", "!!")
                     and i > 0
@@ -400,6 +434,8 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
     all_scope = settings.scope == "all"
 
     b = game.board()
+    boards_hist = [b.copy()]
+    moves_hist = []
     prev_move = None
     prev_was_capture = False
     for i, r in enumerate(results):
@@ -408,6 +444,8 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
         except Exception:
             break
         mover = b.turn
+        b_next = b.copy()
+        b_next.push(mv)
         if i == 0 and C.is_standard_start(b):
             r.eval_before = 0
         if b.legal_moves.count() == 1 and not r.book:
@@ -421,7 +459,27 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
             raw_best_w = r.eval_before if r.eval_before is not None else r.eval_after
             best_cp = raw_best_w if mover == chess.WHITE else -raw_best_w
             after_cp = r.eval_after if mover == chess.WHITE else -r.eval_after
-            is_best = (r.best_san == r.san) or (bool(r.pv_uci) and r.pv_uci[0] == r.uci) or (r.loss == 0.0 and not r.best_san)
+            is_capture = b.is_capture(mv)
+            attacks_piece = bool(
+                b.piece_type_at(mv.from_square) == chess.PAWN
+                and not is_capture
+                and any(
+                    b_next.piece_at(sq) is not None
+                    and b_next.piece_at(sq).color != mover
+                    and b_next.piece_at(sq).piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                    for sq in b_next.attacks(mv.to_square)
+                )
+            )
+            repeats_pos = bool(
+                b_next.is_repetition(2)
+                or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
+            )
+            is_best = (
+                (r.best_san == r.san)
+                or (bool(r.pv_uci) and r.pv_uci[0] == r.uci)
+                or (r.loss == 0.0 and not r.best_san)
+                or (r.loss == 0.0 and attacks_piece and not repeats_pos)
+            )
             if is_best:
                 after_cp = best_cp
             after_wp = C.win_pct(after_cp)
@@ -439,14 +497,25 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 wp_before = best_wp
 
             is_recapture = bool(prev_move is not None and prev_was_capture and mv.to_square == prev_move.to_square)
-            in_check = b.is_check()
-            b_next = b.copy()
-            b_next.push(mv)
-            gives_check = b_next.is_check()
-            repeats_pos = bool(
-                b_next.is_repetition(2)
-                or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
+            victim = b.piece_at(mv.to_square) if is_capture else None
+            pre_attacked_free_piece = bool(
+                is_capture
+                and victim is not None
+                and victim.piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                and not b.is_attacked_by(not mover, mv.to_square)
+                and i >= 2
+                and boards_hist[i - 1].piece_at(mv.to_square) == victim
+                and boards_hist[i - 1].is_attacked_by(mover, mv.to_square)
             )
+            pendulum_return = bool(
+                i >= 2
+                and not is_capture
+                and mv.from_square == moves_hist[i - 2].to_square
+                and mv.to_square == moves_hist[i - 2].from_square
+            )
+            prev_critical = bool(i > 0 and results[i - 1].symbol in ("!!", "!"))
+            in_check = b.is_check()
+            gives_check = b_next.is_check()
             sac = C.is_sacrifice(b, mv, sac_threshold)
             underpromo = C.is_brilliant_underpromotion(b, mv, is_best, r.loss, max_loss)
             sym = C.classify(
@@ -462,12 +531,19 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 gives_check=gives_check,
                 phase=r.phase,
                 repeats_position=repeats_pos,
+                is_capture=is_capture,
+                pre_attacked_free_piece=pre_attacked_free_piece,
+                pendulum_return=pendulum_return,
+                attacks_piece=attacks_piece,
+                prev_critical=prev_critical,
             )
             r.symbol = sym
             r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""
         prev_was_capture = b.is_capture(mv)
         prev_move = mv
+        moves_hist.append(mv)
         b.push(mv)
+        boards_hist.append(b.copy())
 
 
 def best_line(engine, fen: str, depth: int, multipv=3):

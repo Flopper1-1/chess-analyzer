@@ -313,7 +313,10 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
                     lenient=False, underpromo_brilliant=False,
                     cp_before=None, cp_after=None, best_cp=None,
                     is_recapture=False, in_check=False, gives_check=False,
-                    phase="middlegame", repeats_position=False):
+                    phase="middlegame", repeats_position=False,
+                    is_capture=False, pre_attacked_free_piece=False,
+                    pendulum_return=False, attacks_piece=False,
+                    prev_critical=False):
     """Modern Expected-Points (Chess.com Game Review calibrated) context-aware move classification.
 
     All win percentages (0..100) and centipawn values are from the mover's point of view.
@@ -390,12 +393,40 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
             return "?!"
 
     # 7. Great Move (!): Finding the critical best move in a sharp or game-changing position
-    # Routine recaptures on the same square (is_recapture) are Best (+++), not Great (!).
-    if is_best and not is_recapture and not repeats_position and played_wp_after >= 44.0:
+    # Routine recaptures on the same square (is_recapture), cashing in on pre-attacked
+    # undefended pieces, pendulum retreats, or mating in 1 are Best (+++), not Great (!).
+    if (
+        is_best
+        and not is_recapture
+        and not repeats_position
+        and not pre_attacked_free_piece
+        and not pendulum_return
+        and 45.5 <= played_wp_after < 99.0
+        and wp_before < 62.0
+        and (best_cp is None or best_cp < 9000)
+        and (second_wp is None or second_wp < 62.0 or (wp_before <= 53.0 and not is_capture))
+    ):
         punished_error = (
             (best_wp - wp_before) >= 11.0
             and second_wp is not None
             and (best_wp - second_wp) >= 3.0
+        )
+        saved_lost_position = (
+            wp_before < 32.0
+            and (best_wp - wp_before) >= 20.0
+            and played_wp_after >= 48.0
+        )
+        defender_kick = (
+            attacks_piece
+            and (best_wp - wp_before) >= 7.0
+            and played_wp_after >= 56.0
+            and (second_wp is None or second_wp <= best_wp)
+        )
+        critical_followup = (
+            prev_critical
+            and not is_capture
+            and (best_cp is not None and best_cp >= 0)
+            and (second_wp is not None and (best_wp - second_wp) >= 3.0 and second_wp < 47.5)
         )
         escaped_danger = (
             wp_before < 44.0
@@ -406,9 +437,16 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
         only_good_move = (
             second_wp is not None
             and (best_wp - second_wp) >= 12.0
-            and 45.0 <= best_wp <= 92.0
+            and 45.5 <= best_wp <= 92.0
         )
-        if punished_error or escaped_danger or only_good_move:
+        if (
+            punished_error
+            or saved_lost_position
+            or defender_kick
+            or critical_followup
+            or escaped_danger
+            or only_good_move
+        ):
             return "!"
 
     # 8. Best / Excellent / Good:
@@ -425,7 +463,10 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
              lenient=False, underpromo_brilliant=False, system: str = "modern",
              cp_before=None, cp_after=None, best_cp=None,
              is_recapture=False, in_check=False, gives_check=False,
-             phase="middlegame", repeats_position=False):
+             phase="middlegame", repeats_position=False,
+             is_capture=False, pre_attacked_free_piece=False,
+             pendulum_return=False, attacks_piece=False,
+             prev_critical=False):
     """Return an annotation symbol using the selected classification system ('modern' or 'legacy')."""
     if system == "legacy":
         return classify_legacy(
@@ -438,6 +479,9 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
         cp_before=cp_before, cp_after=cp_after, best_cp=best_cp,
         is_recapture=is_recapture, in_check=in_check, gives_check=gives_check,
         phase=phase, repeats_position=repeats_position,
+        is_capture=is_capture, pre_attacked_free_piece=pre_attacked_free_piece,
+        pendulum_return=pendulum_return, attacks_piece=attacks_piece,
+        prev_critical=prev_critical,
     )
 
 
