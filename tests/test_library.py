@@ -483,8 +483,10 @@ def test_holiday_events_and_app_icons(tmp_path, monkeypatch):
     assert themes.active_holiday_event(datetime(2026, 10, 15), disabled=True) is None
 
     selectable_ids = [i["id"] for i in themes.list_selectable_app_icons(now=datetime(2026, 11, 12))]
-    for expected_icon in ("fluent", "classic", "midnight", "gold"):
+    for expected_icon in ("fluent", "aero", "flatdesign", "liquidglass", "metro", "skueomorphism"):
         assert expected_icon in selectable_ids
+    for removed_icon in ("classic", "midnight", "gold"):
+        assert removed_icon not in selectable_ids
     for hol in themes.HOLIDAY_IDS:
         assert hol not in selectable_ids
 
