@@ -5,6 +5,7 @@ python -m PyInstaller --noconfirm --onefile --windowed --name "Holly's Chess Ana
   --add-binary "assets\stockfish.exe;assets" `
   --add-data "assets\openings;assets\openings" `
   --add-data "LICENSES;LICENSES" --add-data "assets\icons;assets\icons" `
+  --add-data "assets\app_icons;assets\app_icons" --add-data "assets\fluent.png;assets" `
   --add-data "assets\sounds;assets\sounds" `
   --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
   --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf `

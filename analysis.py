@@ -221,6 +221,12 @@ class Settings:
     eval_formula: str = "improved"      # improved | win_prob
     annotation_system: str = "modern"   # modern | legacy
     auto_update: bool = True            # check GitHub newest stable release on startup
+    app_icon: str = "fluent"
+    sound_template: str = "original"
+    board_template: str = "brown_tan"
+    background_template: str = "dark"
+    piece_template: str = "default"
+    disable_holiday_events: bool = False
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""

@@ -1,9 +1,9 @@
-141 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.7
-142 INFO: Python: 3.12.10
-169 INFO: Platform: Windows-11-10.0.26300-SP0
-169 INFO: Python environment: C:\Users\pierr\AppData\Local\Programs\Python\Python312
-170 INFO: wrote C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\Holly's Chess Analyzer.spec
-172 INFO: Module search paths (PYTHONPATH):
+178 INFO: PyInstaller: 6.22.3, contrib hooks: 2026.7
+178 INFO: Python: 3.12.10
+205 INFO: Platform: Windows-11-10.0.26300-SP0
+205 INFO: Python environment: C:\Users\pierr\AppData\Local\Programs\Python\Python312
+205 INFO: wrote C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\Holly's Chess Analyzer.spec
+213 INFO: Module search paths (PYTHONPATH):
 ['C:\\Users\\pierr\\.gemini\\antigravity\\scratch\\chess-analyzer',
  'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\python312.zip',
  'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\DLLs',
@@ -16,69 +16,69 @@
  'C:\\Users\\pierr\\.gemini\\antigravity\\scratch\\chess-analyzer']
 pygame 2.6.1 (SDL 2.28.4, Python 3.12.10)
 Hello from the pygame community. https://www.pygame.org/contribute.html
-655 INFO: Appending 'binaries' from .spec
-655 INFO: Appending 'datas' from .spec
-658 INFO: checking Analysis
-687 INFO: Building because excludes changed
-687 INFO: Looking for Python shared library...
-687 INFO: Using Python shared library: C:\Users\pierr\AppData\Local\Programs\Python\Python312\python312.dll
-687 INFO: Running Analysis Analysis-00.toc
-687 INFO: Target bytecode optimization level: 0
-687 INFO: Initializing module dependency graph...
-689 INFO: Initializing module graph hook caches...
-700 INFO: Analyzing modules for base_library.zip ...
-1750 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-2100 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-2220 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-2749 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-4449 INFO: Caching module dependency graph...
-4523 INFO: Analyzing C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\main.py
-4884 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
-4886 INFO: SetuptoolsInfo: initializing cached setuptools info...
-5727 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-5942 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-6254 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-6862 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-7157 INFO: Processing standard module hook 'hook-PySide6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-7343 INFO: Processing standard module hook 'hook-shiboken6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-7685 INFO: Processing standard module hook 'hook-PySide6.QtNetwork.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-12547 INFO: Processing standard module hook 'hook-PySide6.QtCore.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-19061 INFO: Processing standard module hook 'hook-PySide6.QtGui.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-52723 INFO: Processing standard module hook 'hook-PySide6.QtWidgets.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-58907 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-59407 INFO: Processing module hooks (post-graph stage)...
-59498 INFO: Performing binary vs. data reclassification (170 entries)
-59567 INFO: Looking for ctypes DLLs
-59577 INFO: Analyzing run-time hooks ...
-59579 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-59585 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-59590 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-59592 INFO: Including run-time hook 'pyi_rth_pyside6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
-59595 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
-59597 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
-59616 INFO: Creating base_library.zip...
-59676 INFO: Looking for dynamic libraries
-59925 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\shiboken6']
-59925 INFO: Extra DLL search directories (PATH): ['C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PySide6']
-63304 INFO: Warnings written to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\warn-Holly's Chess Analyzer.txt
-63325 INFO: Graph cross-reference written to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\xref-Holly's Chess Analyzer.html
-63416 INFO: checking PYZ
-63459 INFO: Building because toc changed
-63461 INFO: Building PYZ (ZlibArchive) C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\PYZ-00.pyz
-63894 INFO: Building PYZ (ZlibArchive) C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\PYZ-00.pyz completed successfully.
-63906 INFO: checking PKG
-63924 INFO: Building because toc changed
-63924 INFO: Building PKG (CArchive) Holly's Chess Analyzer.pkg
-120130 INFO: Building PKG (CArchive) Holly's Chess Analyzer.pkg completed successfully.
-120137 INFO: Bootloader C:\Users\pierr\AppData\Local\Programs\Python\Python312\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
-120137 INFO: checking EXE
-120151 INFO: Building because toc changed
-120151 INFO: Building EXE from EXE-00.toc
-120169 INFO: Copying bootloader EXE to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\dist\Holly's Chess Analyzer.exe
-120282 INFO: Copying icon to EXE
-120414 INFO: Copying 0 resources to EXE
-120414 INFO: Embedding manifest in EXE
-120539 INFO: Appending PKG archive to EXE
-120803 INFO: Fixing EXE headers
-121735 INFO: Building EXE from EXE-00.toc completed successfully.
-121741 INFO: Build complete! The results are available in: C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\dist
+2153 INFO: Appending 'binaries' from .spec
+2153 INFO: Appending 'datas' from .spec
+2157 INFO: checking Analysis
+2170 INFO: Building because excludes changed
+2170 INFO: Looking for Python shared library...
+2170 INFO: Using Python shared library: C:\Users\pierr\AppData\Local\Programs\Python\Python312\python312.dll
+2170 INFO: Running Analysis Analysis-00.toc
+2170 INFO: Target bytecode optimization level: 0
+2170 INFO: Initializing module dependency graph...
+2171 INFO: Initializing module graph hook caches...
+2286 INFO: Analyzing modules for base_library.zip ...
+3774 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+4516 INFO: Processing standard module hook 'hook-math.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+6646 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+8474 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+10905 INFO: Caching module dependency graph...
+10979 INFO: Analyzing C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\main.py
+11229 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+11484 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+11489 INFO: SetuptoolsInfo: initializing cached setuptools info...
+12574 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+12883 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+14135 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+14464 INFO: Processing standard module hook 'hook-PySide6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+14689 INFO: Processing standard module hook 'hook-shiboken6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+14972 INFO: Processing standard module hook 'hook-PySide6.QtNetwork.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+20516 INFO: Processing standard module hook 'hook-PySide6.QtCore.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+27515 INFO: Processing standard module hook 'hook-PySide6.QtGui.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+54875 INFO: Processing standard module hook 'hook-PySide6.QtWidgets.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+57919 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+58402 INFO: Processing module hooks (post-graph stage)...
+58595 INFO: Performing binary vs. data reclassification (174 entries)
+59508 INFO: Looking for ctypes DLLs
+59535 INFO: Analyzing run-time hooks ...
+59536 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+59560 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+59582 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+59597 INFO: Including run-time hook 'pyi_rth_pyside6.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+59632 INFO: Processing pre-find-module-path hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks\\pre_find_module_path'
+59643 INFO: Processing standard module hook 'hook-_pyi_rth_utils.py' from 'C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PyInstaller\\hooks'
+59659 INFO: Creating base_library.zip...
+59671 INFO: Looking for dynamic libraries
+59981 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\shiboken6']
+59981 INFO: Extra DLL search directories (PATH): ['C:\\Users\\pierr\\AppData\\Local\\Programs\\Python\\Python312\\Lib\\site-packages\\PySide6']
+62843 INFO: Warnings written to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\warn-Holly's Chess Analyzer.txt
+62872 INFO: Graph cross-reference written to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\xref-Holly's Chess Analyzer.html
+62942 INFO: checking PYZ
+62951 INFO: Building because toc changed
+62952 INFO: Building PYZ (ZlibArchive) C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\PYZ-00.pyz
+63272 INFO: Building PYZ (ZlibArchive) C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\build\Holly's Chess Analyzer\PYZ-00.pyz completed successfully.
+63286 INFO: checking PKG
+63298 INFO: Building because toc changed
+63298 INFO: Building PKG (CArchive) Holly's Chess Analyzer.pkg
+83861 INFO: Building PKG (CArchive) Holly's Chess Analyzer.pkg completed successfully.
+83865 INFO: Bootloader C:\Users\pierr\AppData\Local\Programs\Python\Python312\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+83865 INFO: checking EXE
+83875 INFO: Building because toc changed
+83875 INFO: Building EXE from EXE-00.toc
+83875 INFO: Copying bootloader EXE to C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\dist\Holly's Chess Analyzer.exe
+83968 INFO: Copying icon to EXE
+84031 INFO: Copying 0 resources to EXE
+84031 INFO: Embedding manifest in EXE
+84092 INFO: Appending PKG archive to EXE
+84166 INFO: Fixing EXE headers
+84694 INFO: Building EXE from EXE-00.toc completed successfully.
+84697 INFO: Build complete! The results are available in: C:\Users\pierr\.gemini\antigravity\scratch\chess-analyzer\dist

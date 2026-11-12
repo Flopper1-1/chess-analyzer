@@ -467,3 +467,81 @@ def test_profile_rules_and_updater():
     assert not M.should_show_board_avatar("", chess.WHITE, h)
     assert M.should_show_board_avatar("Holly", chess.WHITE, h)
     assert not M.should_show_board_avatar("Holly", chess.BLACK, h)
+
+
+def test_holiday_events_and_app_icons(tmp_path, monkeypatch):
+    from datetime import datetime
+    import themes
+    monkeypatch.setattr(themes, "data_root", lambda: str(tmp_path))
+
+    assert themes.active_holiday_event(datetime(2026, 10, 15)) == "halloween"
+    assert themes.active_holiday_event(datetime(2026, 12, 1)) == "christmas"
+    assert themes.active_holiday_event(datetime(2026, 12, 30)) == "christmas"
+    assert themes.active_holiday_event(datetime(2026, 12, 31)) == "new_year"
+    assert themes.active_holiday_event(datetime(2027, 1, 1)) == "new_year"
+    assert themes.active_holiday_event(datetime(2026, 11, 12)) is None
+    assert themes.active_holiday_event(datetime(2026, 10, 15), disabled=True) is None
+
+    selectable_ids = [i["id"] for i in themes.list_selectable_app_icons()]
+    assert "fluent" in selectable_ids
+    for hol in themes.HOLIDAY_IDS:
+        assert hol not in selectable_ids
+
+    res_hol = themes.resolve_active_app_icon("fluent", False, datetime(2026, 10, 20))
+    assert res_hol["id"] == "halloween"
+    res_back = themes.resolve_active_app_icon("fluent", False, datetime(2026, 11, 1))
+    assert res_back["id"] == "fluent"
+    assert not themes.delete_custom_app_icon("fluent")
+
+
+def test_sound_board_background_and_piece_templates(tmp_path, monkeypatch):
+    from datetime import datetime
+    from PySide6.QtGui import QImage, QColor
+    import themes
+    monkeypatch.setattr(themes, "data_root", lambda: str(tmp_path))
+
+    # Sounds: Original and Legacy are locked
+    stpls = themes.list_sound_templates()
+    assert [t["id"] for t in stpls[:2]] == ["original", "legacy"]
+    assert stpls[0]["locked"] and stpls[1]["locked"]
+    assert not themes.set_sound_slot("original", "events", "Move", __file__)
+    assert not themes.delete_sound_template("legacy")
+
+    custom_snd = themes.create_sound_template("Test Pack", copy_from_id="original")
+    assert not custom_snd["locked"]
+    dummy_wav = tmp_path / "ding.wav"
+    dummy_wav.write_bytes(b"RIFF0000WAVEfmt ")
+    assert themes.set_sound_slot(custom_snd["id"], "annotations", "!!", str(dummy_wav))
+    loaded_snd = themes.get_sound_template(custom_snd["id"])
+    assert "!!" in loaded_snd["annotations"]
+    assert themes.clear_sound_slot(custom_snd["id"], "annotations", "!!")
+    assert "!!" not in themes.get_sound_template(custom_snd["id"])["annotations"]
+    assert themes.delete_sound_template(custom_snd["id"])
+
+    # Boards: exact names & holiday rules & saved game New Years colors persistence
+    b_names = [b["name"] for b in themes.list_selectable_board_templates()]
+    for expected in ("Brown & Tan", "Black & White", "Red & White", "Blue & White"):
+        assert expected in b_names
+    ny_board = themes.resolve_active_board_template("brown_tan", False, datetime(2026, 12, 31))
+    assert ny_board["id"] == "new_year" and ny_board.get("random_light")
+
+    lib = LIB.GameLibrary(str(tmp_path / "ny.db"))
+    g, res = _sample_game_and_results()
+    pal = themes.generate_new_years_palette(seed=42)
+    gid = lib.save(g, res, new_years_colors=pal)
+    assert lib.get_new_years_colors(gid) == pal
+
+    # Backgrounds & Pieces
+    bg_names = [b["name"] for b in themes.list_background_templates()]
+    for expected in ("Dark", "Light", "High Contrast", "Aqua Blue"):
+        assert expected in bg_names
+    assert themes.list_piece_templates()[0]["name"] == "Default"
+    assert themes.list_piece_templates()[0]["locked"]
+    pt = themes.create_piece_template("Custom Set")
+    png = tmp_path / "wk.png"
+    img = QImage(32, 32, QImage.Format_RGBA8888)
+    img.fill(QColor("#ffffff"))
+    img.save(str(png), "PNG")
+    assert themes.set_piece_slot(pt["id"], "wK", str(png))
+    assert "wK" in themes.get_piece_template(pt["id"])["pieces"]
+    assert themes.delete_piece_template(pt["id"])

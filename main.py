@@ -1,3 +1,4 @@
+import ctypes
 import io
 import math
 import os
@@ -31,6 +32,7 @@ import icons
 import winutil
 import accuracy as ACC
 import library as LIB
+import themes
 import updater
 
 APP_TITLE = "Holly's Chess Analyzer"
@@ -88,44 +90,60 @@ PIECES = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙"
 
 
 class SoundPlayer:
-    """Zero-latency sound effect player for game events, moves, and Brilliant (!!) moves."""
-
-    NAMES = (
-        "brilliant",
-        "Capture",
-        "Castle",
-        "Check",
-        "Checkmate",
-        "draw",
-        "Game_load",
-        "Move",
-    )
+    """Zero-latency sound effect player supporting templates, .wav, .mp3, and per-annotation sounds."""
 
     def __init__(self):
         self.enabled = True
-        self._wav_paths = {}
-        self._mp3_paths = {}
-        for name in self.NAMES:
-            wav = resource_path(os.path.join("assets", "sounds", f"{name}.wav"))
-            mp3 = resource_path(os.path.join("assets", "sounds", f"{name}.mp3"))
-            if os.path.exists(wav):
-                self._wav_paths[name] = wav
-            if os.path.exists(mp3):
-                self._mp3_paths[name] = mp3
+        self.template_id = "original"
+        self._events = {}
+        self._annotations = {}
+        self._mci_seq = 0
+        self.set_template("original")
 
-    def play(self, name: str) -> None:
-        if not self.enabled:
+    def set_template(self, template_id: str) -> None:
+        self.template_id = template_id or "original"
+        tpl = themes.get_sound_template(self.template_id)
+        self._events = dict(tpl.get("events") or {})
+        self._annotations = dict(tpl.get("annotations") or {})
+
+    def _play_file(self, path: str) -> None:
+        if not path or not os.path.exists(path):
             return
-        wav = self._wav_paths.get(name)
-        if wav and winsound is not None:
+        low = path.lower()
+        if low.endswith(".wav") and winsound is not None:
             try:
                 winsound.PlaySound(
-                    wav,
+                    path,
                     winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
                 )
                 return
             except Exception:
                 pass
+        if sys.platform == "win32":
+            try:
+                winmm = ctypes.windll.winmm
+                self._mci_seq = (self._mci_seq + 1) % 64
+                alias = f"hca_snd_{self._mci_seq}"
+                winmm.mciSendStringW(f"close {alias}", None, 0, None)
+                winmm.mciSendStringW(f'open "{path}" alias {alias}', None, 0, None)
+                winmm.mciSendStringW(f"play {alias}", None, 0, None)
+            except Exception:
+                pass
+
+    def play(self, name: str) -> None:
+        if not self.enabled:
+            return
+        self._play_file(self._events.get(name, ""))
+
+    def play_for_move(self, event_name: str, symbol: str = "") -> None:
+        if not self.enabled:
+            return
+        if symbol and symbol in self._annotations:
+            path = self._annotations.get(symbol, "")
+            if path:
+                self._play_file(path)
+                return
+        self._play_file(self._events.get(event_name, ""))
 
 
 # ---------------------------------------------------------------- widgets
@@ -143,6 +161,11 @@ class BoardWidget(QWidget):
         self.alt_move = None
         self.end_badges = []
         self.flipped = False
+        self.board_template = dict(themes.BUILTIN_BOARDS[0])
+        self.new_years_colors = []
+        self.piece_template = {"id": "default", "name": "Default", "locked": True, "pieces": {}}
+        self._tile_cache = {}
+        self._piece_cache = {}
         # Piece slide & flashy Brilliant (!!) animation state
         self.anim_move = None
         self.anim_piece = None
@@ -251,6 +274,62 @@ class BoardWidget(QWidget):
         p.drawText(c, Qt.AlignCenter, sym)
         p.restore()
 
+    def set_board_theme(self, board_tpl: dict, new_years_colors: list = None):
+        self.board_template = dict(board_tpl or themes.BUILTIN_BOARDS[0])
+        self.new_years_colors = list(new_years_colors or [])
+        self._tile_cache.clear()
+        self.update()
+
+    def set_piece_theme(self, piece_tpl: dict):
+        self.piece_template = dict(piece_tpl or {"id": "default", "name": "Default", "locked": True, "pieces": {}})
+        self._piece_cache.clear()
+        self.update()
+
+    def _tile_pixmap(self, path: str, size: int):
+        if not path or not os.path.exists(path):
+            return None
+        key = (path, size)
+        pm = self._tile_cache.get(key)
+        if pm is None:
+            src = QPixmap(path)
+            if src.isNull():
+                return None
+            pm = src.scaled(size, size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+            self._tile_cache[key] = pm
+        return pm
+
+    def _piece_pixmap(self, pc: chess.Piece, size: int):
+        pieces = self.piece_template.get("pieces") or {}
+        if not pieces:
+            return None
+        pkey = ("w" if pc.color else "b") + pc.symbol().upper()
+        path = pieces.get(pkey, "")
+        if not path or not os.path.exists(path):
+            return None
+        key = (path, size)
+        pm = self._piece_cache.get(key)
+        if pm is None:
+            src = QPixmap(path)
+            if src.isNull():
+                return None
+            pm = src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            self._piece_cache[key] = pm
+        return pm
+
+    def _draw_piece(self, p, r, pc, scale=1.0):
+        sq_size = max(8, int(round(r.width() * scale)))
+        pm = self._piece_pixmap(pc, sq_size)
+        if pm is not None:
+            if abs(scale - 1.0) > 0.005:
+                dw = r.width() * (scale - 1.0) * 0.5
+                dh = r.height() * (scale - 1.0) * 0.5
+                target = r.adjusted(-dw, -dh, dw, dh)
+            else:
+                target = r
+            p.drawPixmap(target.toRect(), pm)
+            return
+        self._draw_piece_glyph(p, r, pc, scale=scale)
+
     @staticmethod
     def _draw_piece_glyph(p, r, pc, scale=1.0):
         sym = pc.symbol()
@@ -293,15 +372,36 @@ class BoardWidget(QWidget):
             flight_raw = 1.0
             flight_ease = 1.0
 
+        is_ny = bool(self.board_template.get("random_light"))
+        light_hex = self.board_template.get("light_hex") or "#f0d9b5"
+        dark_hex = self.board_template.get("dark_hex") or "#b58863"
+        light_img_path = self.board_template.get("light_img") or ""
+        dark_img_path = self.board_template.get("dark_img") or ""
+        light_pm = self._tile_pixmap(light_img_path, max(8, s)) if not is_ny else None
+        dark_pm = self._tile_pixmap(dark_img_path, max(8, s))
+        ny_idx = 0
+
         for sq in chess.SQUARES:
             light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
-            col = QColor("#f0d9b5") if light else QColor("#b58863")
+            sq_rect = rect(sq)
+            if light and is_ny:
+                c_hex = self.new_years_colors[ny_idx % len(self.new_years_colors)] if self.new_years_colors else "#ffd54f"
+                ny_idx += 1
+                p.fillRect(sq_rect, QColor(c_hex))
+            elif light and light_pm is not None:
+                p.drawPixmap(sq_rect.toRect(), light_pm)
+            elif (not light) and dark_pm is not None:
+                p.drawPixmap(sq_rect.toRect(), dark_pm)
+            else:
+                col = QColor(light_hex) if light else QColor(dark_hex)
+                p.fillRect(sq_rect, col)
+
             if self.last_move and sq in (self.last_move.from_square, self.last_move.to_square):
                 if self.badge == "!!":
-                    col = QColor("#5cd6e5") if light else QColor("#26a6b8")
+                    hl = QColor(92, 214, 229, 155) if light else QColor(38, 166, 184, 155)
                 else:
-                    col = QColor("#cdd26a") if light else QColor("#aaa23a")
-            p.fillRect(rect(sq), col)
+                    hl = QColor(205, 210, 106, 145) if light else QColor(170, 162, 58, 145)
+                p.fillRect(sq_rect, hl)
 
         # Flashy Brilliant (!!) trail, impact flash, dual shockwave rings & starburst sparks
         if self.badge == "!!" and self.last_move:
@@ -368,7 +468,7 @@ class BoardWidget(QWidget):
         for sq, pc in self.board.piece_map().items():
             if animating and self.anim_move and sq == self.anim_move.to_square:
                 continue
-            self._draw_piece_glyph(p, rect(sq), pc)
+            self._draw_piece(p, rect(sq), pc)
 
         if animating and self.anim_move and self.anim_piece is not None:
             r_from = rect(self.anim_move.from_square)
@@ -379,7 +479,7 @@ class BoardWidget(QWidget):
             p_scale = 1.0
             if self.anim_is_brilliant and flight_raw < 1.0:
                 p_scale = 1.0 + 0.30 * math.sin(flight_raw * math.pi)
-            self._draw_piece_glyph(p, anim_rect, self.anim_piece, scale=p_scale)
+            self._draw_piece(p, anim_rect, self.anim_piece, scale=p_scale)
 
         # best alternative: arrow + icon on the destination square
         if self.alt_move:
@@ -556,6 +656,7 @@ class Job:
         self.progress = (0, 1)
         self.title = ""
         self.lib_id = None
+        self.new_years_colors = themes.generate_new_years_palette()
 
 
 class QueueWorker(QThread):
@@ -798,17 +899,46 @@ class ProfileButtonWidget(QFrame):
 
 
 class ProfileDialog(QDialog):
-    """Profile menu to edit the square profile picture and 'My player name'."""
+    """Tabbed Profile & Customization dialog: Profile, App Icon, Sounds, Board, Background, Pieces."""
 
-    def __init__(self, current_name: str, parent=None):
+    def __init__(self, settings: A.Settings, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Edit Profile")
-        self.resize(400, 310)
+        self.main_win = parent
+        self.settings = settings
+        self.setWindowTitle("Profile & Customizations")
+        self.resize(640, 520)
         self._pending_image_path = None
         self._reset_requested = False
 
+        self._sel_app_icon = getattr(settings, "app_icon", "fluent")
+        self._sel_sound = getattr(settings, "sound_template", "original")
+        self._sel_board = getattr(settings, "board_template", "brown_tan")
+        self._sel_bg = getattr(settings, "background_template", "dark")
+        self._sel_pieces = getattr(settings, "piece_template", "default")
+        self._disable_holidays = bool(getattr(settings, "disable_holiday_events", False))
+
         lay = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        lay.addWidget(self.tabs, 1)
+
+        self._build_profile_tab()
+        self._build_icon_tab()
+        self._build_sound_tab()
+        self._build_board_tab()
+        self._build_bg_tab()
+        self._build_pieces_tab()
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._on_accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+    # ---- Tab 1: Profile
+    def _build_profile_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
         lay.setSpacing(10)
+        self.tabs.addTab(page, "Profile")
 
         pic_row = QHBoxLayout()
         self.preview = QLabel()
@@ -832,7 +962,7 @@ class ProfileDialog(QDialog):
         lay.addLayout(pic_row)
 
         form = QFormLayout()
-        self.name_edit = QLineEdit(current_name or "")
+        self.name_edit = QLineEdit(self.settings.player_name or "")
         self.name_edit.setPlaceholderText("Enter your chess username (e.g. TheHollyCow)…")
         form.addRow("My player name:", self.name_edit)
         lay.addLayout(form)
@@ -845,14 +975,535 @@ class ProfileDialog(QDialog):
         info.setStyleSheet("color:#aaa; font-size:11px;")
         lay.addWidget(info)
         lay.addStretch(1)
-
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self._on_accept)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
-
         self._refresh_preview()
 
+    # ---- Tab 2: App Icon
+    def _build_icon_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "App Icon")
+
+        holiday = themes.active_holiday_event(disabled=self._disable_holidays)
+        if holiday:
+            hl = QLabel(
+                f"Limited-time event active: <b>{themes.capitalize_asset_name(holiday)}</b> "
+                "(automatically reverts to your selected icon when the event ends)."
+            )
+            hl.setWordWrap(True)
+            hl.setStyleSheet("color:#26c6da; font-size:12px;")
+            lay.addWidget(hl)
+
+        row = QHBoxLayout()
+        self.icon_combo = QComboBox()
+        self.icon_combo.currentIndexChanged.connect(self._on_icon_changed)
+        row.addWidget(QLabel("Selected Icon:"))
+        row.addWidget(self.icon_combo, 1)
+        self.btn_add_icon = QPushButton("Add Custom Icon…")
+        self.btn_del_icon = QPushButton("Delete Custom")
+        self.btn_add_icon.clicked.connect(self._add_custom_icon)
+        self.btn_del_icon.clicked.connect(self._delete_custom_icon)
+        row.addWidget(self.btn_add_icon)
+        row.addWidget(self.btn_del_icon)
+        lay.addLayout(row)
+
+        prev_row = QHBoxLayout()
+        self.app_icon_preview = QLabel()
+        self.app_icon_preview.setFixedSize(72, 72)
+        self.app_icon_preview.setStyleSheet("border:1px solid #555; background:#1f1f1f;")
+        self.app_icon_info = QLabel("")
+        self.app_icon_info.setWordWrap(True)
+        prev_row.addWidget(self.app_icon_preview)
+        prev_row.addWidget(self.app_icon_info, 1)
+        lay.addLayout(prev_row)
+        lay.addStretch(1)
+        self._reload_icon_combo()
+
+    def _reload_icon_combo(self):
+        self.icon_combo.blockSignals(True)
+        self.icon_combo.clear()
+        for item in themes.list_selectable_app_icons():
+            tag = " [Built-in]" if item["locked"] else " [Custom]"
+            self.icon_combo.addItem(item["name"] + tag, item)
+        idx = 0
+        for i in range(self.icon_combo.count()):
+            if self.icon_combo.itemData(i)["id"] == self._sel_app_icon:
+                idx = i
+                break
+        self.icon_combo.setCurrentIndex(idx)
+        self.icon_combo.blockSignals(False)
+        self._on_icon_changed()
+
+    def _on_icon_changed(self):
+        item = self.icon_combo.currentData()
+        if not item:
+            return
+        self._sel_app_icon = item["id"]
+        self.btn_del_icon.setEnabled(not item["locked"])
+        pm = themes.cropped_icon_pixmap(item["path"], 72)
+        if not pm.isNull():
+            self.app_icon_preview.setPixmap(pm)
+        self.app_icon_info.setText(
+            f"<b>{item['name']}</b><br>"
+            + ("Built-in icon (cannot be edited or deleted)." if item["locked"] else "Custom user icon saved on your computer.")
+        )
+
+    def _add_custom_icon(self):
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Select Custom App Icon", "", "Images (*.png *.jpg *.jpeg *.ico *.bmp *.webp)"
+        )
+        if not p:
+            return
+        default_nm = themes.capitalize_asset_name(p)
+        nm, ok = QInputDialog.getText(self, "Custom Icon Name", "Icon name:", QLineEdit.Normal, default_nm)
+        if not ok:
+            return
+        added = themes.add_custom_app_icon(p, nm)
+        if not added:
+            QMessageBox.warning(self, "Invalid Image", "Could not load the selected icon file.")
+            return
+        self._sel_app_icon = added["id"]
+        self._reload_icon_combo()
+
+    def _delete_custom_icon(self):
+        item = self.icon_combo.currentData()
+        if not item or item["locked"]:
+            return
+        if themes.delete_custom_app_icon(item["id"]):
+            self._sel_app_icon = "fluent"
+            self._reload_icon_combo()
+
+    # ---- Tab 3: Sounds
+    def _build_sound_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "Sounds")
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Sound Template:"))
+        self.sound_combo = QComboBox()
+        self.sound_combo.currentIndexChanged.connect(self._on_sound_tpl_changed)
+        top.addWidget(self.sound_combo, 1)
+        self.btn_new_sound = QPushButton("New Template…")
+        self.btn_del_sound = QPushButton("Delete")
+        self.btn_new_sound.clicked.connect(self._create_sound_tpl)
+        self.btn_del_sound.clicked.connect(self._delete_sound_tpl)
+        top.addWidget(self.btn_new_sound)
+        top.addWidget(self.btn_del_sound)
+        lay.addLayout(top)
+
+        self.sound_lock_lbl = QLabel("")
+        self.sound_lock_lbl.setStyleSheet("color:#aaa; font-size:11px;")
+        lay.addWidget(self.sound_lock_lbl)
+
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        inner = QWidget()
+        self.sound_grid = QGridLayout(inner)
+        self.sound_slot_widgets = []
+        row_idx = 0
+        self.sound_grid.addWidget(QLabel("<b>Move & Game Events</b>"), row_idx, 0, 1, 4)
+        row_idx += 1
+        for key, label in themes.SOUND_EVENT_SLOTS:
+            self._add_sound_slot_row(row_idx, "events", key, label)
+            row_idx += 1
+        self.sound_grid.addWidget(QLabel("<b>Per-Annotation Sounds</b>"), row_idx, 0, 1, 4)
+        row_idx += 1
+        for key, label in themes.ANNOTATION_SLOTS:
+            self._add_sound_slot_row(row_idx, "annotations", key, label)
+            row_idx += 1
+        sc.setWidget(inner)
+        lay.addWidget(sc, 1)
+        self._reload_sound_combo()
+
+    def _add_sound_slot_row(self, row_idx: int, category: str, key: str, label: str):
+        lbl = QLabel(label)
+        st = QLabel("None")
+        st.setStyleSheet("color:#999;")
+        btn_set = QPushButton("Replace…")
+        btn_clr = QPushButton("Remove")
+        btn_set.clicked.connect(lambda _=False, c=category, k=key: self._replace_sound_slot(c, k))
+        btn_clr.clicked.connect(lambda _=False, c=category, k=key: self._clear_sound_slot(c, k))
+        self.sound_grid.addWidget(lbl, row_idx, 0)
+        self.sound_grid.addWidget(st, row_idx, 1)
+        self.sound_grid.addWidget(btn_set, row_idx, 2)
+        self.sound_grid.addWidget(btn_clr, row_idx, 3)
+        self.sound_slot_widgets.append((category, key, st, btn_set, btn_clr))
+
+    def _reload_sound_combo(self):
+        self.sound_combo.blockSignals(True)
+        self.sound_combo.clear()
+        for tpl in themes.list_sound_templates():
+            tag = " [Built-in]" if tpl["locked"] else " [Custom]"
+            self.sound_combo.addItem(tpl["name"] + tag, tpl)
+        idx = 0
+        for i in range(self.sound_combo.count()):
+            if self.sound_combo.itemData(i)["id"] == self._sel_sound:
+                idx = i
+                break
+        self.sound_combo.setCurrentIndex(idx)
+        self.sound_combo.blockSignals(False)
+        self._on_sound_tpl_changed()
+
+    def _on_sound_tpl_changed(self):
+        tpl = self.sound_combo.currentData()
+        if not tpl:
+            return
+        self._sel_sound = tpl["id"]
+        locked = bool(tpl.get("locked"))
+        self.btn_del_sound.setEnabled(not locked)
+        self.sound_lock_lbl.setText(
+            "Built-in template (read-only). Create a new template to customize or add annotation sounds."
+            if locked else "Custom template: replace or remove event sounds and per-annotation sounds."
+        )
+        for category, key, st, btn_set, btn_clr in self.sound_slot_widgets:
+            path = (tpl.get(category) or {}).get(key, "")
+            st.setText(os.path.basename(path) if path and os.path.exists(path) else "None")
+            btn_set.setEnabled(not locked)
+            btn_clr.setEnabled((not locked) and bool(path))
+
+    def _create_sound_tpl(self):
+        nm, ok = QInputDialog.getText(self, "New Sound Template", "Template name:", QLineEdit.Normal, "My Sounds")
+        if not ok or not nm.strip():
+            return
+        base_id = self._sel_sound if self._sel_sound in ("original", "legacy") else "original"
+        created = themes.create_sound_template(nm.strip(), copy_from_id=base_id)
+        self._sel_sound = created["id"]
+        self._reload_sound_combo()
+
+    def _delete_sound_tpl(self):
+        if themes.delete_sound_template(self._sel_sound):
+            self._sel_sound = "original"
+            self._reload_sound_combo()
+
+    def _replace_sound_slot(self, category: str, key: str):
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Select Sound File", "", "Audio Files (*.wav *.mp3 *.ogg);;All files (*)"
+        )
+        if p and themes.set_sound_slot(self._sel_sound, category, key, p):
+            self._reload_sound_combo()
+
+    def _clear_sound_slot(self, category: str, key: str):
+        if themes.clear_sound_slot(self._sel_sound, category, key):
+            self._reload_sound_combo()
+
+    # ---- Tab 4: Board
+    def _build_board_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "Board")
+
+        holiday = themes.active_holiday_event(disabled=self._disable_holidays)
+        if holiday:
+            hb = themes.HOLIDAY_BOARDS[holiday]
+            hl = QLabel(
+                f"Limited-time event active: <b>{hb['name']}</b> "
+                "(automatically reverts to your selected board when the event ends)."
+            )
+            hl.setWordWrap(True)
+            hl.setStyleSheet("color:#26c6da; font-size:12px;")
+            lay.addWidget(hl)
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Board Template:"))
+        self.board_combo = QComboBox()
+        self.board_combo.currentIndexChanged.connect(self._on_board_changed)
+        top.addWidget(self.board_combo, 1)
+        self.btn_new_board = QPushButton("New Custom Board…")
+        self.btn_del_board = QPushButton("Delete")
+        self.btn_new_board.clicked.connect(self._create_board_tpl)
+        self.btn_del_board.clicked.connect(self._delete_board_tpl)
+        top.addWidget(self.btn_new_board)
+        top.addWidget(self.btn_del_board)
+        lay.addLayout(top)
+
+        form = QFormLayout()
+        self.board_light_hex = QLineEdit("#f0d9b5")
+        self.btn_pick_light = QPushButton("Pick…")
+        self.btn_pick_light.clicked.connect(lambda: self._pick_board_color(True))
+        self.btn_png_light = QPushButton("White Tile PNG…")
+        self.btn_png_light.clicked.connect(lambda: self._pick_board_png(True))
+        self.lbl_png_light = QLabel("Hex color")
+        r1 = QHBoxLayout()
+        r1.addWidget(self.board_light_hex)
+        r1.addWidget(self.btn_pick_light)
+        r1.addWidget(self.btn_png_light)
+        r1.addWidget(self.lbl_png_light, 1)
+        form.addRow("White Tiles:", r1)
+
+        self.board_dark_hex = QLineEdit("#b58863")
+        self.btn_pick_dark = QPushButton("Pick…")
+        self.btn_pick_dark.clicked.connect(lambda: self._pick_board_color(False))
+        self.btn_png_dark = QPushButton("Black Tile PNG…")
+        self.btn_png_dark.clicked.connect(lambda: self._pick_board_png(False))
+        self.lbl_png_dark = QLabel("Hex color")
+        r2 = QHBoxLayout()
+        r2.addWidget(self.board_dark_hex)
+        r2.addWidget(self.btn_pick_dark)
+        r2.addWidget(self.btn_png_dark)
+        r2.addWidget(self.lbl_png_dark, 1)
+        form.addRow("Black Tiles:", r2)
+
+        self.btn_save_board = QPushButton("Save Custom Board Changes")
+        self.btn_save_board.clicked.connect(self._save_board_edits)
+        form.addRow("", self.btn_save_board)
+        lay.addLayout(form)
+        lay.addStretch(1)
+        self._reload_board_combo()
+
+    def _reload_board_combo(self):
+        self.board_combo.blockSignals(True)
+        self.board_combo.clear()
+        for b in themes.list_selectable_board_templates():
+            tag = " [Built-in]" if b["locked"] else " [Custom]"
+            self.board_combo.addItem(b["name"] + tag, b)
+        idx = 0
+        for i in range(self.board_combo.count()):
+            if self.board_combo.itemData(i)["id"] == self._sel_board:
+                idx = i
+                break
+        self.board_combo.setCurrentIndex(idx)
+        self.board_combo.blockSignals(False)
+        self._on_board_changed()
+
+    def _on_board_changed(self):
+        b = self.board_combo.currentData()
+        if not b:
+            return
+        self._sel_board = b["id"]
+        locked = bool(b.get("locked"))
+        self.board_light_hex.setText(b.get("light_hex", "#f0d9b5"))
+        self.board_dark_hex.setText(b.get("dark_hex", "#b58863"))
+        self.lbl_png_light.setText(os.path.basename(b["light_img"]) if b.get("light_img") else "Hex color")
+        self.lbl_png_dark.setText(os.path.basename(b["dark_img"]) if b.get("dark_img") else "Hex color")
+        for w in (self.board_light_hex, self.board_dark_hex, self.btn_pick_light, self.btn_pick_dark,
+                  self.btn_png_light, self.btn_png_dark, self.btn_save_board, self.btn_del_board):
+            w.setEnabled(not locked)
+
+    def _create_board_tpl(self):
+        nm, ok = QInputDialog.getText(self, "New Board Template", "Board template name:", QLineEdit.Normal, "My Board")
+        if not ok or not nm.strip():
+            return
+        created = themes.save_custom_board_template(nm.strip())
+        self._sel_board = created["id"]
+        self._reload_board_combo()
+
+    def _delete_board_tpl(self):
+        if themes.delete_custom_board_template(self._sel_board):
+            self._sel_board = "brown_tan"
+            self._reload_board_combo()
+
+    def _pick_board_color(self, is_light: bool):
+        ed = self.board_light_hex if is_light else self.board_dark_hex
+        c = QColorDialog.getColor(QColor(ed.text()), self, "Select Tile Color")
+        if c.isValid():
+            ed.setText(c.name())
+
+    def _pick_board_png(self, is_light: bool):
+        b = self.board_combo.currentData()
+        if not b or b.get("locked"):
+            return
+        p, _ = QFileDialog.getOpenFileName(self, "Select Tile PNG", "", "PNG Images (*.png);;All files (*)")
+        if not p:
+            return
+        l_png = p if is_light else b.get("light_img", "")
+        d_png = b.get("dark_img", "") if is_light else p
+        themes.save_custom_board_template(
+            b["name"],
+            self.board_light_hex.text(),
+            self.board_dark_hex.text(),
+            light_png=l_png,
+            dark_png=d_png,
+            template_id=b["id"],
+        )
+        self._reload_board_combo()
+
+    def _save_board_edits(self):
+        b = self.board_combo.currentData()
+        if not b or b.get("locked"):
+            return
+        themes.save_custom_board_template(
+            b["name"],
+            self.board_light_hex.text(),
+            self.board_dark_hex.text(),
+            light_png=b.get("light_img", ""),
+            dark_png=b.get("dark_img", ""),
+            template_id=b["id"],
+        )
+        self._reload_board_combo()
+
+    # ---- Tab 5: Background
+    def _build_bg_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "Background")
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("Background:"))
+        self.bg_combo = QComboBox()
+        self.bg_combo.currentIndexChanged.connect(self._on_bg_changed)
+        row.addWidget(self.bg_combo, 1)
+        self.btn_add_bg = QPushButton("Add Image Background…")
+        self.btn_del_bg = QPushButton("Delete")
+        self.btn_add_bg.clicked.connect(self._add_custom_bg)
+        self.btn_del_bg.clicked.connect(self._delete_custom_bg)
+        row.addWidget(self.btn_add_bg)
+        row.addWidget(self.btn_del_bg)
+        lay.addLayout(row)
+
+        self.bg_info = QLabel("")
+        self.bg_info.setWordWrap(True)
+        lay.addWidget(self.bg_info)
+        lay.addStretch(1)
+        self._reload_bg_combo()
+
+    def _reload_bg_combo(self):
+        self.bg_combo.blockSignals(True)
+        self.bg_combo.clear()
+        for bg in themes.list_background_templates():
+            tag = " [Built-in]" if bg["locked"] else " [Custom Image]"
+            self.bg_combo.addItem(bg["name"] + tag, bg)
+        idx = 0
+        for i in range(self.bg_combo.count()):
+            if self.bg_combo.itemData(i)["id"] == self._sel_bg:
+                idx = i
+                break
+        self.bg_combo.setCurrentIndex(idx)
+        self.bg_combo.blockSignals(False)
+        self._on_bg_changed()
+
+    def _on_bg_changed(self):
+        bg = self.bg_combo.currentData()
+        if not bg:
+            return
+        self._sel_bg = bg["id"]
+        self.btn_del_bg.setEnabled(not bg.get("locked"))
+        self.bg_info.setText(
+            f"<b>{bg['name']}</b><br>"
+            + ("Built-in theme template (cannot be edited)." if bg.get("locked") else f"Custom image: {bg.get('image_path', '')}")
+        )
+
+    def _add_custom_bg(self):
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Select Background Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if not p:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Background Name", "Background template name:", QLineEdit.Normal, themes.capitalize_asset_name(p)
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.create_custom_background(nm.strip(), p)
+        if created:
+            self._sel_bg = created["id"]
+            self._reload_bg_combo()
+
+    def _delete_custom_bg(self):
+        if themes.delete_custom_background(self._sel_bg):
+            self._sel_bg = "dark"
+            self._reload_bg_combo()
+
+    # ---- Tab 6: Pieces
+    def _build_pieces_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "Pieces")
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Piece Template:"))
+        self.pieces_combo = QComboBox()
+        self.pieces_combo.currentIndexChanged.connect(self._on_pieces_changed)
+        top.addWidget(self.pieces_combo, 1)
+        self.btn_new_pieces = QPushButton("New Piece Template…")
+        self.btn_del_pieces = QPushButton("Delete")
+        self.btn_new_pieces.clicked.connect(self._create_pieces_tpl)
+        self.btn_del_pieces.clicked.connect(self._delete_pieces_tpl)
+        top.addWidget(self.btn_new_pieces)
+        top.addWidget(self.btn_del_pieces)
+        lay.addLayout(top)
+
+        self.pieces_lock_lbl = QLabel("")
+        self.pieces_lock_lbl.setStyleSheet("color:#aaa; font-size:11px;")
+        lay.addWidget(self.pieces_lock_lbl)
+
+        sc = QScrollArea()
+        sc.setWidgetResizable(True)
+        inner = QWidget()
+        grid = QGridLayout(inner)
+        self.piece_slot_widgets = []
+        for idx, (pkey, label) in enumerate(themes.PIECE_SLOTS):
+            lbl = QLabel(label)
+            st = QLabel("Default glyph")
+            st.setStyleSheet("color:#999;")
+            btn_set = QPushButton("Set PNG…")
+            btn_clr = QPushButton("Clear")
+            btn_set.clicked.connect(lambda _=False, k=pkey: self._set_piece_slot(k))
+            btn_clr.clicked.connect(lambda _=False, k=pkey: self._clear_piece_slot(k))
+            grid.addWidget(lbl, idx, 0)
+            grid.addWidget(st, idx, 1)
+            grid.addWidget(btn_set, idx, 2)
+            grid.addWidget(btn_clr, idx, 3)
+            self.piece_slot_widgets.append((pkey, st, btn_set, btn_clr))
+        sc.setWidget(inner)
+        lay.addWidget(sc, 1)
+        self._reload_pieces_combo()
+
+    def _reload_pieces_combo(self):
+        self.pieces_combo.blockSignals(True)
+        self.pieces_combo.clear()
+        for tpl in themes.list_piece_templates():
+            tag = " [Built-in]" if tpl["locked"] else " [Custom]"
+            self.pieces_combo.addItem(tpl["name"] + tag, tpl)
+        idx = 0
+        for i in range(self.pieces_combo.count()):
+            if self.pieces_combo.itemData(i)["id"] == self._sel_pieces:
+                idx = i
+                break
+        self.pieces_combo.setCurrentIndex(idx)
+        self.pieces_combo.blockSignals(False)
+        self._on_pieces_changed()
+
+    def _on_pieces_changed(self):
+        tpl = self.pieces_combo.currentData()
+        if not tpl:
+            return
+        self._sel_pieces = tpl["id"]
+        locked = bool(tpl.get("locked"))
+        self.btn_del_pieces.setEnabled(not locked)
+        self.pieces_lock_lbl.setText(
+            "Default piece template (read-only). Create a new template to upload custom piece PNGs."
+            if locked else "Custom piece template: upload a PNG for each piece (blank slots fall back to Default)."
+        )
+        pieces = tpl.get("pieces") or {}
+        for pkey, st, btn_set, btn_clr in self.piece_slot_widgets:
+            path = pieces.get(pkey, "")
+            st.setText(os.path.basename(path) if path and os.path.exists(path) else "Default glyph")
+            btn_set.setEnabled(not locked)
+            btn_clr.setEnabled((not locked) and bool(path))
+
+    def _create_pieces_tpl(self):
+        nm, ok = QInputDialog.getText(self, "New Piece Template", "Piece template name:", QLineEdit.Normal, "My Pieces")
+        if not ok or not nm.strip():
+            return
+        created = themes.create_piece_template(nm.strip())
+        self._sel_pieces = created["id"]
+        self._reload_pieces_combo()
+
+    def _delete_pieces_tpl(self):
+        if themes.delete_piece_template(self._sel_pieces):
+            self._sel_pieces = "default"
+            self._reload_pieces_combo()
+
+    def _set_piece_slot(self, pkey: str):
+        p, _ = QFileDialog.getOpenFileName(self, "Select Piece PNG", "", "Images (*.png *.webp *.jpg);;All files (*)")
+        if p and themes.set_piece_slot(self._sel_pieces, pkey, p):
+            self._reload_pieces_combo()
+
+    def _clear_piece_slot(self, pkey: str):
+        if themes.clear_piece_slot(self._sel_pieces, pkey):
+            self._reload_pieces_combo()
+
+    # ---- Profile Picture handlers
     def _refresh_preview(self):
         if self._pending_image_path:
             src = QPixmap(self._pending_image_path)
@@ -895,6 +1546,15 @@ class ProfileDialog(QDialog):
     def result_name(self) -> str:
         return self.name_edit.text().strip()
 
+    def result_customizations(self) -> dict:
+        return {
+            "app_icon": self._sel_app_icon,
+            "sound_template": self._sel_sound,
+            "board_template": self._sel_board,
+            "background_template": self._sel_bg,
+            "piece_template": self._sel_pieces,
+        }
+
 
 # ---------------------------------------------------------------- dialogs
 class SettingsDialog(QDialog):
@@ -933,6 +1593,8 @@ class SettingsDialog(QDialog):
         )
         self.lenient = QCheckBox("Lenient brilliants (smaller sacrifices and near-best moves count)")
         self.lenient.setChecked(s.lenient_brilliant)
+        self.disable_holidays = QCheckBox("Disable limited-time holiday events (Halloween, Christmas, New Year)")
+        self.disable_holidays.setChecked(bool(getattr(s, "disable_holiday_events", False)))
         self.preset = QComboBox()
         for t, d in self.PRESETS:
             self.preset.addItem(t, d)
@@ -953,6 +1615,7 @@ class SettingsDialog(QDialog):
         f.addRow("Eval bar formula", self.eval_formula)
         f.addRow("Annotation system", self.annotation_system)
         f.addRow("", self.lenient)
+        f.addRow("", self.disable_holidays)
         f.addRow("Preset", self.preset)
         f.addRow("Depth (slider)", srow)
         f.addRow("Threads", self.threads)
@@ -1143,9 +1806,8 @@ class SettingsDialog(QDialog):
         return {k: (r[0].text() or styles.DEFAULTS[k][1], r[2]) for k, r in self.style_rows.items()}
 
     def result_settings(self):
-        cur_name = self._player_name
-        if self.main_win and getattr(self.main_win, "settings", None):
-            cur_name = self.main_win.settings.player_name
+        cur_s = self.main_win.settings if (self.main_win and getattr(self.main_win, "settings", None)) else None
+        cur_name = cur_s.player_name if cur_s is not None else self._player_name
         return A.Settings(
             self.scope.currentData(),
             self.side.currentData(),
@@ -1159,6 +1821,12 @@ class SettingsDialog(QDialog):
             eval_formula=self.eval_formula.currentData(),
             annotation_system=self.annotation_system.currentData(),
             auto_update=self.auto_update.isChecked(),
+            app_icon=getattr(cur_s, "app_icon", "fluent"),
+            sound_template=getattr(cur_s, "sound_template", "original"),
+            board_template=getattr(cur_s, "board_template", "brown_tan"),
+            background_template=getattr(cur_s, "background_template", "dark"),
+            piece_template=getattr(cur_s, "piece_template", "default"),
+            disable_holiday_events=self.disable_holidays.isChecked(),
         )
 
 
@@ -1550,7 +2218,14 @@ class MainWindow(QMainWindow):
             eval_formula=qs.value("eval_formula", "improved"),
             annotation_system=qs.value("annotation_system", "modern"),
             auto_update=qs.value("auto_update", True, type=bool),
+            app_icon=qs.value("app_icon", "fluent"),
+            sound_template=qs.value("sound_template", "original"),
+            board_template=qs.value("board_template", "brown_tan"),
+            background_template=qs.value("background_template", "dark"),
+            piece_template=qs.value("piece_template", "default"),
+            disable_holiday_events=qs.value("disable_holiday_events", False, type=bool),
         )
+        self._bg_pixmap = None
         styles.load(qs)
         self.sound = SoundPlayer()
         self.holder = EngineHolder()
@@ -1683,6 +2358,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow,QWidget{background:#2b2b2b;color:#ddd;} QTableWidget{background:#1f1f1f;gridline-color:#333;}"
                            "QPushButton{background:#444;border:1px solid #555;padding:3px 8px;} QHeaderView::section{background:#333;color:#ddd;}"
                            "QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{background:#1f1f1f;}")
+        self.apply_customizations()
         self.refresh_profile_ui()
         if self.settings.auto_update and "--selftest" not in sys.argv:
             QTimer.singleShot(1400, lambda: self.check_updates(silent=True))
@@ -1785,6 +2461,7 @@ class MainWindow(QMainWindow):
         self.update_players_header()
         self.populate_basic()
         self.orient()
+        self.apply_customizations()
         for k in range(len(self.results)):
             self.set_row(k)
         self.refresh_graph()
@@ -2115,7 +2792,12 @@ class MainWindow(QMainWindow):
             uc = self.settings.side
         else:
             uc = "black" if self.board.flipped else "white"
-        gid = self.library.save(self.game, self.job.results, self.settings, title=self.job.title or None, user_color=uc)
+        ny_colors = getattr(self.job, "new_years_colors", None) or themes.generate_new_years_palette()
+        self.job.new_years_colors = ny_colors
+        gid = self.library.save(
+            self.game, self.job.results, self.settings,
+            title=self.job.title or None, user_color=uc, new_years_colors=ny_colors,
+        )
         self.job.lib_id = gid
         if not self.job.title:
             for row in self.library.list():
@@ -2143,6 +2825,11 @@ class MainWindow(QMainWindow):
         job.running = False
         job.progress = (len(results), max(1, len(results)))
         job.lib_id = game_id
+        saved_ny = self.library.get_new_years_colors(game_id)
+        if saved_ny:
+            job.new_years_colors = saved_ny
+        else:
+            self.library.set_new_years_colors(game_id, job.new_years_colors)
         for row in self.library.list():
             if row["id"] == game_id:
                 job.title = row.get("title") or ""
@@ -2194,19 +2881,19 @@ class MainWindow(QMainWindow):
                 or (idx == len(self.basic) and self.game and self.game.headers.get("Result") == "1/2-1/2")
             )
             if sym == "!!":
-                self.sound.play("brilliant")
+                self.sound.play_for_move("brilliant", sym)
             elif b.is_checkmate():
-                self.sound.play("Checkmate")
+                self.sound.play_for_move("Checkmate", sym)
             elif is_draw_end:
-                self.sound.play("draw")
+                self.sound.play_for_move("draw", sym)
             elif b.is_check():
-                self.sound.play("Check")
+                self.sound.play_for_move("Check", sym)
             elif b_before.is_castling(mv):
-                self.sound.play("Castle")
+                self.sound.play_for_move("Castle", sym)
             elif b_before.is_capture(mv):
-                self.sound.play("Capture")
+                self.sound.play_for_move("Capture", sym)
             else:
-                self.sound.play("Move")
+                self.sound.play_for_move("Move", sym)
         self.table.blockSignals(True)
         self.table.selectRow(idx)
         self.table.blockSignals(False)
@@ -2271,17 +2958,91 @@ class MainWindow(QMainWindow):
         self.profile_btn.refresh(self.settings.player_name)
         self.update_player_bars()
 
+    def paintEvent(self, e):
+        if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
+            p = QPainter(self)
+            scaled = self._bg_pixmap.scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+            x = (scaled.width() - self.width()) // 2
+            y = (scaled.height() - self.height()) // 2
+            p.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
+            p.fillRect(self.rect(), QColor(0, 0, 0, 85))
+            return
+        super().paintEvent(e)
+
+    def apply_customizations(self):
+        """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
+        dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
+        # 1. App Icon
+        icon_info = themes.resolve_active_app_icon(
+            getattr(self.settings, "app_icon", "fluent"),
+            disable_holidays=dis_hol,
+        )
+        pm_icon = themes.cropped_icon_pixmap(icon_info.get("path", ""), 256)
+        if not pm_icon.isNull():
+            app_ic = QIcon(pm_icon)
+            self.setWindowIcon(app_ic)
+            app_inst = QApplication.instance()
+            if app_inst is not None:
+                app_inst.setWindowIcon(app_ic)
+
+        # 2. Sound Template
+        self.sound.set_template(getattr(self.settings, "sound_template", "original"))
+
+        # 3. Board Template
+        board_tpl = themes.resolve_active_board_template(
+            getattr(self.settings, "board_template", "brown_tan"),
+            disable_holidays=dis_hol,
+        )
+        ny_colors = getattr(self.job, "new_years_colors", None) if self.job else themes.generate_new_years_palette()
+        self.board.set_board_theme(board_tpl, ny_colors)
+
+        # 4. Piece Template
+        piece_tpl = themes.get_piece_template(getattr(self.settings, "piece_template", "default"))
+        self.board.set_piece_theme(piece_tpl)
+
+        # 5. Background Template
+        bg = themes.get_background_template(getattr(self.settings, "background_template", "dark"))
+        img_path = bg.get("image_path") or ""
+        if img_path and os.path.exists(img_path):
+            self._bg_pixmap = QPixmap(img_path)
+            self.setStyleSheet(
+                f"QMainWindow,QWidget{{background:transparent;color:{bg['text_fg']};}}"
+                f"QDialog{{background:#222222;color:{bg['text_fg']};}}"
+                f"QToolBar{{background:rgba(20,20,20,185);border:none;}}"
+                f"QTableWidget{{background:{bg['panel_bg']};gridline-color:{bg['grid_fg']};}}"
+                f"QPushButton{{background:{bg['button_bg']};border:1px solid {bg['button_border']};padding:3px 8px;}}"
+                f"QHeaderView::section{{background:{bg['header_bg']};color:{bg['text_fg']};}}"
+                f"QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{{background:{bg['panel_bg']};color:{bg['text_fg']};}}"
+            )
+        else:
+            self._bg_pixmap = None
+            self.setStyleSheet(
+                f"QMainWindow,QWidget{{background:{bg['window_bg']};color:{bg['text_fg']};}}"
+                f"QTableWidget{{background:{bg['panel_bg']};gridline-color:{bg['grid_fg']};}}"
+                f"QPushButton{{background:{bg['button_bg']};border:1px solid {bg['button_border']};padding:3px 8px;}}"
+                f"QHeaderView::section{{background:{bg['header_bg']};color:{bg['text_fg']};}}"
+                f"QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{{background:{bg['panel_bg']};color:{bg['text_fg']};}}"
+            )
+        self.update()
+
     def open_profile(self):
-        d = ProfileDialog(self.settings.player_name, self)
+        d = ProfileDialog(self.settings, self)
         if d.exec():
             old = self.settings.player_name
             self.settings.player_name = d.result_name()
+            cust = d.result_customizations()
+            for k, v in cust.items():
+                setattr(self.settings, k, v)
+                self.qs.setValue(k, v)
             self.qs.setValue("name", self.settings.player_name)
             icons._cache.clear()
             if (old or "").strip().lower() != self.settings.player_name.lower() and self.game:
                 self.orient()
                 if self.settings.scope != "all":
                     self.restart_all()
+            self.apply_customizations()
             self.refresh_profile_ui()
 
     # ------------------------------------------------------------ auto-update
@@ -2426,8 +3187,10 @@ class MainWindow(QMainWindow):
             for k, v in (("scope", s.scope), ("side", s.side), ("name", s.player_name), ("depth", s.depth),
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
                          ("preset", s.preset), ("eval_formula", s.eval_formula),
-                         ("annotation_system", s.annotation_system), ("auto_update", s.auto_update)):
+                         ("annotation_system", s.annotation_system), ("auto_update", s.auto_update),
+                         ("disable_holiday_events", s.disable_holiday_events)):
                 self.qs.setValue(k, v)
+            self.apply_customizations()
             styles.set_all(d.result_styles())
             styles.save(self.qs)
             self.qs.setValue("lenient", s.lenient_brilliant)

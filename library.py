@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS games (
     brilliant_black INTEGER DEFAULT 0,
     user_color TEXT DEFAULT 'white',
     favorite INTEGER DEFAULT 0,
+    new_years_colors TEXT DEFAULT '',
     pgn TEXT,
     analysis TEXT,
     engine TEXT
@@ -157,6 +158,7 @@ class GameLibrary:
             ("brilliant_black", "INTEGER DEFAULT 0"),
             ("user_color", "TEXT DEFAULT 'white'"),
             ("favorite", "INTEGER DEFAULT 0"),
+            ("new_years_colors", "TEXT DEFAULT ''"),
         ]
         added = False
         for col, spec in migrations:
@@ -192,7 +194,8 @@ class GameLibrary:
     def save(self, game: chess.pgn.Game, results: List[A.MoveResult],
              settings: Optional[A.Settings] = None,
              title: Optional[str] = None,
-             user_color: Optional[str] = None) -> int:
+             user_color: Optional[str] = None,
+             new_years_colors: Optional[List[str]] = None) -> int:
         key = game_key(game)
         h = game.headers
         white = h.get("White", "?") or "?"
@@ -246,11 +249,15 @@ class GameLibrary:
         )
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
+        ny_json = json.dumps(new_years_colors) if new_years_colors else ""
+
         with self._conn() as conn:
             with conn:
                 existing = conn.execute(
-                    "SELECT title, user_color FROM games WHERE key = ?", (key,)
+                    "SELECT title, user_color, new_years_colors FROM games WHERE key = ?", (key,)
                 ).fetchone()
+                if not ny_json and existing and (existing["new_years_colors"] or "").strip():
+                    ny_json = existing["new_years_colors"]
                 resolved_title = (title or "").strip()
                 if not resolved_title:
                     if existing and (existing["title"] or "").strip():
@@ -262,9 +269,9 @@ class GameLibrary:
                     INSERT INTO games (
                         key, saved_at, title, white, black, result, date, event,
                         eco, opening, moves, white_acc, black_acc, white_rating, black_rating,
-                        brilliant_white, brilliant_black, user_color,
+                        brilliant_white, brilliant_black, user_color, new_years_colors,
                         pgn, analysis, engine
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(key) DO UPDATE SET
                         saved_at=excluded.saved_at,
                         title=excluded.title,
@@ -283,6 +290,7 @@ class GameLibrary:
                         brilliant_white=excluded.brilliant_white,
                         brilliant_black=excluded.brilliant_black,
                         user_color=excluded.user_color,
+                        new_years_colors=excluded.new_years_colors,
                         pgn=excluded.pgn,
                         analysis=excluded.analysis,
                         engine=excluded.engine
@@ -291,7 +299,7 @@ class GameLibrary:
                         key, now, resolved_title, white, black, result, date, event,
                         eco, opening, (len(results) + 1) // 2,
                         w_acc, b_acc, w_rat, b_rat,
-                        bw, bb, user_color,
+                        bw, bb, user_color, ny_json,
                         pgn_text, payload, engine_desc,
                     ),
                 )
@@ -443,6 +451,27 @@ class GameLibrary:
                     mr.move_time_text = ci["move_time_text"]
             results.append(mr)
         return game, results
+
+    def get_new_years_colors(self, game_id: int) -> List[str]:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT new_years_colors FROM games WHERE id = ?", (game_id,)
+            ).fetchone()
+        if row is None or not (row["new_years_colors"] or "").strip():
+            return []
+        try:
+            vals = json.loads(row["new_years_colors"])
+            return [str(v) for v in vals] if isinstance(vals, list) else []
+        except Exception:
+            return []
+
+    def set_new_years_colors(self, game_id: int, colors: List[str]) -> None:
+        with self._conn() as conn:
+            with conn:
+                conn.execute(
+                    "UPDATE games SET new_years_colors = ? WHERE id = ?",
+                    (json.dumps(list(colors)), game_id),
+                )
 
     def delete(self, game_id: int) -> None:
         with self._conn() as conn:
