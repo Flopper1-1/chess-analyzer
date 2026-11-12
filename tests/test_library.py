@@ -374,3 +374,52 @@ def test_chesscom_game_review_parity():
     ) == "+++"
 
 
+def test_brilliant_system_core_and_context_conditions():
+    import chess
+    import classify as C
+
+    # 1. Tactical Knight underpromotion (c8=N+ royal fork) vs decorative Rook underpromotion (c8=R+)
+    b_fork = chess.Board("4k3/2P2q2/8/8/8/8/8/4K3 w - - 0 1")
+    mv_knight_fork = chess.Move.from_uci("c7c8n")
+    assert C.is_brilliant_underpromotion(b_fork, mv_knight_fork, is_best=True, loss=0.0) is True
+
+    # Open board where c8=Q+ and c8=R+ both give check and neither stalemates:
+    # decorative c8=R+ (not engine best or tied with Queen) is NOT a tactical underpromotion
+    b_open = chess.Board("2k5/2P5/8/8/8/8/8/4K3 w - - 0 1")
+    mv_decor_rook = chess.Move.from_uci("c7c8r")
+    assert C.is_brilliant_underpromotion(
+        b_open, mv_decor_rook, is_best=False, loss=0.5, second_wp=95.0, best_wp=95.5
+    ) is False
+
+    # 2. Context Condition: Must not be worse after the move
+    # Unsound/speculative sacrifice leaving mover at 36% (-150 cp) is NOT Brilliant
+    assert C.classify(
+        1.5, True, 36.0, 37.5, 30.0, True, 38.0,
+        system="modern", cp_before=-130, cp_after=-150, best_cp=-130,
+    ) != "!!"
+
+    # 3. Context Condition: Cannot already be overwhelmingly winning (+10.00 or Queen up with trivial wins)
+    assert C.classify(
+        0.0, True, 97.0, 97.0, 94.0, True, 96.0,
+        system="modern", cp_before=1000, cp_after=1000, best_cp=1000,
+    ) == "+++"
+    assert C.classify(
+        0.0, True, 92.0, 92.0, 88.0, True, 85.0,
+        system="modern", cp_before=500, cp_after=500, best_cp=500, already_overwhelming=True,
+    ) == "+++"
+
+    # 4. Context Condition: Must be critical
+    # Non-critical sacrifice when already comfortably winning (wp_before=82%, cp_before=350)
+    # and 2nd-best move also wins easily (second_wp=85%, best_wp=86%) -> Best (+++), not Brilliant (!!)
+    assert C.classify(
+        0.0, True, 86.0, 86.0, 85.0, True, 82.0,
+        system="modern", cp_before=350, cp_after=380, best_cp=380,
+    ) == "+++"
+    # Critical sacrifice where any other move forfeits the win (best_wp=88%, second_wp=50%) -> Brilliant (!!)
+    assert C.classify(
+        0.0, True, 88.0, 88.0, 50.0, True, 82.0,
+        system="modern", cp_before=350, cp_after=400, best_cp=400,
+    ) == "!!"
+
+
+

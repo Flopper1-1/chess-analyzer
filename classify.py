@@ -102,37 +102,74 @@ def is_underpromotion(move: chess.Move) -> bool:
 
 
 def is_brilliant_underpromotion(board_before: chess.Board, move: chess.Move, is_best: bool = True,
-                                loss: float = 0.0, max_loss: float = 2.0) -> bool:
-    """True if an underpromotion avoids stalemate, delivers checkmate/check, or is the best move."""
+                                loss: float = 0.0, max_loss: float = 2.5,
+                                second_wp: float = None, best_wp: float = None) -> bool:
+    """True if an underpromotion (N, B, R) is objectively sound and tactically critical
+    (e.g., avoids stalemate/draw when Queen promotion fails, or delivers a Knight check/fork/mate)."""
     if not is_underpromotion(move) or loss > max_loss:
         return False
+    color = board_before.turn
     b_after = board_before.copy()
     b_after.push(move)
-    if b_after.is_checkmate():
-        return True
+
     # Check what would happen if promoted to Queen instead
     queen_move = chess.Move(move.from_square, move.to_square, promotion=chess.QUEEN)
+    queen_draws = False
+    queen_gives_check = False
+    queen_mates = False
     if queen_move in board_before.legal_moves:
         b_queen = board_before.copy()
         b_queen.push(queen_move)
-        if b_queen.is_stalemate() or b_queen.is_insufficient_material():
+        queen_draws = b_queen.is_stalemate() or b_queen.is_insufficient_material()
+        queen_gives_check = b_queen.is_check()
+        queen_mates = b_queen.is_checkmate()
+
+    # 1. Avoiding immediate stalemate / insufficient material when Queen promotion draws
+    if queen_draws:
+        return True
+
+    # 2. Knight underpromotion: unique L-shaped geometry (checkmate, royal/major fork, check, or best move)
+    if move.promotion == chess.KNIGHT:
+        if b_after.is_checkmate() and not queen_mates:
             return True
+        if b_after.is_check() and not queen_gives_check:
+            return True
+        attacked_valuable = sum(
+            1 for sq in b_after.attacks(move.to_square)
+            if b_after.piece_at(sq) is not None
+            and b_after.piece_at(sq).color != color
+            and (b_after.piece_at(sq).piece_type == chess.KING or PIECE_VAL.get(b_after.piece_at(sq).piece_type, 0) >= 5)
+        )
+        if attacked_valuable >= 2:
+            return True
+        if is_best and (second_wp is None or best_wp is None or (best_wp - second_wp) >= 2.0):
+            return True
+        return False
+
+    # 3. Rook / Bishop underpromotion: since a Queen has all Rook & Bishop moves,
+    # it is only tactical (not decorative) if it is the engine's best move and Queen promotion
+    # is significantly worse (e.g. allows a stalemate/perpetual tactic on the next ply).
+    if second_wp is not None and best_wp is not None:
+        return bool(is_best and (best_wp - second_wp) >= 3.0)
     if is_best or b_after.is_check():
         return True
     return False
 
 
 def is_sacrifice(board_before, move, threshold=2):
-    """True if the mover gives up >= threshold pawns of material net after the best
-    reply by the opponent (1-ply capture + recapture search)."""
+    """True if the mover willingly leaves a piece/rook/queen undefended or sacrifices
+    an exchange/piece for >= threshold pawns of net material loss after opponent's best reply."""
     color = board_before.turn
     b = board_before.copy()
     start = material(b, color) - material(b, not color)
+    moved_pt = b.piece_type_at(move.from_square)
     b.push(move)
     worst = start
+    piece_involved = (moved_pt is not None and moved_pt != chess.PAWN)
     # opponent's best capture reply
     for reply in b.legal_moves:
         if b.is_capture(reply):
+            victim = b.piece_at(reply.to_square)
             b2 = b.copy()
             b2.push(reply)
             # allow our recapture (best of ours)
@@ -142,11 +179,16 @@ def is_sacrifice(board_before, move, threshold=2):
                     b3 = b2.copy()
                     b3.push(rec)
                     best = max(best, material(b3, color) - material(b3, not color))
-            worst = min(worst, best)
+            if best < worst:
+                worst = best
+            if start - best >= threshold and victim is not None and victim.color == color and victim.piece_type != chess.PAWN:
+                piece_involved = True
     # also the immediate state if no capture reply
     if not any(b.is_capture(m) for m in b.legal_moves):
         worst = min(worst, material(b, color) - material(b, not color))
-    return start - worst >= threshold
+    if start - worst < threshold:
+        return False
+    return True if threshold < 2 else piece_involved
 
 
 def brilliant_category(board_before: chess.Board, move: chess.Move) -> str:
@@ -316,23 +358,53 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
                     phase="middlegame", repeats_position=False,
                     is_capture=False, pre_attacked_free_piece=False,
                     pendulum_return=False, attacks_piece=False,
-                    prev_critical=False):
+                    prev_critical=False, already_overwhelming=False):
     """Modern Expected-Points (Chess.com Game Review calibrated) context-aware move classification.
 
     All win percentages (0..100) and centipawn values are from the mover's point of view.
     """
     eff_loss = max(0.0, float(loss))
 
-    # 1. Brilliant (!!): Sound piece sacrifice or tactical/stalemate-avoiding underpromotion
+    # 1. Brilliant (!!): A Sound Piece/Exchange Sacrifice or Tactical Underpromotion
+    # Core & Context Requirements:
+    # - Objectively sound: eff_loss <= max_bril_loss
+    # - Not worse after the move: evaluation must remain equal or winning (played_wp_after >= min_bril_after
+    #   and cp_after >= min_bril_cp)
+    # - Not already overwhelmingly winning: cannot already be at +6.00/+10.00 or >=90% win prob or up a full
+    #   queen with multiple trivial wins (unless any other move forfeits the win, e.g. stalemate avoidance)
+    # - Critical moment: must genuinely make a difference in securing or turning the evaluation
     max_bril_loss = 5.0 if lenient else 2.5
-    min_bril_after = 38.0 if lenient else 45.0
+    min_bril_after = 38.0 if lenient else 46.5
+    min_bril_cp = -100 if lenient else -35
     max_bril_before = 95.0 if lenient else 90.0
-    if underpromo_brilliant and eff_loss <= max_bril_loss and played_wp_after >= min_bril_after:
-        return "!!"
-    if sacrifice and eff_loss <= max_bril_loss:
-        if (played_wp_after >= min_bril_after and wp_before < max_bril_before) or (
-            wp_before < min_bril_after and played_wp_after >= wp_before - 1.0 and played_wp_after >= 35.0
-        ):
+    max_bril_cp_before = 900 if lenient else 600
+
+    if (sacrifice or underpromo_brilliant) and eff_loss <= max_bril_loss:
+        not_worse_after = (
+            played_wp_after >= min_bril_after
+            and (cp_after is None or cp_after >= min_bril_cp)
+        )
+        only_winning_try = (
+            second_wp is not None
+            and (best_wp - second_wp) >= 15.0
+            and second_wp < 65.0
+        )
+        not_overwhelmingly_winning = (
+            (
+                wp_before < max_bril_before
+                and (cp_before is None or cp_before < max_bril_cp_before)
+                and not already_overwhelming
+            )
+            or only_winning_try
+        )
+        is_critical_moment = (
+            wp_before < 75.0
+            or (cp_before is not None and cp_before < 250)
+            or second_wp is None
+            or second_wp < 82.0
+            or (best_wp - second_wp) >= 5.0
+        )
+        if not_worse_after and not_overwhelmingly_winning and is_critical_moment:
             return "!!"
 
     # 2. Already-decided Winning Position Protection:
@@ -466,7 +538,7 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
              phase="middlegame", repeats_position=False,
              is_capture=False, pre_attacked_free_piece=False,
              pendulum_return=False, attacks_piece=False,
-             prev_critical=False):
+             prev_critical=False, already_overwhelming=False):
     """Return an annotation symbol using the selected classification system ('modern' or 'legacy')."""
     if system == "legacy":
         return classify_legacy(
@@ -481,7 +553,7 @@ def classify(loss, is_best, played_wp_after, best_wp, second_wp, sacrifice, wp_b
         phase=phase, repeats_position=repeats_position,
         is_capture=is_capture, pre_attacked_free_piece=pre_attacked_free_piece,
         pendulum_return=pendulum_return, attacks_piece=attacks_piece,
-        prev_critical=prev_critical,
+        prev_critical=prev_critical, already_overwhelming=already_overwhelming,
     )
 
 

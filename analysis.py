@@ -350,11 +350,19 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 and mv.to_square == moves[i - 2].from_square
             )
             prev_critical = bool(i > 0 and results[i - 1].symbol in ("!!", "!"))
+            mat_diff_before = C.material(b, mover) - C.material(b, not mover)
+            already_overwhelming = bool(
+                mat_diff_before >= 7
+                and wp_before >= 80.0
+                and (second_wp is None or second_wp >= 75.0)
+            )
             in_check = b.is_check()
             gives_check = boards[i + 1].is_check()
             sac = C.is_sacrifice(b, mv, sac_threshold)
             max_loss = 5.0 if settings.lenient_brilliant else 2.5
-            underpromo = C.is_brilliant_underpromotion(b, mv, is_best, loss, max_loss)
+            underpromo = C.is_brilliant_underpromotion(
+                b, mv, is_best, loss, max_loss, second_wp=second_wp, best_wp=best_wp
+            )
             sym = C.classify(
                 loss, is_best, after_wp, best_wp, second_wp, sac, wp_before,
                 lenient=settings.lenient_brilliant,
@@ -373,6 +381,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 pendulum_return=pendulum_return,
                 attacks_piece=attacks_piece,
                 prev_critical=prev_critical,
+                already_overwhelming=already_overwhelming,
             )
             if mover not in tracked and not all_scope and sym != "!!":
                 pass  # untracked opponent move: only brilliants are reported
@@ -514,10 +523,18 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 and mv.to_square == moves_hist[i - 2].from_square
             )
             prev_critical = bool(i > 0 and results[i - 1].symbol in ("!!", "!"))
+            mat_diff_before = C.material(b, mover) - C.material(b, not mover)
+            already_overwhelming = bool(
+                mat_diff_before >= 7
+                and wp_before >= 80.0
+                and (second_wp is None or second_wp >= 75.0)
+            )
             in_check = b.is_check()
             gives_check = b_next.is_check()
             sac = C.is_sacrifice(b, mv, sac_threshold)
-            underpromo = C.is_brilliant_underpromotion(b, mv, is_best, r.loss, max_loss)
+            underpromo = C.is_brilliant_underpromotion(
+                b, mv, is_best, r.loss, max_loss, second_wp=second_wp, best_wp=best_wp
+            )
             sym = C.classify(
                 r.loss, is_best, after_wp, best_wp, second_wp, sac, wp_before,
                 lenient=settings.lenient_brilliant,
@@ -536,6 +553,7 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 pendulum_return=pendulum_return,
                 attacks_piece=attacks_piece,
                 prev_critical=prev_critical,
+                already_overwhelming=already_overwhelming,
             )
             r.symbol = sym
             r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""

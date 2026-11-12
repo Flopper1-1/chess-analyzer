@@ -6,7 +6,7 @@
 
   **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, sound effects, and an in-app game library with advanced Brilliant (`!!`) tracking.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.7.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.8.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20.EXE-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6-41cd52?style=for-the-badge)
