@@ -857,6 +857,7 @@ def get_theme_palette(bg: dict) -> dict:
             "accent_fg": "#ffffff",
             "btn_bg": "#ffffff",
             "btn_hover": "#e5e7eb",
+            "btn_hover_fg": "#111827",
             "graph_bg": "#e5e7eb",
             "graph_fill": "#ffffff",
             "graph_mid": "#9ca3af",
@@ -876,7 +877,8 @@ def get_theme_palette(bg: dict) -> dict:
             "accent": "#ffff00",
             "accent_fg": "#000000",
             "btn_bg": "#000000",
-            "btn_hover": "#222222",
+            "btn_hover": "#ffff00",
+            "btn_hover_fg": "#000000",
             "graph_bg": "#000000",
             "graph_fill": "#ffffff",
             "graph_mid": "#ffff00",
@@ -897,6 +899,7 @@ def get_theme_palette(bg: dict) -> dict:
             "accent_fg": "#041620",
             "btn_bg": "#153d52",
             "btn_hover": "#1d526e",
+            "btn_hover_fg": "#e6f7ff",
             "graph_bg": "#102d3e",
             "graph_fill": "#d8f3f8",
             "graph_mid": "#26c6da",
@@ -916,6 +919,7 @@ def get_theme_palette(bg: dict) -> dict:
         "accent_fg": "#ffffff",
         "btn_bg": "#2d2d30",
         "btn_hover": "#3e3e42",
+        "btn_hover_fg": "#e6e6e6",
         "graph_bg": "#262626",
         "graph_fill": "#d9d9d9",
         "graph_mid": "#777777",
@@ -957,6 +961,8 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
         }}
         QToolButton:hover, QPushButton:hover {{
             background-color: {p['btn_hover']};
+            color: {p['btn_hover_fg']};
+            border-color: {p['accent']};
         }}
         QToolButton:pressed, QPushButton:pressed {{
             background-color: {p['accent']};
@@ -1024,10 +1030,22 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             border: {border_w} solid {p['border']};
             gridline-color: {p['border']};
             alternate-background-color: {p['surface_alt']};
+            outline: 0;
         }}
-        QListWidget::item:selected, QTableWidget::item:selected {{
+        QListWidget::item {{
+            padding: 4px 6px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }}
+        QListWidget::item:hover {{
+            background-color: {p['surface_alt']};
+            border: 1px solid {p['border']};
+        }}
+        QListWidget::item:selected, QListWidget::item:selected:active, QListWidget::item:selected:!active,
+        QTableWidget::item:selected {{
             background-color: {p['accent']};
             color: {p['accent_fg']};
+            border: 1px solid {p['accent']};
         }}
         QHeaderView::section {{
             background-color: {p['panel']};
