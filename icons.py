@@ -4,8 +4,8 @@ import shutil
 import subprocess
 import sys
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QPixmap
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
 
 from openings import resource_path
 
@@ -104,4 +104,96 @@ def pixmap(stem, size):
 def pixmap_for_key(key, size):
     stem = KEY_TO_STEM.get(key, key)
     return pixmap(stem, size)
+
+
+def profile_avatar_path() -> str:
+    base = os.environ.get("APPDATA") or os.path.expanduser("~")
+    folder = os.path.join(base, "ChessAnalyzer")
+    os.makedirs(folder, exist_ok=True)
+    return os.path.join(folder, "profile_avatar.png")
+
+
+def has_custom_profile_avatar(custom_path: str = "") -> bool:
+    p = custom_path or profile_avatar_path()
+    return os.path.exists(p)
+
+
+def crop_to_square_pixmap(src: QPixmap, target_size: int = 256) -> QPixmap:
+    """Center-crop any QPixmap to a 1:1 square and scale smoothly to target_size x target_size."""
+    if src.isNull():
+        return QPixmap()
+    w, h = src.width(), src.height()
+    side = min(w, h)
+    x = (w - side) // 2
+    y = (h - side) // 2
+    sq = src.copy(x, y, side, side)
+    return sq.scaled(target_size, target_size, Qt.IgnoreAspectRatio, Qt.SmoothTransformation)
+
+
+def save_profile_avatar(source_path: str, dest_path: str = "") -> bool:
+    """Load an image from source_path, crop it to a 1:1 square, and save to profile_avatar.png."""
+    src = QPixmap(source_path)
+    if src.isNull():
+        return False
+    sq = crop_to_square_pixmap(src, 256)
+    if sq.isNull():
+        return False
+    out = dest_path or profile_avatar_path()
+    ok = sq.save(out, "PNG")
+    _cache.clear()
+    return bool(ok)
+
+
+def reset_profile_avatar(dest_path: str = "") -> None:
+    p = dest_path or profile_avatar_path()
+    try:
+        os.remove(p)
+    except FileNotFoundError:
+        pass
+    _cache.clear()
+
+
+def _default_profile_pixmap(size: int) -> QPixmap:
+    """Render a uniform dark-themed square default profile picture (size x size)."""
+    pm = QPixmap(size, size)
+    pm.fill(QColor("#262626"))
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    # Subtle square border
+    p.setPen(QPen(QColor("#4a4a4a"), max(1, size // 24)))
+    p.setBrush(QColor("#232323"))
+    p.drawRect(0, 0, size - 1, size - 1)
+    # Chess knight glyph in theme accent/neutral color
+    f = QFont("Segoe UI Symbol", max(8, int(size * 0.56)))
+    p.setFont(f)
+    p.setPen(QColor("#26c6da"))
+    p.drawText(QRectF(0, 0, size, size), Qt.AlignCenter, "\u265e")
+    p.end()
+    return pm
+
+
+def profile_pixmap(size: int = 32, custom_path: str = "") -> QPixmap:
+    """Return a strictly square (size x size) QPixmap for the user's profile picture."""
+    p = custom_path or profile_avatar_path()
+    if os.path.exists(p):
+        try:
+            mt = os.path.getmtime(p)
+            key = ("profile", p, mt, size)
+            cached = _cache.get(key)
+            if cached is not None:
+                return cached
+            src = QPixmap(p)
+            if not src.isNull():
+                sq = crop_to_square_pixmap(src, size)
+                _cache[key] = sq
+                return sq
+        except OSError:
+            pass
+    key = ("profile_default", size)
+    cached = _cache.get(key)
+    if cached is None:
+        cached = _default_profile_pixmap(size)
+        _cache[key] = cached
+    return cached
+
 

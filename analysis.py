@@ -1,9 +1,10 @@
 """Game analysis pipeline (GUI independent)."""
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import chess
 import chess.engine
@@ -11,6 +12,199 @@ import chess.engine
 import classify as C
 from openings import OpeningBook, resource_path
 from accuracy import phase_of
+
+_CLK_RE = re.compile(r"\[%clk\s+(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)\]", re.IGNORECASE)
+_EMT_RE = re.compile(r"\[%emt\s+(?:(\d+):)?(\d+):(\d+(?:\.\d+)?)\]", re.IGNORECASE)
+
+
+def _hms_to_seconds(h_str: Optional[str], m_str: str, s_str: str) -> float:
+    h = int(h_str) if h_str else 0
+    m = int(m_str)
+    s = float(s_str)
+    return h * 3600.0 + m * 60.0 + s
+
+
+def parse_time_control(tc_str: str) -> Tuple[Optional[float], float]:
+    """Parse a PGN TimeControl header (e.g. '600', '180+2', '300+0') -> (initial_sec, increment_sec)."""
+    raw = (tc_str or "").strip()
+    if not raw or raw in ("-", "?"):
+        return None, 0.0
+    first_stage = raw.split(":")[0].strip()
+    if "/" in first_stage:
+        parts = first_stage.split("/", 1)
+        first_stage = parts[1].strip()
+    inc = 0.0
+    if "+" in first_stage:
+        base_s, inc_s = first_stage.split("+", 1)
+        try:
+            inc = max(0.0, float(inc_s.strip()))
+        except ValueError:
+            inc = 0.0
+    else:
+        base_s = first_stage
+    try:
+        init = float(base_s.strip())
+        if init <= 0:
+            return None, inc
+        return init, inc
+    except ValueError:
+        return None, 0.0
+
+
+def parse_clk_comment(comment: str) -> Tuple[Optional[float], Optional[float]]:
+    """Extract (%clk seconds, %emt seconds) from a PGN move comment."""
+    text = comment or ""
+    clk_sec = None
+    emt_sec = None
+    m_clk = _CLK_RE.search(text)
+    if m_clk:
+        try:
+            clk_sec = _hms_to_seconds(m_clk.group(1), m_clk.group(2), m_clk.group(3))
+        except ValueError:
+            clk_sec = None
+    m_emt = _EMT_RE.search(text)
+    if m_emt:
+        try:
+            emt_sec = _hms_to_seconds(m_emt.group(1), m_emt.group(2), m_emt.group(3))
+        except ValueError:
+            emt_sec = None
+    return clk_sec, emt_sec
+
+
+def format_clock(seconds: Optional[float]) -> str:
+    """Format a remaining clock time (e.g. 600 -> '10:00', 27.4 -> '0:27', 8.4 -> '0:08.4')."""
+    if seconds is None:
+        return ""
+    sec = max(0.0, float(seconds))
+    if sec >= 3600.0:
+        total = int(round(sec))
+        h = total // 3600
+        m = (total % 3600) // 60
+        s = total % 60
+        return f"{h}:{m:02d}:{s:02d}"
+    if 0.0 < sec < 20.0 and abs(sec - round(sec)) >= 0.05:
+        m = int(sec // 60)
+        rem = sec - m * 60
+        return f"{m}:{rem:04.1f}"
+    total = int(round(sec))
+    m = total // 60
+    s = total % 60
+    return f"{m}:{s:02d}"
+
+
+def format_move_time(seconds: Optional[float]) -> str:
+    """Format elapsed move time for the sidebar (e.g. '0.4s', '2.1s', '1m 05s')."""
+    if seconds is None:
+        return ""
+    sec = max(0.0, float(seconds))
+    if sec < 60.0:
+        return f"{sec:.1f}s"
+    m = int(sec // 60)
+    s = int(round(sec % 60))
+    if s == 60:
+        m += 1
+        s = 0
+    return f"{m}m {s:02d}s"
+
+
+def extract_game_clocks(game) -> dict:
+    """Extract per-ply clock and move-time information from a chess.pgn.Game.
+
+    Returns a dict with:
+      - 'has_clocks': bool
+      - 'initial_white': str
+      - 'initial_black': str
+      - 'plies': list of dicts (index 0 = ply 1) with:
+            'clock_seconds', 'clock_text', 'move_time', 'move_time_text',
+            'white_clock', 'black_clock'
+      - 'positions': list of (white_clock_str, black_clock_str) for ply 0..N
+    """
+    if game is None:
+        return {
+            "has_clocks": False,
+            "initial_white": "--:--",
+            "initial_black": "--:--",
+            "plies": [],
+            "positions": [("--:--", "--:--")],
+        }
+    headers = getattr(game, "headers", {}) or {}
+    init_sec, inc_sec = parse_time_control(headers.get("TimeControl", ""))
+
+    node = game
+    b = game.board()
+    raw_nodes = []
+    has_any_clk = False
+    first_clk = {chess.WHITE: None, chess.BLACK: None}
+    while node.variations:
+        nxt = node.variations[0]
+        mover = b.turn
+        clk_sec, emt_sec = parse_clk_comment(nxt.comment or "")
+        if clk_sec is not None or emt_sec is not None:
+            has_any_clk = True
+        if clk_sec is not None and first_clk[mover] is None:
+            first_clk[mover] = clk_sec
+        raw_nodes.append((mover, clk_sec, emt_sec))
+        b.push(nxt.move)
+        node = nxt
+
+    init_w = init_sec if init_sec is not None else first_clk[chess.WHITE]
+    init_b = init_sec if init_sec is not None else first_clk[chess.BLACK]
+    has_clocks = bool(has_any_clk or init_sec is not None)
+
+    w_str = format_clock(init_w) if init_w is not None else ("--:--" if not has_clocks else "--:--")
+    b_str = format_clock(init_b) if init_b is not None else ("--:--" if not has_clocks else "--:--")
+    if init_w is None and first_clk[chess.WHITE] is not None:
+        w_str = format_clock(first_clk[chess.WHITE])
+    if init_b is None and first_clk[chess.BLACK] is not None:
+        b_str = format_clock(first_clk[chess.BLACK])
+
+    prev_clk = {chess.WHITE: init_w, chess.BLACK: init_b}
+    cur_w_str = w_str
+    cur_b_str = b_str
+    positions = [(cur_w_str, cur_b_str)]
+    plies = []
+
+    for idx, (mover, clk_sec, emt_sec) in enumerate(raw_nodes):
+        ply = idx + 1
+        spent = None
+        if emt_sec is not None:
+            spent = max(0.0, emt_sec)
+        elif clk_sec is not None and prev_clk[mover] is not None:
+            prev = prev_clk[mover]
+            if ply <= 2 and init_sec is None:
+                spent = 0.0
+            elif ply <= 2 and abs(clk_sec - prev) < 1e-6:
+                spent = 0.0
+            else:
+                eff_inc = inc_sec if (ply > 2 or clk_sec > prev) else 0.0
+                spent = max(0.0, prev + eff_inc - clk_sec)
+        if clk_sec is not None:
+            prev_clk[mover] = clk_sec
+            c_txt = format_clock(clk_sec)
+            if mover == chess.WHITE:
+                cur_w_str = c_txt
+            else:
+                cur_b_str = c_txt
+        else:
+            c_txt = ""
+        m_txt = format_move_time(spent) if spent is not None else ""
+        plies.append({
+            "clock_seconds": clk_sec,
+            "clock_text": c_txt,
+            "move_time": spent,
+            "move_time_text": m_txt,
+            "white_clock": cur_w_str,
+            "black_clock": cur_b_str,
+        })
+        positions.append((cur_w_str, cur_b_str))
+
+    return {
+        "has_clocks": has_clocks,
+        "initial_white": w_str,
+        "initial_black": b_str,
+        "plies": plies,
+        "positions": positions,
+    }
 
 
 @dataclass
@@ -26,6 +220,7 @@ class Settings:
     lenient_brilliant: bool = False
     eval_formula: str = "improved"      # improved | win_prob
     annotation_system: str = "modern"   # modern | legacy
+    auto_update: bool = True            # check GitHub newest stable release on startup
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""
@@ -74,6 +269,10 @@ class MoveResult:
     phase: str = "middlegame"
     brilliant_type: str = ""    # "" | "queen" | "rook" | "bishop" | "knight" | "underpromotion"
     second_cp: Optional[int] = None     # mover POV centipawns for 2nd best MultiPV line
+    clock_seconds: Optional[float] = None
+    clock_text: str = ""
+    move_time: Optional[float] = None
+    move_time_text: str = ""
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
 
@@ -210,12 +409,25 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
     infos = {}
     total = n + 1
     book_active = True
+    clock_data = extract_game_clocks(game)
+    ply_clocks = clock_data.get("plies", [])
 
     def finalize(i):
         nonlocal book_active
         mv, b, mover = moves[i], boards[i], boards[i].turn
-        r = MoveResult(ply=i + 1, color=mover, san=b.san(mv), uci=mv.uci(),
-                       fen_before=b.fen(), fen_after=boards[i + 1].fen())
+        c_info = ply_clocks[i] if i < len(ply_clocks) else {}
+        r = MoveResult(
+            ply=i + 1,
+            color=mover,
+            san=b.san(mv),
+            uci=mv.uci(),
+            fen_before=b.fen(),
+            fen_after=boards[i + 1].fen(),
+            clock_seconds=c_info.get("clock_seconds"),
+            clock_text=c_info.get("clock_text", ""),
+            move_time=c_info.get("move_time"),
+            move_time_text=c_info.get("move_time_text", ""),
+        )
         entry = book.lookup(boards[i + 1]) if book else None
         if book_active and entry:
             r.book = True

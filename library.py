@@ -37,6 +37,7 @@ CREATE TABLE IF NOT EXISTS games (
     brilliant_white INTEGER DEFAULT 0,
     brilliant_black INTEGER DEFAULT 0,
     user_color TEXT DEFAULT 'white',
+    favorite INTEGER DEFAULT 0,
     pgn TEXT,
     analysis TEXT,
     engine TEXT
@@ -155,6 +156,7 @@ class GameLibrary:
             ("brilliant_white", "INTEGER DEFAULT 0"),
             ("brilliant_black", "INTEGER DEFAULT 0"),
             ("user_color", "TEXT DEFAULT 'white'"),
+            ("favorite", "INTEGER DEFAULT 0"),
         ]
         added = False
         for col, spec in migrations:
@@ -311,12 +313,34 @@ class GameLibrary:
             with conn:
                 conn.execute("UPDATE games SET user_color = ? WHERE id = ?", (color, game_id))
 
-    def list(self, search: str = "", player_name: str = "") -> List[dict]:
+    def set_favorite(self, game_id: int, favorite: bool) -> None:
+        val = 1 if favorite else 0
+        with self._conn() as conn:
+            with conn:
+                conn.execute("UPDATE games SET favorite = ? WHERE id = ?", (val, game_id))
+
+    def toggle_favorite(self, game_id: int) -> bool:
+        with self._conn() as conn:
+            with conn:
+                row = conn.execute("SELECT favorite FROM games WHERE id = ?", (game_id,)).fetchone()
+                if row is None:
+                    return False
+                new_val = 0 if bool(row["favorite"]) else 1
+                conn.execute("UPDATE games SET favorite = ? WHERE id = ?", (new_val, game_id))
+                return bool(new_val)
+
+    def list(
+        self,
+        search: str = "",
+        player_name: str = "",
+        favorites_only: bool = False,
+        sort_by: str = "recent",
+    ) -> List[dict]:
         q = (search or "").strip().lower()
         sql = """
             SELECT id, saved_at, title, white, black, result, date, event,
                    eco, opening, moves, white_acc, black_acc, white_rating, black_rating,
-                   brilliant_white, brilliant_black, user_color, analysis, engine
+                   brilliant_white, brilliant_black, user_color, favorite, analysis, engine
             FROM games
         """
         params: tuple = ()
@@ -349,18 +373,39 @@ class GameLibrary:
                     d.get("user_color") or "white",
                 )
                 d["title"] = (d.get("title") or "").strip() or f"{d.get('white', '?')} vs {d.get('black', '?')}"
+                d["favorite"] = bool(d.get("favorite"))
                 d["brilliant_total"] = bw + bb
                 d["brilliant_yours"] = bb if uc == "black" else bw
+                d["brilliant_opponent"] = bw if uc == "black" else bb
                 d["user_color"] = uc
                 d["matched_by_name"] = matched_by_name
                 d["brilliant_breakdown_white"] = binfo["white"]
                 d["brilliant_breakdown_black"] = binfo["black"]
                 d["brilliant_breakdown_yours"] = binfo["black"] if uc == "black" else binfo["white"]
+                d["brilliant_breakdown_opponent"] = binfo["white"] if uc == "black" else binfo["black"]
                 d["brilliant_breakdown_total"] = {
                     cat: binfo["white"][cat] + binfo["black"][cat]
                     for cat in C.BRILLIANT_CATEGORIES
                 }
+                if favorites_only and not d["favorite"]:
+                    continue
                 out.append(d)
+
+            mode = (sort_by or "recent").strip().lower()
+            if mode == "most_brilliant":
+                out.sort(
+                    key=lambda x: (x["brilliant_yours"], x["brilliant_total"], x["id"]),
+                    reverse=True,
+                )
+            elif mode == "least_brilliant":
+                out.sort(
+                    key=lambda x: (x["brilliant_yours"], x["brilliant_total"], -x["id"]),
+                )
+            elif mode == "opponent_brilliant":
+                out.sort(
+                    key=lambda x: (x["brilliant_opponent"], x["brilliant_total"], x["id"]),
+                    reverse=True,
+                )
             return out
 
     def load(self, game_id: int) -> Tuple[chess.pgn.Game, List[A.MoveResult]]:
@@ -371,11 +416,13 @@ class GameLibrary:
         if row is None:
             raise KeyError(f"Game id {game_id} not found")
         game = chess.pgn.read_game(io.StringIO(row["pgn"]))
+        clk_data = A.extract_game_clocks(game)
+        ply_clocks = clk_data.get("plies", [])
         raw = json.loads(row["analysis"])
         items = raw.get("results", []) if isinstance(raw, dict) else raw
         fields = set(A.MoveResult.__dataclass_fields__.keys())
         results = []
-        for item in items:
+        for idx, item in enumerate(items):
             mr = A.MoveResult(**{k: v for k, v in item.items() if k in fields})
             if mr.symbol == "!!" and not mr.brilliant_type:
                 try:
@@ -384,6 +431,16 @@ class GameLibrary:
                     )
                 except Exception:
                     mr.brilliant_type = "knight"
+            if idx < len(ply_clocks):
+                ci = ply_clocks[idx]
+                if mr.clock_seconds is None and ci.get("clock_seconds") is not None:
+                    mr.clock_seconds = ci["clock_seconds"]
+                if not mr.clock_text and ci.get("clock_text"):
+                    mr.clock_text = ci["clock_text"]
+                if mr.move_time is None and ci.get("move_time") is not None:
+                    mr.move_time = ci["move_time"]
+                if not mr.move_time_text and ci.get("move_time_text"):
+                    mr.move_time_text = ci["move_time_text"]
             results.append(mr)
         return game, results
 

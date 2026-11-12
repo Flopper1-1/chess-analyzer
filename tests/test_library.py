@@ -423,3 +423,47 @@ def test_brilliant_system_core_and_context_conditions():
 
 
 
+
+
+def test_clock_and_move_time_parsing():
+    pgn = ('[White "a"]\n[Black "b"]\n[TimeControl "180+2"]\n\n'
+           '1. e4 {[%clk 0:03:00]} e5 {[%clk 0:03:00]} 2. Nf3 {[%clk 0:02:55.5]} Nc6 {[%clk 0:02:58]} *\n')
+    g = chess.pgn.read_game(io.StringIO(pgn))
+    d = A.extract_game_clocks(g)
+    assert d["has_clocks"]
+    assert d["initial_white"] == "3:00"
+    assert len(d["plies"]) == 4 and len(d["positions"]) == 5
+    assert d["plies"][2]["move_time_text"] == "6.5s"
+    assert d["positions"][3][0] == "2:56" or d["positions"][3][0].startswith("2:5")
+    none = A.extract_game_clocks(chess.pgn.read_game(io.StringIO("1. e4 e5 *")))
+    assert not none["has_clocks"] and none["initial_white"] == "--:--"
+
+
+def test_favorites_and_brilliant_sorting(tmp_path):
+    lib = LIB.GameLibrary(str(tmp_path / "f.db"))
+    g, res = _sample_game_and_results()
+    gid = lib.save(g, res, user_color="white")
+    pgn2 = '[White "X"]\n[Black "Y"]\n[Result "*"]\n\n1. d4 d5 *\n'
+    g2 = chess.pgn.read_game(io.StringIO(pgn2))
+    gid2 = lib.save(g2, [], user_color="white")
+    assert lib.toggle_favorite(gid2) is True
+    assert [r["id"] for r in lib.list(favorites_only=True)] == [gid2]
+    assert lib.list(sort_by="most_brilliant")[0]["id"] == gid
+    assert lib.list(sort_by="least_brilliant")[0]["id"] == gid2
+    assert lib.list(sort_by="opponent_brilliant")[0]["id"] == gid
+    assert lib.toggle_favorite(gid2) is False
+
+
+def test_profile_rules_and_updater():
+    import updater
+    assert updater.is_newer_version("v1.10.0", "v1.9.0")
+    assert not updater.is_newer_version("v1.9.0", "v1.9.0")
+    rels = [{"tag_name": "v2.0.0", "prerelease": True}, {"tag_name": "v1.9.5", "prerelease": False}]
+    assert updater.select_latest_stable_release(rels)["tag_name"] == "v1.9.5"
+    import main as M
+    assert M.elide_profile_name("A" * 40).endswith("...")
+    assert M.elide_profile_name("Holly") == "Holly"
+    h = {"White": "Holly", "Black": "Bob"}
+    assert not M.should_show_board_avatar("", chess.WHITE, h)
+    assert M.should_show_board_avatar("Holly", chess.WHITE, h)
+    assert not M.should_show_board_avatar("Holly", chess.BLACK, h)

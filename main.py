@@ -12,7 +12,9 @@ except ImportError:
 import chess
 import chess.pgn
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRectF, QPointF, QSize, QEvent, QTimer, QUrl
-from PySide6.QtGui import QPainter, QColor, QFont, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap
+from PySide6.QtGui import (
+    QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
+)
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QFileDialog, QDialog, QPlainTextEdit, QDialogButtonBox, QFormLayout,
@@ -29,8 +31,57 @@ import icons
 import winutil
 import accuracy as ACC
 import library as LIB
+import updater
 
 APP_TITLE = "Holly's Chess Analyzer"
+APP_VERSION = updater.APP_VERSION
+
+
+def elide_profile_name(name: str, max_chars: int = 16, font_metrics=None, max_px: int = 125) -> str:
+    """Truncate a profile name so it ends in '...' if it gets too large and can't fit."""
+    clean = (name or "").strip()
+    if not clean:
+        return ""
+    if font_metrics is not None:
+        try:
+            if font_metrics.horizontalAdvance(clean) > max_px:
+                elided = font_metrics.elidedText(clean, Qt.ElideRight, max_px)
+                elided = elided.replace("\u2026", "...")
+                if not elided.endswith("..."):
+                    elided = elided.rstrip(".") + "..."
+                return elided
+        except Exception:
+            pass
+    if len(clean) > max_chars:
+        cut = max(1, max_chars - 3)
+        return clean[:cut].rstrip() + "..."
+    return clean
+
+
+def should_show_board_avatar(
+    player_name: str,
+    side_color: bool,
+    headers: dict = None,
+    fallback_color: str = "white",
+) -> bool:
+    """Return True if the user's square profile picture should appear next to this side on the board.
+
+    If the user has NOT set their player name, their profile picture never appears on the board.
+    """
+    clean_name = (player_name or "").strip()
+    if not clean_name:
+        return False
+    if headers:
+        resolved_uc, _matched = LIB.resolve_user_color(
+            headers.get("White", ""),
+            headers.get("Black", ""),
+            clean_name,
+            fallback_color,
+        )
+        target = chess.BLACK if resolved_uc == "black" else chess.WHITE
+        return bool(side_color == target)
+    target = chess.BLACK if (fallback_color or "").strip().lower() == "black" else chess.WHITE
+    return bool(side_color == target)
 
 PIECES = {"K": "♔", "Q": "♕", "R": "♖", "B": "♗", "N": "♘", "P": "♙",
           "k": "♚", "q": "♛", "r": "♜", "b": "♝", "n": "♞", "p": "♟"}
@@ -568,12 +619,291 @@ class LineWorker(QThread):
             self.failed.emit(str(e))
 
 
+class UpdateCheckWorker(QThread):
+    finished_check = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, current_version: str = APP_VERSION):
+        super().__init__()
+        self.current_version = current_version
+
+    def run(self):
+        try:
+            info = updater.check_for_updates(self.current_version)
+            self.finished_check.emit(info)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class UpdateDownloadWorker(QThread):
+    progress = Signal(int, int)
+    finished_download = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, download_url: str, dest_path: str):
+        super().__init__()
+        self.download_url = download_url
+        self.dest_path = dest_path
+
+    def run(self):
+        try:
+            out = updater.download_update(
+                self.download_url,
+                self.dest_path,
+                progress_cb=lambda done, tot: self.progress.emit(done, tot),
+            )
+            self.finished_download.emit(out)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
+class PlayerBarWidget(QFrame):
+    """Player bar displayed on a player's side of the board (top or bottom).
+
+    Shows:
+      - Side piece-color square badge
+      - Player name (and rating if available)
+      - Square profile picture immediately to the right of the player's name (only when
+        the user has set their name and this side matches the user)
+      - Colored timer badge next to their name (White timer = white bg / black text;
+        Black timer = black bg / white text)
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("PlayerBar")
+        self.setStyleSheet(
+            "QFrame#PlayerBar { background:#232323; border:1px solid #3a3a3a; border-radius:4px; }"
+        )
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(8, 4, 8, 4)
+        lay.setSpacing(8)
+
+        self.color_chip = QLabel()
+        self.color_chip.setFixedSize(12, 12)
+        lay.addWidget(self.color_chip)
+
+        self.name_label = QLabel("White")
+        self.name_label.setTextFormat(Qt.RichText)
+        self.name_label.setStyleSheet("font-size:13px; color:#e6e6e6; border:none; background:transparent;")
+        lay.addWidget(self.name_label)
+
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(24, 24)
+        self.avatar_label.setStyleSheet("border:1px solid #555; background:#1f1f1f;")
+        self.avatar_label.setVisible(False)
+        lay.addWidget(self.avatar_label)
+
+        self.clock_label = QLabel("--:--")
+        self.clock_label.setAlignment(Qt.AlignCenter)
+        self.clock_label.setMinimumWidth(62)
+        lay.addWidget(self.clock_label)
+
+        lay.addStretch(1)
+        self.side_color = chess.WHITE
+        self.set_player(chess.WHITE, "White", "", "--:--", show_avatar=False)
+
+    def set_player(
+        self,
+        side_color: bool,
+        name: str,
+        rating: str = "",
+        clock_text: str = "--:--",
+        show_avatar: bool = False,
+    ) -> None:
+        self.side_color = bool(side_color)
+        if self.side_color == chess.WHITE:
+            self.color_chip.setStyleSheet(
+                "background:#f0f0f0; border:1px solid #888; border-radius:2px;"
+            )
+            self.clock_label.setStyleSheet(
+                "background:#f0f0f0; color:#141414; border:1px solid #bbbbbb; "
+                "border-radius:3px; padding:2px 8px; font-family:'Consolas','Segoe UI',monospace; "
+                "font-size:13px; font-weight:bold;"
+            )
+        else:
+            self.color_chip.setStyleSheet(
+                "background:#141414; border:1px solid #666; border-radius:2px;"
+            )
+            self.clock_label.setStyleSheet(
+                "background:#141414; color:#f0f0f0; border:1px solid #555555; "
+                "border-radius:3px; padding:2px 8px; font-family:'Consolas','Segoe UI',monospace; "
+                "font-size:13px; font-weight:bold;"
+            )
+        disp_name = (name or ("White" if self.side_color else "Black")).strip()
+        rat_html = f" <span style='color:#9e9e9e;font-weight:normal;'>({rating})</span>" if rating else ""
+        self.name_label.setText(f"<b>{disp_name}</b>{rat_html}")
+        self.clock_label.setText(clock_text if clock_text else "--:--")
+        if show_avatar:
+            pm = icons.profile_pixmap(24)
+            if pm is not None and not pm.isNull():
+                self.avatar_label.setPixmap(pm)
+            self.avatar_label.setVisible(True)
+        else:
+            self.avatar_label.setVisible(False)
+
+    def set_clock(self, clock_text: str) -> None:
+        self.clock_label.setText(clock_text if clock_text else "--:--")
+
+
+class ProfileButtonWidget(QFrame):
+    """Top-right profile widget displaying the user's elided name and square profile picture."""
+
+    clicked = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("ProfileButton")
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to edit your profile picture and player name")
+        self.setStyleSheet(
+            "QFrame#ProfileButton { background:#232323; border:1px solid #444; border-radius:4px; padding:2px 6px; }"
+            "QFrame#ProfileButton:hover { background:#303030; border:1px solid #26c6da; }"
+        )
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 2, 6, 2)
+        lay.setSpacing(6)
+
+        self.name_label = QLabel("Profile")
+        self.name_label.setStyleSheet("font-size:12px; font-weight:bold; color:#ddd; border:none; background:transparent;")
+        self.name_label.setMaximumWidth(135)
+        lay.addWidget(self.name_label)
+
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(26, 26)
+        self.avatar_label.setStyleSheet("border:1px solid #555; background:#1f1f1f;")
+        lay.addWidget(self.avatar_label)
+        self.refresh("")
+
+    def refresh(self, player_name: str) -> None:
+        clean = (player_name or "").strip()
+        if clean:
+            fm = QFontMetrics(self.name_label.font())
+            elided = elide_profile_name(clean, max_chars=16, font_metrics=fm, max_px=120)
+            self.name_label.setText(elided)
+            self.name_label.setStyleSheet("font-size:12px; font-weight:bold; color:#e6e6e6; border:none; background:transparent;")
+        else:
+            self.name_label.setText("Profile")
+            self.name_label.setStyleSheet("font-size:12px; color:#aaa; border:none; background:transparent;")
+        pm = icons.profile_pixmap(26)
+        if pm is not None and not pm.isNull():
+            self.avatar_label.setPixmap(pm)
+
+    def mousePressEvent(self, e):
+        if e.button() == Qt.LeftButton:
+            self.clicked.emit()
+            e.accept()
+            return
+        super().mousePressEvent(e)
+
+
+class ProfileDialog(QDialog):
+    """Profile menu to edit the square profile picture and 'My player name'."""
+
+    def __init__(self, current_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Edit Profile")
+        self.resize(400, 310)
+        self._pending_image_path = None
+        self._reset_requested = False
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+
+        pic_row = QHBoxLayout()
+        self.preview = QLabel()
+        self.preview.setFixedSize(88, 88)
+        self.preview.setStyleSheet("border:1px solid #555; background:#1f1f1f;")
+        pic_row.addWidget(self.preview)
+
+        btn_col = QVBoxLayout()
+        self.btn_choose = QPushButton("Choose Square Picture…")
+        self.btn_reset = QPushButton("Reset Picture to Default")
+        self.btn_choose.clicked.connect(self._choose_picture)
+        self.btn_reset.clicked.connect(self._reset_picture)
+        btn_col.addWidget(self.btn_choose)
+        btn_col.addWidget(self.btn_reset)
+        pic_hint = QLabel("Images are automatically cropped to a 1:1 square.")
+        pic_hint.setStyleSheet("color:#999; font-size:11px;")
+        pic_hint.setWordWrap(True)
+        btn_col.addWidget(pic_hint)
+        btn_col.addStretch(1)
+        pic_row.addLayout(btn_col, 1)
+        lay.addLayout(pic_row)
+
+        form = QFormLayout()
+        self.name_edit = QLineEdit(current_name or "")
+        self.name_edit.setPlaceholderText("Enter your chess username (e.g. TheHollyCow)…")
+        form.addRow("My player name:", self.name_edit)
+        lay.addLayout(form)
+
+        info = QLabel(
+            "Your profile picture appears to the right of your name on the board and in the top-right bar. "
+            "If you leave your player name blank, your profile picture will only appear on the top-right bar."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("color:#aaa; font-size:11px;")
+        lay.addWidget(info)
+        lay.addStretch(1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(self._on_accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+
+        self._refresh_preview()
+
+    def _refresh_preview(self):
+        if self._pending_image_path:
+            src = QPixmap(self._pending_image_path)
+            pm = icons.crop_to_square_pixmap(src, 88)
+        elif self._reset_requested:
+            pm = icons._default_profile_pixmap(88)
+        else:
+            pm = icons.profile_pixmap(88)
+        if pm is not None and not pm.isNull():
+            self.preview.setPixmap(pm)
+
+    def _choose_picture(self):
+        p, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Profile Picture",
+            "",
+            "Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*)",
+        )
+        if p:
+            src = QPixmap(p)
+            if src.isNull():
+                QMessageBox.warning(self, "Invalid Image", "Could not load the selected image file.")
+                return
+            self._pending_image_path = p
+            self._reset_requested = False
+            self._refresh_preview()
+
+    def _reset_picture(self):
+        self._pending_image_path = None
+        self._reset_requested = True
+        self._refresh_preview()
+
+    def _on_accept(self):
+        if self._reset_requested:
+            icons.reset_profile_avatar()
+        elif self._pending_image_path:
+            icons.save_profile_avatar(self._pending_image_path)
+        self.accept()
+
+    def result_name(self) -> str:
+        return self.name_edit.text().strip()
+
+
 # ---------------------------------------------------------------- dialogs
 class SettingsDialog(QDialog):
     PRESETS = [("Custom", "custom"), ("Low (fast)", "low"), ("Medium", "medium"), ("High (accurate)", "high")]
 
     def __init__(self, s, parent=None):
         super().__init__(parent)
+        self.main_win = parent
+        self._player_name = s.player_name
         self.setWindowTitle("Settings")
         self.resize(520, 600)
         self._applying = False
@@ -591,8 +921,6 @@ class SettingsDialog(QDialog):
         for t, d in (("Both", "both"), ("White", "white"), ("Black", "black")):
             self.side.addItem(t, d)
         self.side.setCurrentIndex(max(0, self.side.findData(s.side)))
-        self.name = QLineEdit(s.player_name)
-        self.name.setPlaceholderText("optional: also flips the board to your side")
         self.eval_formula = QComboBox()
         self.eval_formula.addItem("Improved Eval Determination (Default)", "improved")
         self.eval_formula.addItem("Win Probability (Legacy)", "win_prob")
@@ -622,7 +950,6 @@ class SettingsDialog(QDialog):
             w.valueChanged.connect(self.mark_custom)
         f.addRow("Analysis scope", self.scope)
         f.addRow("My side", self.side)
-        f.addRow("My player name", self.name)
         f.addRow("Eval bar formula", self.eval_formula)
         f.addRow("Annotation system", self.annotation_system)
         f.addRow("", self.lenient)
@@ -701,9 +1028,47 @@ class SettingsDialog(QDialog):
         self.stack.setCurrentIndex(self.mode.currentIndex())
         self.refresh_icons()
 
+        # ---- updates tab
+        page3 = QWidget(); l3 = QVBoxLayout(page3)
+        tabs.addTab(page3, "Updates")
+        ver_lbl = QLabel(f"<b>Current version:</b> {APP_VERSION}")
+        ver_lbl.setStyleSheet("font-size:13px;")
+        l3.addWidget(ver_lbl)
+        self.auto_update = QCheckBox("Automatically check for updates on startup (newest stable releases only)")
+        self.auto_update.setChecked(bool(getattr(s, "auto_update", True)))
+        l3.addWidget(self.auto_update)
+        upd_note = QLabel(
+            "When enabled, Holly's Chess Analyzer checks GitHub for the newest stable release "
+            "(pre-releases and drafts are ignored) and offers a one-click update."
+        )
+        upd_note.setWordWrap(True)
+        upd_note.setStyleSheet("color:#aaa; font-size:11px;")
+        l3.addWidget(upd_note)
+        chk_row = QHBoxLayout()
+        self.btn_check_updates = QPushButton("Check for Updates Now")
+        self.btn_check_updates.clicked.connect(self._check_updates_now)
+        chk_row.addWidget(self.btn_check_updates)
+        chk_row.addStretch(1)
+        l3.addLayout(chk_row)
+        self.update_status_lbl = QLabel("")
+        self.update_status_lbl.setWordWrap(True)
+        self.update_status_lbl.setStyleSheet("color:#ccc; font-size:12px;")
+        l3.addWidget(self.update_status_lbl)
+        l3.addStretch(1)
+
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+    def _check_updates_now(self):
+        if self.main_win and hasattr(self.main_win, "check_updates"):
+            self.update_status_lbl.setText("Checking GitHub for the newest stable release…")
+            self.btn_check_updates.setEnabled(False)
+            self.main_win.check_updates(silent=False, status_callback=self._on_update_check_done)
+
+    def _on_update_check_done(self, msg: str):
+        self.btn_check_updates.setEnabled(True)
+        self.update_status_lbl.setText(msg)
 
     # ---- icons
     def refresh_icons(self):
@@ -778,10 +1143,13 @@ class SettingsDialog(QDialog):
         return {k: (r[0].text() or styles.DEFAULTS[k][1], r[2]) for k, r in self.style_rows.items()}
 
     def result_settings(self):
+        cur_name = self._player_name
+        if self.main_win and getattr(self.main_win, "settings", None):
+            cur_name = self.main_win.settings.player_name
         return A.Settings(
             self.scope.currentData(),
             self.side.currentData(),
-            self.name.text(),
+            cur_name,
             self.slider.value(),
             self.threads.value(),
             self.hash.value(),
@@ -790,6 +1158,7 @@ class SettingsDialog(QDialog):
             self.lenient.isChecked(),
             eval_formula=self.eval_formula.currentData(),
             annotation_system=self.annotation_system.currentData(),
+            auto_update=self.auto_update.isChecked(),
         )
 
 
@@ -808,8 +1177,8 @@ class PasteDialog(QDialog):
 
 class LibraryDialog(QDialog):
     COLS = [
-        "Game Name", "Saved", "White", "Black", "Result",
-        "Brilliant (!!)", "Your !!", "Opening",
+        "★", "Game Name", "Saved", "White", "Black", "Result",
+        "Brilliant (!!)", "Your !!", "Opp !!", "Opening",
         "White Acc", "Black Acc", "Est. Rating", "Moves",
     ]
     BRIL_COLOR = "#26c6da"
@@ -827,7 +1196,7 @@ class LibraryDialog(QDialog):
         self.main_win = parent
         self.selected_id = None
         self.setWindowTitle(f"{APP_TITLE} — Saved Games Library")
-        self.resize(1120, 620)
+        self.resize(1160, 640)
         lay = QVBoxLayout(self)
 
         top = QHBoxLayout()
@@ -836,15 +1205,24 @@ class LibraryDialog(QDialog):
         self.search.textChanged.connect(self.refresh)
         top.addWidget(QLabel("Search:"))
         top.addWidget(self.search, 2)
-        top.addSpacing(12)
-        top.addWidget(QLabel("My Username:"))
-        init_user = ""
-        if self.main_win and getattr(self.main_win, "settings", None):
-            init_user = self.main_win.settings.player_name or ""
-        self.user_edit = QLineEdit(init_user)
-        self.user_edit.setPlaceholderText("Enter your chess username to track both White & Black games…")
-        self.user_edit.textChanged.connect(self._on_username_changed)
-        top.addWidget(self.user_edit, 1)
+        top.addSpacing(10)
+
+        top.addWidget(QLabel("Favorites:"))
+        self.fav_filter = QComboBox()
+        self.fav_filter.addItem("All Games", False)
+        self.fav_filter.addItem("★ Favorites Only", True)
+        self.fav_filter.currentIndexChanged.connect(self.refresh)
+        top.addWidget(self.fav_filter)
+        top.addSpacing(10)
+
+        top.addWidget(QLabel("Brilliants:"))
+        self.bril_sort = QComboBox()
+        self.bril_sort.addItem("Default (Newest)", "recent")
+        self.bril_sort.addItem("Most Brilliants", "most_brilliant")
+        self.bril_sort.addItem("Least Brilliants", "least_brilliant")
+        self.bril_sort.addItem("Opponent Brilliants", "opponent_brilliant")
+        self.bril_sort.currentIndexChanged.connect(self.refresh)
+        top.addWidget(self.bril_sort)
         lay.addLayout(top)
 
         # ---- Brilliant Moves Breakdown Section ----
@@ -900,13 +1278,15 @@ class LibraryDialog(QDialog):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        hh.setSectionResizeMode(7, QHeaderView.Stretch)
-        self.table.cellDoubleClicked.connect(lambda _r, _c: self.open_selected())
+        hh.setSectionResizeMode(1, QHeaderView.Stretch)
+        hh.setSectionResizeMode(9, QHeaderView.Stretch)
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.cellDoubleClicked.connect(lambda _r, c: c != 0 and self.open_selected())
         lay.addWidget(self.table, 1)
 
         btns = QHBoxLayout()
         self.btn_open = QPushButton("Open")
+        self.btn_fav = QPushButton("★ Favorite")
         self.btn_rename = QPushButton("Rename…")
         self.btn_side = QPushButton("Switch My Side (W/B)")
         self.btn_del = QPushButton("Delete")
@@ -914,13 +1294,14 @@ class LibraryDialog(QDialog):
         self.btn_imp = QPushButton("Import PGN…")
         self.btn_close = QPushButton("Close")
         self.btn_open.clicked.connect(self.open_selected)
+        self.btn_fav.clicked.connect(self.toggle_favorite_selected)
         self.btn_rename.clicked.connect(self.rename_selected)
         self.btn_side.clicked.connect(self.toggle_side_selected)
         self.btn_del.clicked.connect(self.delete_selected)
         self.btn_exp.clicked.connect(self.export_selected)
         self.btn_imp.clicked.connect(self.import_pgn)
         self.btn_close.clicked.connect(self.reject)
-        for b in (self.btn_open, self.btn_rename, self.btn_side, self.btn_del, self.btn_exp, self.btn_imp):
+        for b in (self.btn_open, self.btn_fav, self.btn_rename, self.btn_side, self.btn_del, self.btn_exp, self.btn_imp):
             btns.addWidget(b)
         btns.addStretch(1)
         btns.addWidget(self.btn_close)
@@ -928,22 +1309,27 @@ class LibraryDialog(QDialog):
         QShortcut(QKeySequence(Qt.Key_F2), self, activated=self.rename_selected)
         self.refresh()
 
-    def _on_username_changed(self, text: str):
-        clean = text.strip()
+    def _current_username(self) -> str:
         if self.main_win and getattr(self.main_win, "settings", None):
-            self.main_win.settings.player_name = clean
-            if getattr(self.main_win, "qs", None):
-                self.main_win.qs.setValue("name", clean)
-        self.refresh()
+            return (self.main_win.settings.player_name or "").strip()
+        return ""
 
     def refresh(self):
-        uname = self.user_edit.text().strip() if hasattr(self, "user_edit") else ""
-        self.rows = self.lib.list(self.search.text(), player_name=uname)
+        uname = self._current_username()
+        fav_only = bool(self.fav_filter.currentData()) if hasattr(self, "fav_filter") else False
+        sort_mode = self.bril_sort.currentData() if hasattr(self, "bril_sort") else "recent"
+        self.rows = self.lib.list(
+            self.search.text(),
+            player_name=uname,
+            favorites_only=fav_only,
+            sort_by=sort_mode,
+        )
         self.table.setRowCount(len(self.rows))
         fmt_acc = lambda v: "–" if v is None else f"{v:.1f}%"
         bril_pm = icons.pixmap_for_key("!!", 18)
         total_bril_all = sum(r.get("brilliant_total", 0) for r in self.rows)
         yours_bril_all = sum(r.get("brilliant_yours", 0) for r in self.rows)
+        opp_bril_all = sum(r.get("brilliant_opponent", 0) for r in self.rows)
         cat_yours = {cat: 0 for cat in C.BRILLIANT_CATEGORIES}
         cat_total = {cat: 0 for cat in C.BRILLIANT_CATEGORIES}
         for r in self.rows:
@@ -953,9 +1339,10 @@ class LibraryDialog(QDialog):
                 cat_yours[cat] += int(by.get(cat, 0))
                 cat_total[cat] += int(bt.get(cat, 0))
 
-        user_tag = f"for <b>{uname}</b> (White &amp; Black)" if uname else "(set My Username above to auto-match your White &amp; Black games)"
+        user_tag = f"for <b>{uname}</b> (White &amp; Black)" if uname else "(set your name in Profile on top-right to auto-match)"
         self.summary_label.setText(
             f"<b>Your Brilliant Moves (!!): {yours_bril_all}</b> {user_tag} "
+            f"&nbsp;•&nbsp; <b>Opponent:</b> {opp_bril_all} "
             f"&nbsp;•&nbsp; <b>All Players:</b> {total_bril_all} across {len(self.rows)} game(s)"
         )
         for key, _title in self.BRIL_SPECS:
@@ -966,6 +1353,8 @@ class LibraryDialog(QDialog):
                 lbl.setText(f"{mine_n}" if mine_n == all_n else f"{mine_n}  (all: {all_n})")
 
         for r_idx, row in enumerate(self.rows):
+            is_fav = bool(row.get("favorite"))
+            fav_str = "★" if is_fav else "☆"
             opening = f"{row['eco']} {row['opening']}".strip() or "–"
             w_r = row["white_rating"]
             b_r = row["black_rating"]
@@ -974,11 +1363,14 @@ class LibraryDialog(QDialog):
             bb = int(row.get("brilliant_black") or 0)
             btot = int(row.get("brilliant_total") or 0)
             byours = int(row.get("brilliant_yours") or 0)
+            bopp = int(row.get("brilliant_opponent") or 0)
             uc = (row.get("user_color") or "white").title()
             matched_by_name = bool(row.get("matched_by_name"))
             bril_str = f"{btot} ({bw}W / {bb}B)" if btot > 0 else "0"
             yours_str = f"{byours} ({uc})"
+            opp_str = str(bopp)
             vals = [
+                fav_str,
                 row.get("title") or f"{row['white']} vs {row['black']}",
                 row["saved_at"] or "",
                 row["white"] or "?",
@@ -986,6 +1378,7 @@ class LibraryDialog(QDialog):
                 row["result"] or "*",
                 bril_str,
                 yours_str,
+                opp_str,
                 opening,
                 fmt_acc(row["white_acc"]),
                 fmt_acc(row["black_acc"]),
@@ -999,21 +1392,49 @@ class LibraryDialog(QDialog):
                 if bd_yours.get(k, 0) > 0
             ]
             bd_desc = (", ".join(bd_parts)) if bd_parts else "No brilliant moves"
-            match_note = f"matched username '{uname}'" if matched_by_name else "click 'Switch My Side (W/B)' or set My Username"
+            match_note = f"matched username '{uname}'" if matched_by_name else "click 'Switch My Side (W/B)' or set your name in Profile"
             for c_idx, val in enumerate(vals):
                 it = QTableWidgetItem(val)
-                if c_idx in (1, 4, 5, 6, 8, 9, 10, 11):
+                if c_idx in (0, 2, 5, 6, 7, 8, 10, 11, 12, 13):
                     it.setTextAlignment(Qt.AlignCenter)
-                if c_idx == 5 and btot > 0 and bril_pm is not None:
+                if c_idx == 0:
+                    it.setToolTip("Click to toggle Favorite")
+                    it.setForeground(QColor("#26c6da") if is_fav else QColor("#777777"))
+                    f = it.font(); f.setPointSize(12); it.setFont(f)
+                if c_idx == 6 and btot > 0 and bril_pm is not None:
                     it.setIcon(QIcon(bril_pm))
-                if c_idx == 6:
+                if c_idx == 7:
                     it.setToolTip(f"Tracking {uc} ({match_note}).\nBreakdown: {bd_desc}")
                     if byours > 0:
                         it.setForeground(QColor("#26c6da"))
                         f = it.font(); f.setBold(True); it.setFont(f)
+                if c_idx == 8 and bopp > 0:
+                    it.setForeground(QColor("#26c6da"))
                 self.table.setItem(r_idx, c_idx, it)
         if self.rows:
             self.table.selectRow(0)
+
+    def _on_cell_clicked(self, row_idx: int, col_idx: int):
+        if col_idx == 0 and 0 <= row_idx < len(self.rows):
+            gid = self.rows[row_idx]["id"]
+            self.lib.toggle_favorite(gid)
+            self.refresh()
+            for idx, r in enumerate(self.rows):
+                if r["id"] == gid:
+                    self.table.selectRow(idx)
+                    break
+
+    def toggle_favorite_selected(self):
+        row = self._cur_row()
+        if not row:
+            return
+        gid = row["id"]
+        self.lib.toggle_favorite(gid)
+        self.refresh()
+        for idx, r in enumerate(self.rows):
+            if r["id"] == gid:
+                self.table.selectRow(idx)
+                break
 
     def _cur_row(self):
         r = self.table.currentRow()
@@ -1107,7 +1528,7 @@ def parse_input(text):
 
 # ---------------------------------------------------------------- main window
 class MainWindow(QMainWindow):
-    COLS = ["#", "Move", "", "Eval", "Opening", ""]
+    COLS = ["#", "Move", "", "Eval", "Time", "Opening", ""]
 
     def __init__(self):
         super().__init__()
@@ -1121,13 +1542,14 @@ class MainWindow(QMainWindow):
             qs.value("side", "both"),
             qs.value("name", ""),
             int(qs.value("depth", 16)),
-            int(qs.value("threads", 2)),
+            int(qs.value("threads", 1)),
             int(qs.value("hash", 128)),
             qs.value("engine", ""),
             qs.value("preset", "custom"),
             qs.value("lenient", False, type=bool),
             eval_formula=qs.value("eval_formula", "improved"),
             annotation_system=qs.value("annotation_system", "modern"),
+            auto_update=qs.value("auto_update", True, type=bool),
         )
         styles.load(qs)
         self.sound = SoundPlayer()
@@ -1136,22 +1558,37 @@ class MainWindow(QMainWindow):
         self.book = None
         self.games, self.game, self.results = [], None, []
         self.jobs, self.job = [], None
+        self.basic = []
+        self.clock_data = A.extract_game_clocks(None)
         self.worker = None
         self.line_workers = []
+        self.update_worker = None
+        self.download_worker = None
+        self.cur = 0
+        self.pv_boards = None
 
         c = QWidget(); self.setCentralWidget(c)
         root = QHBoxLayout(c)
         left = QVBoxLayout()
+        left.setSpacing(5)
         self.opening_label = QLabel("Opening: –")
         self.opening_label.setStyleSheet("font-size:15px;font-weight:bold;")
         self.players = QLabel("")
         left.addWidget(self.players)
+
+        self.top_player_bar = PlayerBarWidget()
+        left.addWidget(self.top_player_bar)
+
         bh = QHBoxLayout()
         self.evalbar = EvalBar()
         self.evalbar.formula = self.settings.eval_formula
         self.board = BoardWidget()
         bh.addWidget(self.evalbar); bh.addWidget(self.board, 1)
         left.addLayout(bh, 1)
+
+        self.bottom_player_bar = PlayerBarWidget()
+        left.addWidget(self.bottom_player_bar)
+
         left.addWidget(self.opening_label)
         nav = QHBoxLayout()
         for t, fn in (("|◂", lambda: self.goto(0)), ("◂", lambda: self.goto(self.cur - 1)),
@@ -1176,7 +1613,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.Stretch)
-        for i, w in ((0, 36), (2, 44), (3, 60), (5, 56)):
+        for i, w in ((0, 36), (2, 40), (3, 56), (4, 54), (6, 54)):
             hh.setSectionResizeMode(i, QHeaderView.Fixed); self.table.setColumnWidth(i, w)
         self.table.cellClicked.connect(lambda r, _c: self.goto(r))
         right.addWidget(self.table, 3)
@@ -1195,7 +1632,11 @@ class MainWindow(QMainWindow):
         right.addWidget(self.status)
         root.addLayout(right, 2)
 
-        tb = QToolBar(); self.addToolBar(tb)
+        tb = QToolBar()
+        tb.setMovable(False)
+        tb.setFloatable(False)
+        tb.setContextMenuPolicy(Qt.PreventContextMenu)
+        self.addToolBar(tb)
         self.tb = tb
         self.save_act = None
         for t, fn in (("Open PGN…", self.open_file), ("Paste PGN/FEN…", self.paste),
@@ -1208,10 +1649,18 @@ class MainWindow(QMainWindow):
         self.game_combo = QComboBox(); self.game_combo.setVisible(False)
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         tb.addWidget(self.game_combo)
-        self.cur = 0
-        self.pv_boards = None
         tb.addAction("Win% Guide", self.show_win_guide)
         tb.addAction("Keys", self.show_keys)
+
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        spacer.setStyleSheet("background:transparent;")
+        tb.addWidget(spacer)
+
+        self.profile_btn = ProfileButtonWidget(self)
+        self.profile_btn.clicked.connect(self.open_profile)
+        tb.addWidget(self.profile_btn)
+
         self.table.currentCellChanged.connect(lambda r, c, pr, pc: r >= 0 and r != self.cur and self.goto(r))
         self.keymap = [
             (Qt.Key_Left, "Previous move", lambda: self.goto(self.cur - 1)),
@@ -1234,6 +1683,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow,QWidget{background:#2b2b2b;color:#ddd;} QTableWidget{background:#1f1f1f;gridline-color:#333;}"
                            "QPushButton{background:#444;border:1px solid #555;padding:3px 8px;} QHeaderView::section{background:#333;color:#ddd;}"
                            "QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{background:#1f1f1f;}")
+        self.refresh_profile_ui()
+        if self.settings.auto_update and "--selftest" not in sys.argv:
+            QTimer.singleShot(1400, lambda: self.check_updates(silent=True))
 
     # ------------------------------------------------------------ loading
     def ensure_book(self):
@@ -1352,10 +1804,12 @@ class MainWindow(QMainWindow):
         if color is not None:
             self.board.flipped = (color == chess.BLACK)
             self.board.update()
+        self.update_player_bars()
 
     def populate_basic(self):
         b = self.game.board()
         self.start_board = b.copy()
+        self.clock_data = A.extract_game_clocks(self.game)
         rows = []
         for i, m in enumerate(self.game.mainline_moves()):
             rows.append((i + 1, b.turn, b.san(m), m, b.fen()))
@@ -1514,12 +1968,12 @@ class MainWindow(QMainWindow):
         rows = self.basic
         self.table.setRowCount(len(rows) + 1)
         self.table.setItem(0, 1, QTableWidgetItem("Start position"))
-        for c in (0, 2, 3, 4):
+        for c in (0, 2, 3, 4, 5):
             self.table.setItem(0, c, QTableWidgetItem(""))
-        self.table.setCellWidget(0, 5, self.best_button(0))
+        self.table.setCellWidget(0, 6, self.best_button(0))
         for k in range(len(rows)):
             self.set_row(k)
-            self.table.setCellWidget(k + 1, 5, self.best_button(k + 1))
+            self.table.setCellWidget(k + 1, 6, self.best_button(k + 1))
 
     def alt_for(self, r):
         """Best alternative move (from the position before r) when r was an inaccuracy/mistake/blunder."""
@@ -1555,7 +2009,14 @@ class MainWindow(QMainWindow):
             it.setToolTip(tip)
         self.table.setItem(row, 2, it)
         self.table.setItem(row, 3, QTableWidgetItem(r.eval_after_text if r else ""))
-        self.table.setItem(row, 4, QTableWidgetItem((r.opening if r and r.book else "")))
+        plies = self.clock_data.get("plies", [])
+        mt = (r.move_time_text if r and r.move_time_text else "") or (
+            plies[k]["move_time_text"] if k < len(plies) else "")
+        tit = QTableWidgetItem(mt)
+        tit.setTextAlignment(Qt.AlignCenter)
+        tit.setForeground(QColor("#aaaaaa"))
+        self.table.setItem(row, 4, tit)
+        self.table.setItem(row, 5, QTableWidgetItem((r.opening if r and r.book else "")))
 
     # ------------------------------------------------------------ saving
     NAGS = {"!!": chess.pgn.NAG_BRILLIANT_MOVE, "!": chess.pgn.NAG_GOOD_MOVE, "?!": chess.pgn.NAG_DUBIOUS_MOVE,
@@ -1767,6 +2228,7 @@ class MainWindow(QMainWindow):
             if k - 1 < len(self.results) and self.results[k - 1].opening:
                 name = "%s  %s" % (self.results[k - 1].eco, self.results[k - 1].opening); break
         self.opening_label.setText("Opening: " + name)
+        self.update_player_bars()
 
     def end_badges(self, b, idx):
         """Checkmate / draw / resignation markers on the kings of the final position."""
@@ -1787,6 +2249,98 @@ class MainWindow(QMainWindow):
     def flip(self):
         self.board.flipped = not self.board.flipped
         self.board.update()
+        self.update_player_bars()
+
+    def update_player_bars(self):
+        """Fill top/bottom player bars (names, clocks, conditional profile picture)."""
+        h = self.game.headers if self.game else {}
+        positions = self.clock_data.get("positions") or [("--:--", "--:--")]
+        idx = max(0, min(self.cur, len(positions) - 1))
+        w_clk, b_clk = positions[idx]
+        top_color = chess.WHITE if self.board.flipped else chess.BLACK
+        fallback = "black" if self.board.flipped else "white"
+        for bar, color in ((self.top_player_bar, top_color), (self.bottom_player_bar, not top_color)):
+            nm = h.get("White" if color else "Black", "White" if color else "Black")
+            rt = h.get("WhiteElo" if color else "BlackElo", "")
+            rt = "" if rt in ("?", "") else rt
+            show = bool(self.game) and should_show_board_avatar(
+                self.settings.player_name, color, h, fallback)
+            bar.set_player(color, nm, rt, w_clk if color else b_clk, show_avatar=show)
+
+    def refresh_profile_ui(self):
+        self.profile_btn.refresh(self.settings.player_name)
+        self.update_player_bars()
+
+    def open_profile(self):
+        d = ProfileDialog(self.settings.player_name, self)
+        if d.exec():
+            old = self.settings.player_name
+            self.settings.player_name = d.result_name()
+            self.qs.setValue("name", self.settings.player_name)
+            icons._cache.clear()
+            if (old or "").strip().lower() != self.settings.player_name.lower() and self.game:
+                self.orient()
+                if self.settings.scope != "all":
+                    self.restart_all()
+            self.refresh_profile_ui()
+
+    # ------------------------------------------------------------ auto-update
+    def check_updates(self, silent=True, status_callback=None):
+        if self.update_worker and self.update_worker.isRunning():
+            return
+        w = UpdateCheckWorker(APP_VERSION)
+        self.update_worker = w
+
+        def done(info):
+            if info.get("update_available"):
+                msg = "Update available: %s (current %s)." % (info["latest_version"], APP_VERSION)
+                if status_callback:
+                    status_callback(msg)
+                self.prompt_update(info)
+            else:
+                msg = "You are up to date (%s)." % APP_VERSION
+                if status_callback:
+                    status_callback(msg)
+
+        def failed(m):
+            if status_callback:
+                status_callback("Update check failed: " + m)
+
+        w.finished_check.connect(done)
+        w.failed.connect(failed)
+        w.start()
+
+    def prompt_update(self, info):
+        frozen = getattr(sys, "frozen", False)
+        text = "Version %s is available (you have %s)." % (info["latest_version"], APP_VERSION)
+        if not (frozen and info.get("download_url") and sys.platform == "win32"):
+            QMessageBox.information(self, APP_TITLE, text + "\n\n" + info.get("html_url", ""))
+            return
+        if QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
+            return
+        import tempfile
+        dest = os.path.join(tempfile.gettempdir(), "hca_update_%s.exe" % info["latest_version"].lstrip("v"))
+        self.status.setText("Downloading update…")
+        self.progress.setVisible(True)
+        w = UpdateDownloadWorker(info["download_url"], dest)
+        self.download_worker = w
+        w.progress.connect(lambda a, b: (self.progress.setMaximum(max(1, b)), self.progress.setValue(a)))
+
+        def ok(path):
+            self.progress.setVisible(False)
+            if updater.apply_windows_exe_update(path):
+                self.close()
+                QApplication.quit()
+            else:
+                self.status.setText("Update downloaded but could not be applied: " + path)
+
+        def bad(m):
+            self.progress.setVisible(False)
+            self.status.setText("Update download failed: " + m)
+
+        w.finished_download.connect(ok)
+        w.failed.connect(bad)
+        w.start()
 
     def show_win_guide(self):
         msg = (
@@ -1872,7 +2426,7 @@ class MainWindow(QMainWindow):
             for k, v in (("scope", s.scope), ("side", s.side), ("name", s.player_name), ("depth", s.depth),
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
                          ("preset", s.preset), ("eval_formula", s.eval_formula),
-                         ("annotation_system", s.annotation_system)):
+                         ("annotation_system", s.annotation_system), ("auto_update", s.auto_update)):
                 self.qs.setValue(k, v)
             styles.set_all(d.result_styles())
             styles.save(self.qs)
