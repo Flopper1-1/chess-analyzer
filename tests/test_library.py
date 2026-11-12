@@ -482,15 +482,20 @@ def test_holiday_events_and_app_icons(tmp_path, monkeypatch):
     assert themes.active_holiday_event(datetime(2026, 11, 12)) is None
     assert themes.active_holiday_event(datetime(2026, 10, 15), disabled=True) is None
 
-    selectable_ids = [i["id"] for i in themes.list_selectable_app_icons()]
-    assert "fluent" in selectable_ids
+    selectable_ids = [i["id"] for i in themes.list_selectable_app_icons(now=datetime(2026, 11, 12))]
+    for expected_icon in ("fluent", "classic", "midnight", "gold"):
+        assert expected_icon in selectable_ids
     for hol in themes.HOLIDAY_IDS:
         assert hol not in selectable_ids
 
-    res_hol = themes.resolve_active_app_icon("fluent", False, datetime(2026, 10, 20))
-    assert res_hol["id"] == "halloween"
-    res_back = themes.resolve_active_app_icon("fluent", False, datetime(2026, 11, 1))
-    assert res_back["id"] == "fluent"
+    # During October, Halloween is added to the library, without forcing Fluent users onto it
+    oct_ids = [i["id"] for i in themes.list_selectable_app_icons(now=datetime(2026, 10, 20))]
+    assert "halloween" in oct_ids
+    assert themes.resolve_active_app_icon("fluent", False, datetime(2026, 10, 20))["id"] == "fluent"
+    assert themes.resolve_active_app_icon("halloween", False, datetime(2026, 10, 20))["id"] == "halloween"
+    # Once October ends (or events are disabled), Halloween reverts to Fluent
+    assert themes.resolve_active_app_icon("halloween", False, datetime(2026, 11, 1))["id"] == "fluent"
+    assert themes.resolve_active_app_icon("halloween", True, datetime(2026, 10, 20))["id"] == "fluent"
     assert not themes.delete_custom_app_icon("fluent")
 
 
@@ -519,11 +524,23 @@ def test_sound_board_background_and_piece_templates(tmp_path, monkeypatch):
     assert themes.delete_sound_template(custom_snd["id"])
 
     # Boards: exact names & holiday rules & saved game New Years colors persistence
-    b_names = [b["name"] for b in themes.list_selectable_board_templates()]
+    b_names = [b["name"] for b in themes.list_selectable_board_templates(now=datetime(2026, 11, 12))]
     for expected in ("Brown & Tan", "Black & White", "Red & White", "Blue & White"):
         assert expected in b_names
-    ny_board = themes.resolve_active_board_template("brown_tan", False, datetime(2026, 12, 31))
+    ny_ids = [b["id"] for b in themes.list_selectable_board_templates(now=datetime(2026, 12, 31))]
+    assert "new_year" in ny_ids
+    assert themes.resolve_active_board_template("brown_tan", False, datetime(2026, 12, 31))["id"] == "brown_tan"
+    ny_board = themes.resolve_active_board_template("new_year", False, datetime(2026, 12, 31))
     assert ny_board["id"] == "new_year" and ny_board.get("random_light")
+    assert themes.resolve_active_board_template("new_year", False, datetime(2026, 11, 12))["id"] == "brown_tan"
+
+    # Theme palette & stylesheet (Light + High Contrast)
+    light_bg = themes.get_background_template("light")
+    hc_bg = themes.get_background_template("high_contrast")
+    assert themes.get_theme_palette(light_bg)["bar_bg"] == "#e5e7eb"
+    assert themes.get_theme_palette(light_bg)["graph_bg"] == "#e5e7eb"
+    hc_qss = themes.build_app_stylesheet(hc_bg)
+    assert "QDialog" in hc_qss and "#000000" in hc_qss and "#ffff00" in hc_qss
 
     lib = LIB.GameLibrary(str(tmp_path / "ny.db"))
     g, res = _sample_game_and_results()

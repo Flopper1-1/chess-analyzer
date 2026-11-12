@@ -296,8 +296,11 @@ def _bundled_app_icon_paths() -> Dict[str, str]:
     return found
 
 
-def list_selectable_app_icons() -> List[dict]:
-    """Return all user-selectable app icons (excludes limited-time holiday icons)."""
+def list_selectable_app_icons(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    """Return user-selectable app icons, including the active holiday icon only during its event window."""
     out: List[dict] = []
     bundled = _bundled_app_icon_paths()
     # Put Fluent first as the default
@@ -309,7 +312,18 @@ def list_selectable_app_icons() -> List[dict]:
                 "name": capitalize_asset_name(k),
                 "path": bundled[k],
                 "locked": True,
+                "holiday": False,
             })
+
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    if holiday and holiday in bundled:
+        out.append({
+            "id": holiday,
+            "name": capitalize_asset_name(holiday),
+            "path": bundled[holiday],
+            "locked": True,
+            "holiday": True,
+        })
 
     cdir = custom_app_icons_dir()
     for fname in sorted(os.listdir(cdir)):
@@ -320,6 +334,7 @@ def list_selectable_app_icons() -> List[dict]:
                 "name": capitalize_asset_name(fname),
                 "path": os.path.join(cdir, fname),
                 "locked": False,
+                "holiday": False,
             })
     return out
 
@@ -366,20 +381,11 @@ def resolve_active_app_icon(
     disable_holidays: bool = False,
     now: Optional[datetime] = None,
 ) -> dict:
-    """Resolve the active app icon, applying limited-time holiday overrides when active."""
-    holiday = active_holiday_event(now=now, disabled=disable_holidays)
-    bundled = _bundled_app_icon_paths()
-    if holiday and holiday in bundled:
-        return {
-            "id": holiday,
-            "name": capitalize_asset_name(holiday),
-            "path": bundled[holiday],
-            "locked": True,
-            "holiday": True,
-        }
-    for item in list_selectable_app_icons():
+    """Resolve the active app icon; holiday icons are only selectable during their active window."""
+    for item in list_selectable_app_icons(disable_holidays=disable_holidays, now=now):
         if item["id"] == selected_id:
-            return {**item, "holiday": False}
+            return dict(item)
+    bundled = _bundled_app_icon_paths()
     fluent_path = bundled.get("fluent") or resource_path("icon.ico")
     return {"id": "fluent", "name": "Fluent", "path": fluent_path, "locked": True, "holiday": False}
 
@@ -557,8 +563,17 @@ def board_templates_dir() -> str:
     return d
 
 
-def list_selectable_board_templates() -> List[dict]:
+def list_selectable_board_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    """Return user-selectable board templates, including the active holiday board only during its event window."""
     out = [dict(b) for b in BUILTIN_BOARDS]
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    if holiday and holiday in HOLIDAY_BOARDS:
+        hb = dict(HOLIDAY_BOARDS[holiday])
+        hb["holiday"] = True
+        out.append(hb)
     root = board_templates_dir()
     for folder in sorted(os.listdir(root)):
         manifest = os.path.join(root, folder, "template.json")
@@ -579,10 +594,8 @@ def resolve_active_board_template(
     disable_holidays: bool = False,
     now: Optional[datetime] = None,
 ) -> dict:
-    holiday = active_holiday_event(now=now, disabled=disable_holidays)
-    if holiday and holiday in HOLIDAY_BOARDS:
-        return dict(HOLIDAY_BOARDS[holiday])
-    for b in list_selectable_board_templates():
+    """Resolve the active board template; holiday boards are only selectable during their active window."""
+    for b in list_selectable_board_templates(disable_holidays=disable_holidays, now=now):
         if b["id"] == selected_id:
             return b
     return dict(BUILTIN_BOARDS[0])
@@ -824,3 +837,205 @@ def delete_piece_template(template_id: str) -> bool:
         shutil.rmtree(pdir, ignore_errors=True)
         return True
     return False
+
+
+# ---------------------------------------------------------------- Theme Palette & Stylesheet
+def get_theme_palette(bg: dict) -> dict:
+    """Return UI palette tokens derived from a background template."""
+    bg_id = bg.get("id", "dark")
+    if bg_id == "light":
+        return {
+            "bg": "#f3f4f6",
+            "panel": "#e5e7eb",
+            "surface": "#ffffff",
+            "surface_alt": "#f9fafb",
+            "fg": "#111827",
+            "muted": "#4b5563",
+            "border": "#cbd5e1",
+            "accent": "#2563eb",
+            "accent_fg": "#ffffff",
+            "btn_bg": "#ffffff",
+            "btn_hover": "#e5e7eb",
+            "graph_bg": "#e5e7eb",
+            "graph_fill": "#ffffff",
+            "graph_mid": "#9ca3af",
+            "bar_bg": "#e5e7eb",
+            "bar_border": "#cbd5e1",
+            "bar_fg": "#111827",
+        }
+    if bg_id == "high_contrast":
+        return {
+            "bg": "#000000",
+            "panel": "#000000",
+            "surface": "#0a0a0a",
+            "surface_alt": "#141414",
+            "fg": "#ffffff",
+            "muted": "#ffff00",
+            "border": "#ffffff",
+            "accent": "#ffff00",
+            "accent_fg": "#000000",
+            "btn_bg": "#000000",
+            "btn_hover": "#222222",
+            "graph_bg": "#000000",
+            "graph_fill": "#ffffff",
+            "graph_mid": "#ffff00",
+            "bar_bg": "#000000",
+            "bar_border": "#ffffff",
+            "bar_fg": "#ffffff",
+        }
+    if bg_id == "aqua_blue":
+        return {
+            "bg": "#0b2230",
+            "panel": "#102d3e",
+            "surface": "#123447",
+            "surface_alt": "#174057",
+            "fg": "#e6f7ff",
+            "muted": "#8be9fd",
+            "border": "#26c6da",
+            "accent": "#26c6da",
+            "accent_fg": "#041620",
+            "btn_bg": "#153d52",
+            "btn_hover": "#1d526e",
+            "graph_bg": "#102d3e",
+            "graph_fill": "#d8f3f8",
+            "graph_mid": "#26c6da",
+            "bar_bg": "#102d3e",
+            "bar_border": "#26c6da",
+            "bar_fg": "#e6f7ff",
+        }
+    return {
+        "bg": "#1e1e1e",
+        "panel": "#252526",
+        "surface": "#252526",
+        "surface_alt": "#2d2d30",
+        "fg": "#e6e6e6",
+        "muted": "#aaaaaa",
+        "border": "#3f3f46",
+        "accent": "#2b6cb0",
+        "accent_fg": "#ffffff",
+        "btn_bg": "#2d2d30",
+        "btn_hover": "#3e3e42",
+        "graph_bg": "#262626",
+        "graph_fill": "#d9d9d9",
+        "graph_mid": "#777777",
+        "bar_bg": "#232323",
+        "bar_border": "#3a3a3a",
+        "bar_fg": "#e6e6e6",
+    }
+
+
+def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
+    """Build a complete Qt stylesheet covering MainWindow, Dialogs, Tabs, and Inputs."""
+    p = get_theme_palette(bg)
+    main_bg = "transparent" if is_custom_image else p["bg"]
+    border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
+    return f"""
+        QMainWindow {{
+            background-color: {main_bg};
+            color: {p['fg']};
+        }}
+        QDialog {{
+            background-color: {p['bg']};
+            color: {p['fg']};
+        }}
+        QWidget {{
+            color: {p['fg']};
+        }}
+        QToolBar {{
+            background-color: {p['panel']};
+            border-bottom: {border_w} solid {p['border']};
+            spacing: 4px;
+            padding: 2px 4px;
+        }}
+        QToolButton, QPushButton {{
+            background-color: {p['btn_bg']};
+            color: {p['fg']};
+            border: {border_w} solid {p['border']};
+            border-radius: 4px;
+            padding: 4px 10px;
+        }}
+        QToolButton:hover, QPushButton:hover {{
+            background-color: {p['btn_hover']};
+        }}
+        QToolButton:pressed, QPushButton:pressed {{
+            background-color: {p['accent']};
+            color: {p['accent_fg']};
+        }}
+        QTabWidget::pane {{
+            background-color: {p['surface']};
+            border: {border_w} solid {p['border']};
+            border-radius: 4px;
+            padding: 4px;
+        }}
+        QTabBar::tab {{
+            background-color: {p['panel']};
+            color: {p['fg']};
+            border: {border_w} solid {p['border']};
+            border-bottom: none;
+            padding: 6px 12px;
+            margin-right: 2px;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+        }}
+        QTabBar::tab:selected {{
+            background-color: {p['accent']};
+            color: {p['accent_fg']};
+            font-weight: bold;
+        }}
+        QGroupBox {{
+            border: {border_w} solid {p['border']};
+            border-radius: 4px;
+            margin-top: 8px;
+            padding-top: 8px;
+            color: {p['fg']};
+            font-weight: bold;
+        }}
+        QGroupBox::title {{
+            subcontrol-origin: margin;
+            left: 8px;
+            padding: 0 4px;
+        }}
+        QLabel {{
+            color: {p['fg']};
+            background: transparent;
+        }}
+        QCheckBox, QRadioButton {{
+            color: {p['fg']};
+            background: transparent;
+            spacing: 6px;
+        }}
+        QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
+            background-color: {p['surface']};
+            color: {p['fg']};
+            border: {border_w} solid {p['border']};
+            border-radius: 4px;
+            padding: 4px 6px;
+        }}
+        QComboBox QAbstractItemView {{
+            background-color: {p['surface']};
+            color: {p['fg']};
+            selection-background-color: {p['accent']};
+            selection-color: {p['accent_fg']};
+        }}
+        QTableWidget, QListWidget, QTreeWidget {{
+            background-color: {p['surface']};
+            color: {p['fg']};
+            border: {border_w} solid {p['border']};
+            gridline-color: {p['border']};
+            alternate-background-color: {p['surface_alt']};
+        }}
+        QListWidget::item:selected, QTableWidget::item:selected {{
+            background-color: {p['accent']};
+            color: {p['accent_fg']};
+        }}
+        QHeaderView::section {{
+            background-color: {p['panel']};
+            color: {p['fg']};
+            border: {border_w} solid {p['border']};
+            padding: 4px 6px;
+        }}
+        QScrollArea {{
+            background-color: {p['surface']};
+            border: {border_w} solid {p['border']};
+        }}
+    """
