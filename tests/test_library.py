@@ -458,8 +458,11 @@ def test_profile_rules_and_updater():
     import updater
     assert updater.is_newer_version("v1.10.0", "v1.9.0")
     assert not updater.is_newer_version("v1.9.0", "v1.9.0")
-    rels = [{"tag_name": "v2.0.0", "prerelease": True}, {"tag_name": "v1.9.5", "prerelease": False}]
+    assert updater.is_prerelease_version("v1.10.0-beta.1")
+    assert not updater.is_prerelease_version("v1.9.1")
+    rels = [{"tag_name": "v2.0.0-beta.1", "prerelease": True}, {"tag_name": "v1.9.5", "prerelease": False}]
     assert updater.select_latest_stable_release(rels)["tag_name"] == "v1.9.5"
+    assert updater.select_latest_prerelease(rels)["tag_name"] == "v2.0.0-beta.1"
     import main as M
     assert M.elide_profile_name("A" * 40).endswith("...")
     assert M.elide_profile_name("Holly") == "Holly"
@@ -536,7 +539,28 @@ def test_sound_board_background_and_piece_templates(tmp_path, monkeypatch):
     assert ny_board["id"] == "new_year" and ny_board.get("random_light")
     assert themes.resolve_active_board_template("new_year", False, datetime(2026, 11, 12))["id"] == "brown_tan"
 
-    # Theme palette & stylesheet (Light + High Contrast)
+    # Event auto-select on start & auto-restore on end
+    import analysis as A
+    s = A.Settings(app_icon="aero", board_template="blue_white")
+    assert themes.sync_holiday_event_state(s, now=datetime(2026, 10, 15)) is True
+    assert s.app_icon == "halloween" and s.board_template == "halloween"
+    assert s.pre_event_app_icon == "aero" and s.pre_event_board_template == "blue_white"
+    # Second call during same event doesn't overwrite user changes
+    s.app_icon = "metro"
+    assert themes.sync_holiday_event_state(s, now=datetime(2026, 10, 20)) is False
+    assert s.app_icon == "metro"
+    # When event ends, automatically goes back to previously selected templates
+    assert themes.sync_holiday_event_state(s, now=datetime(2026, 11, 1)) is True
+    assert s.app_icon == "aero" and s.board_template == "blue_white"
+
+    # Christmas board is Green & Snow White (#ffffff)
+    xmas = themes.HOLIDAY_BOARDS["christmas"]
+    assert xmas["light_hex"].lower() == "#ffffff"
+    assert xmas["dark_hex"].lower() == "#1b7a3d"
+
+    # ICO generation from PNG
+    ico_bytes = themes.image_to_ico_bytes(themes.resolve_active_app_icon("fluent")["path"])
+    assert len(ico_bytes) > 100 and ico_bytes[:4] == b"\x00\x00\x01\x00"
     light_bg = themes.get_background_template("light")
     hc_bg = themes.get_background_template("high_contrast")
     assert themes.get_theme_palette(light_bg)["bar_bg"] == "#e5e7eb"

@@ -771,6 +771,22 @@ class UpdateDownloadWorker(QThread):
             self.failed.emit(str(e))
 
 
+class ChannelCheckWorker(QThread):
+    finished_channels = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, current_version: str = APP_VERSION):
+        super().__init__()
+        self.current_version = current_version
+
+    def run(self):
+        try:
+            info = updater.check_release_channels(self.current_version)
+            self.finished_channels.emit(info)
+        except Exception as e:
+            self.failed.emit(str(e))
+
+
 class PlayerBarWidget(QFrame):
     """Player bar displayed on a player's side of the board (top or bottom).
 
@@ -1394,7 +1410,12 @@ class ProfileDialog(QDialog):
 
     def _pick_board_color(self, is_light: bool):
         ed = self.board_light_hex if is_light else self.board_dark_hex
-        c = QColorDialog.getColor(QColor(ed.text()), self, "Select Tile Color")
+        c = QColorDialog.getColor(
+            QColor(ed.text()),
+            self,
+            "Select Tile Color",
+            options=QColorDialog.DontUseNativeDialog,
+        )
         if c.isValid():
             ed.setText(c.name())
 
@@ -1731,7 +1752,12 @@ class ProfileDialog(QDialog):
 
     def pick_color(self, key):
         row = self.style_rows[key]
-        c = QColorDialog.getColor(QColor(row[2]), self, "Colour")
+        c = QColorDialog.getColor(
+            QColor(row[2]),
+            self,
+            "Colour",
+            options=QColorDialog.DontUseNativeDialog,
+        )
         if c.isValid():
             row[2] = c.name()
             self._paint_btn(row[1], row[2])
@@ -1900,9 +1926,20 @@ class SettingsDialog(QDialog):
         self.btn_check_updates = QPushButton("Check for Updates Now")
         self.btn_check_updates.clicked.connect(self._check_updates_now)
         chk_row.addWidget(self.btn_check_updates)
+
+        self._channel_target = None
+        self._is_prerelease = updater.is_prerelease_version(APP_VERSION)
+        btn_txt = (
+            "Go Back to Latest Stable Version"
+            if self._is_prerelease else "Switch to Latest Pre-release"
+        )
+        self.btn_switch_channel = QPushButton(btn_txt)
+        self.btn_switch_channel.setEnabled(False)
+        self.btn_switch_channel.clicked.connect(self._switch_channel)
+        chk_row.addWidget(self.btn_switch_channel)
         chk_row.addStretch(1)
         l3.addLayout(chk_row)
-        self.update_status_lbl = QLabel("")
+        self.update_status_lbl = QLabel("Checking available release channels…")
         self.update_status_lbl.setWordWrap(True)
         self.update_status_lbl.setStyleSheet("font-size:12px;")
         l3.addWidget(self.update_status_lbl)
@@ -1911,6 +1948,38 @@ class SettingsDialog(QDialog):
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         lay.addWidget(bb)
+
+        if self.main_win and hasattr(self.main_win, "check_channels") and "--selftest" not in sys.argv:
+            self.main_win.check_channels(self._on_channels_loaded)
+
+    def _on_channels_loaded(self, data: dict, err: str = ""):
+        if err:
+            self.update_status_lbl.setText("Could not fetch release channels: " + err)
+            return
+        if self._is_prerelease:
+            target = data.get("stable")
+            if target and target.get("latest_version"):
+                self._channel_target = target
+                self.btn_switch_channel.setText(f"Go Back to Latest Stable ({target['latest_version']})")
+                self.btn_switch_channel.setEnabled(True)
+                self.update_status_lbl.setText(f"Latest stable release: {target['latest_version']}")
+            else:
+                self.btn_switch_channel.setEnabled(False)
+                self.update_status_lbl.setText("No stable release found on GitHub.")
+        else:
+            target = data.get("prerelease")
+            if target and target.get("latest_version"):
+                self._channel_target = target
+                self.btn_switch_channel.setText(f"Switch to Latest Pre-release ({target['latest_version']})")
+                self.btn_switch_channel.setEnabled(True)
+                self.update_status_lbl.setText(f"Latest pre-release available: {target['latest_version']}")
+            else:
+                self.btn_switch_channel.setEnabled(False)
+                self.update_status_lbl.setText("No pre-release currently available on GitHub.")
+
+    def _switch_channel(self):
+        if self._channel_target and self.main_win and hasattr(self.main_win, "install_release"):
+            self.main_win.install_release(self._channel_target, confirm=True)
 
     def _check_updates_now(self):
         if self.main_win and hasattr(self.main_win, "check_updates"):
@@ -1971,6 +2040,9 @@ class SettingsDialog(QDialog):
             background_template=getattr(cur_s, "background_template", "dark"),
             piece_template=getattr(cur_s, "piece_template", "default"),
             disable_holiday_events=self.disable_holidays.isChecked(),
+            last_holiday_event=getattr(cur_s, "last_holiday_event", ""),
+            pre_event_app_icon=getattr(cur_s, "pre_event_app_icon", "fluent"),
+            pre_event_board_template=getattr(cur_s, "pre_event_board_template", "brown_tan"),
         )
 
 
@@ -2344,6 +2416,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+        winutil.cleanup_old_exe_files()
         self.setWindowTitle(APP_TITLE)
         self.resize(1180, 760)
         self.setAcceptDrops(True)
@@ -2368,7 +2441,12 @@ class MainWindow(QMainWindow):
             background_template=qs.value("background_template", "dark"),
             piece_template=qs.value("piece_template", "default"),
             disable_holiday_events=qs.value("disable_holiday_events", False, type=bool),
+            last_holiday_event=qs.value("last_holiday_event", ""),
+            pre_event_app_icon=qs.value("pre_event_app_icon", "fluent"),
+            pre_event_board_template=qs.value("pre_event_board_template", "brown_tan"),
         )
+        self._last_exe_icon_id = None
+        self.channel_worker = None
         self._bg_pixmap = None
         styles.load(qs)
         self.sound = SoundPlayer()
@@ -3117,6 +3195,12 @@ class MainWindow(QMainWindow):
 
     def apply_customizations(self):
         """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
+        if themes.sync_holiday_event_state(self.settings):
+            for k in (
+                "app_icon", "board_template", "last_holiday_event",
+                "pre_event_app_icon", "pre_event_board_template",
+            ):
+                self.qs.setValue(k, getattr(self.settings, k))
         dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
         # 1. App Icon
         icon_info = themes.resolve_active_app_icon(
@@ -3130,6 +3214,11 @@ class MainWindow(QMainWindow):
             app_inst = QApplication.instance()
             if app_inst is not None:
                 app_inst.setWindowIcon(app_ic)
+        if getattr(sys, "frozen", False) and icon_info.get("id") != self._last_exe_icon_id:
+            self._last_exe_icon_id = icon_info.get("id")
+            ico_bytes = themes.image_to_ico_bytes(icon_info.get("path", ""))
+            if ico_bytes:
+                winutil.apply_icon_to_running_exe(ico_bytes)
 
         # 2. Sound Template
         self.sound.set_template(getattr(self.settings, "sound_template", "original"))
@@ -3231,13 +3320,25 @@ class MainWindow(QMainWindow):
         w.failed.connect(failed)
         w.start()
 
+    def check_channels(self, callback):
+        if self.channel_worker and self.channel_worker.isRunning():
+            return
+        w = ChannelCheckWorker(APP_VERSION)
+        self.channel_worker = w
+        w.finished_channels.connect(lambda data: callback(data, ""))
+        w.failed.connect(lambda err: callback({}, err))
+        w.start()
+
     def prompt_update(self, info):
+        self.install_release(info, confirm=True)
+
+    def install_release(self, info, confirm: bool = True):
         frozen = getattr(sys, "frozen", False)
         text = "Version %s is available (you have %s)." % (info["latest_version"], APP_VERSION)
         if not (frozen and info.get("download_url") and sys.platform == "win32"):
             QMessageBox.information(self, APP_TITLE, text + "\n\n" + info.get("html_url", ""))
             return
-        if QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
+        if confirm and QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
             return
         import tempfile
         dest = os.path.join(tempfile.gettempdir(), "hca_update_%s.exe" % info["latest_version"].lstrip("v"))

@@ -7,9 +7,10 @@ import os
 import random
 import re
 import shutil
+import struct
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
 
 from openings import resource_path
@@ -108,9 +109,9 @@ HOLIDAY_BOARDS = {
     },
     "christmas": {
         "id": "christmas",
-        "name": "Christmas (Red & Green)",
-        "light_hex": "#3a8f4d",
-        "dark_hex": "#b83232",
+        "name": "Christmas (Green & White)",
+        "light_hex": "#ffffff",
+        "dark_hex": "#1b7a3d",
         "light_img": "",
         "dark_img": "",
         "locked": True,
@@ -1039,3 +1040,70 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             border: {border_w} solid {p['border']};
         }}
     """
+
+
+def image_to_ico_bytes(path: str) -> bytes:
+    """Convert an image file into a multi-size PNG-in-ICO byte stream for Windows PE icon updates."""
+    if not path or not os.path.exists(path):
+        return b""
+    img = QImage(path)
+    if img.isNull():
+        return b""
+    sizes = (16, 24, 32, 48, 64, 128, 256)
+    png_blobs = []
+    for sz in sizes:
+        sq = crop_square_image(img, sz).convertToFormat(QImage.Format_RGBA8888)
+        ba = QByteArray()
+        buf = QBuffer(ba)
+        buf.open(QIODevice.WriteOnly)
+        ok = sq.save(buf, "PNG")
+        buf.close()
+        if ok and ba.size() > 0:
+            png_blobs.append((sz, bytes(ba)))
+    if not png_blobs:
+        return b""
+    count = len(png_blobs)
+    header = bytearray(struct.pack("<HHH", 0, 1, count))
+    offset = 6 + 16 * count
+    payloads = bytearray()
+    for sz, blob in png_blobs:
+        dim = 0 if sz >= 256 else sz
+        header.extend(struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(blob), offset))
+        offset += len(blob)
+        payloads.extend(blob)
+    return bytes(header) + bytes(payloads)
+
+
+def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
+    """Auto-select event templates when a holiday starts and restore prior templates when it ends."""
+    disabled = bool(getattr(settings, "disable_holiday_events", False))
+    cur = active_holiday_event(now=now, disabled=disabled)
+    last = getattr(settings, "last_holiday_event", "") or ""
+    changed = False
+
+    if cur:
+        if last != cur:
+            cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
+            cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
+            if cur_icon not in HOLIDAY_IDS:
+                settings.pre_event_app_icon = cur_icon
+            if cur_board not in HOLIDAY_IDS:
+                settings.pre_event_board_template = cur_board
+            settings.app_icon = cur
+            if cur in HOLIDAY_BOARDS:
+                settings.board_template = cur
+            settings.last_holiday_event = cur
+            changed = True
+    else:
+        cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
+        cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
+        if last or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS:
+            pre_icon = getattr(settings, "pre_event_app_icon", "fluent") or "fluent"
+            pre_board = getattr(settings, "pre_event_board_template", "brown_tan") or "brown_tan"
+            if cur_icon in HOLIDAY_IDS or last:
+                settings.app_icon = pre_icon if pre_icon not in HOLIDAY_IDS else "fluent"
+            if cur_board in HOLIDAY_IDS or last:
+                settings.board_template = pre_board if pre_board not in HOLIDAY_IDS else "brown_tan"
+            settings.last_holiday_event = ""
+            changed = True
+    return changed

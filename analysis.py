@@ -227,6 +227,9 @@ class Settings:
     background_template: str = "dark"
     piece_template: str = "default"
     disable_holiday_events: bool = False
+    last_holiday_event: str = ""
+    pre_event_app_icon: str = "fluent"
+    pre_event_board_template: str = "brown_tan"
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""

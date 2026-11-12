@@ -34,6 +34,11 @@ def is_newer_version(remote_tag: str, local_tag: str = APP_VERSION) -> bool:
     return tuple(r) > tuple(l)
 
 
+def is_prerelease_version(tag: str = APP_VERSION) -> bool:
+    """Return True if a version tag denotes a pre-release (e.g. 'v1.10.0-beta.1')."""
+    return "-" in (tag or "").strip()
+
+
 def select_latest_stable_release(data) -> Optional[dict]:
     """Select the newest non-prerelease, non-draft release from GitHub API data."""
     if isinstance(data, dict):
@@ -53,6 +58,27 @@ def select_latest_stable_release(data) -> Optional[dict]:
         return None
     stable.sort(key=lambda r: parse_version(r.get("tag_name", "")), reverse=True)
     return stable[0]
+
+
+def select_latest_prerelease(data) -> Optional[dict]:
+    """Select the newest non-draft pre-release from GitHub API data."""
+    if isinstance(data, dict):
+        candidates = [data]
+    elif isinstance(data, list):
+        candidates = [r for r in data if isinstance(r, dict)]
+    else:
+        return None
+
+    pres = [
+        r for r in candidates
+        if bool(r.get("prerelease", False))
+        and not bool(r.get("draft", False))
+        and (r.get("tag_name") or "").strip()
+    ]
+    if not pres:
+        return None
+    pres.sort(key=lambda r: parse_version(r.get("tag_name", "")), reverse=True)
+    return pres[0]
 
 
 def extract_release_info(release: dict, current_version: str = APP_VERSION) -> dict:
@@ -124,6 +150,19 @@ def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) 
             "prerelease": False,
         }
     return extract_release_info(release, current_version=current_version)
+
+
+def check_release_channels(current_version: str = APP_VERSION, timeout: float = 8.0) -> dict:
+    """Return the newest stable release and newest pre-release (if any) from GitHub."""
+    all_data = _fetch_json(RELEASES_LIST_URL, timeout=timeout)
+    stable_rel = select_latest_stable_release(all_data)
+    pre_rel = select_latest_prerelease(all_data)
+    return {
+        "current_version": current_version,
+        "current_is_prerelease": is_prerelease_version(current_version),
+        "stable": extract_release_info(stable_rel, current_version=current_version) if stable_rel else None,
+        "prerelease": extract_release_info(pre_rel, current_version=current_version) if pre_rel else None,
+    }
 
 
 def download_update(
