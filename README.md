@@ -117,7 +117,7 @@ python main.py
 - [ ] **Custom chess bots with live annotation** — Practice against configurable bot personalities and ELO tiers with live eval feedback and move analysis.
 - [ ] **Move feedback** — Natural language explanations detailing why a move is a blunder, mistake, or best move (e.g. tactics, pins, forks, and hanging pieces).
 - [x] **Advanced brilliant tracking** — Detailed breakdowns of brilliant (`!!`) moves, categorizing specific archetypes (Queen, Rook, Bishop, Knight sacrifices, and Underpromotions).
-- [ ] **Fix brilliant tracking and best move route** — Improve multi-ply depth validation for brilliant move detection and ensure optimal continuity along the best move path.
+- [x] **Fix brilliant tracking and best move route** — Improve multi-ply depth validation for brilliant move detection and ensure optimal continuity along the best move path.
 
 ---
 
