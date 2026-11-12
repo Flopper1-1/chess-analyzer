@@ -57,11 +57,39 @@ def notify_shell_icon_change():
         pass
 
 
+def _read_pe_overlay(exe_path: str) -> bytes:
+    """Return any trailing overlay bytes (e.g. PyInstaller PKG archive) after the last PE section."""
+    with open(exe_path, "rb") as f:
+        data = f.read()
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return b""
+    e_lfanew = struct.unpack_from("<I", data, 0x3C)[0]
+    if e_lfanew + 24 > len(data) or data[e_lfanew:e_lfanew + 4] != b"PE\x00\x00":
+        return b""
+    num_sections = struct.unpack_from("<H", data, e_lfanew + 6)[0]
+    opt_hdr_size = struct.unpack_from("<H", data, e_lfanew + 20)[0]
+    sec_table = e_lfanew + 24 + opt_hdr_size
+    if sec_table + num_sections * 40 > len(data):
+        return b""
+    pe_end = 0
+    for i in range(num_sections):
+        sec_off = sec_table + i * 40
+        size_raw, ptr_raw = struct.unpack_from("<II", data, sec_off + 16)
+        if size_raw > 0 and ptr_raw + size_raw > pe_end:
+            pe_end = ptr_raw + size_raw
+    if pe_end <= 0 or pe_end >= len(data):
+        return b""
+    return data[pe_end:]
+
+
 def update_exe_icon(exe_path: str, ico_bytes: bytes) -> bool:
-    """Replace the primary RT_GROUP_ICON (id=1) and RT_ICON resources in a Windows PE executable."""
+    """Replace the primary RT_GROUP_ICON (id=1) and RT_ICON resources in a Windows PE executable,
+    preserving any PyInstaller PKG overlay appended after the PE sections."""
     if _k32 is None or not exe_path or not os.path.isfile(exe_path) or len(ico_bytes) < 22:
         return False
     try:
+        overlay = _read_pe_overlay(exe_path)
+
         reserved, img_type, count = struct.unpack_from("<HHH", ico_bytes, 0)
         if reserved != 0 or img_type != 1 or count <= 0:
             return False
@@ -107,6 +135,9 @@ def update_exe_icon(exe_path: str, ico_bytes: bytes) -> bool:
                 ok = False
         if not _k32.EndUpdateResourceW(h_upd, not ok):
             return False
+        if ok and overlay:
+            with open(exe_path, "ab") as f:
+                f.write(overlay)
         return ok
     except Exception:
         return False
@@ -124,10 +155,13 @@ def apply_icon_to_running_exe(ico_bytes: bytes, target_exe: str = None) -> str:
         return "failed"
 
     exe_dir = os.path.dirname(exe_path)
+    orig_size = os.path.getsize(exe_path)
     staged = os.path.join(tempfile.gettempdir(), f"hca_icon_{os.getpid()}.exe")
     try:
         shutil.copyfile(exe_path, staged)
         if not update_exe_icon(staged, ico_bytes):
+            return "failed"
+        if os.path.getsize(staged) < int(orig_size * 0.9):
             return "failed"
     except Exception:
         return "failed"
@@ -135,6 +169,7 @@ def apply_icon_to_running_exe(ico_bytes: bytes, target_exe: str = None) -> str:
     # Try immediate rename-and-swap (Windows allows renaming a running .exe in the same directory)
     new_in_dir = os.path.join(exe_dir, f".hca_new_{os.getpid()}.exe")
     old_in_dir = exe_path + ".old"
+    moved_orig = False
     try:
         if os.path.exists(old_in_dir):
             try:
@@ -143,6 +178,7 @@ def apply_icon_to_running_exe(ico_bytes: bytes, target_exe: str = None) -> str:
                 old_in_dir = os.path.join(exe_dir, f".hca_old_{os.getpid()}.exe")
         shutil.copyfile(staged, new_in_dir)
         os.replace(exe_path, old_in_dir)
+        moved_orig = True
         os.replace(new_in_dir, exe_path)
         try:
             os.remove(staged)
@@ -151,6 +187,11 @@ def apply_icon_to_running_exe(ico_bytes: bytes, target_exe: str = None) -> str:
         notify_shell_icon_change()
         return "updated"
     except Exception:
+        if moved_orig and not os.path.exists(exe_path) and os.path.exists(old_in_dir):
+            try:
+                os.replace(old_in_dir, exe_path)
+            except OSError:
+                pass
         try:
             if os.path.exists(new_in_dir):
                 os.remove(new_in_dir)
