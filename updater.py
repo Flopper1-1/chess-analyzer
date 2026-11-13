@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional, Tuple
 
-APP_VERSION = "v1.10.0-beta.2"
+APP_VERSION = "v1.10.0-beta.3"
 GITHUB_REPO = "Flopper1-1/chess-analyzer"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_LIST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
@@ -141,18 +141,36 @@ def _fetch_json(url: str, timeout: float = 8.0):
         return json.loads(resp.read().decode("utf-8", errors="replace"))
 
 
-def check_for_updates(current_version: str = APP_VERSION, timeout: float = 8.0) -> dict:
-    """Check GitHub for the newest non-prerelease release."""
-    release = None
-    try:
-        latest_data = _fetch_json(RELEASES_LATEST_URL, timeout=timeout)
-        release = select_latest_stable_release(latest_data)
-    except Exception:
-        release = None
+def check_for_updates(
+    current_version: str = APP_VERSION,
+    timeout: float = 8.0,
+    include_prereleases: Optional[bool] = None,
+) -> dict:
+    """Check GitHub for the newest update (pre-releases included when running a pre-release)."""
+    if include_prereleases is None:
+        include_prereleases = is_prerelease_version(current_version)
 
-    if release is None:
+    release = None
+    if include_prereleases:
         all_data = _fetch_json(RELEASES_LIST_URL, timeout=timeout)
-        release = select_latest_stable_release(all_data)
+        pre_rel = select_latest_prerelease(all_data)
+        stable_rel = select_latest_stable_release(all_data)
+        if pre_rel and stable_rel:
+            pre_tag = pre_rel.get("tag_name", "")
+            st_tag = stable_rel.get("tag_name", "")
+            release = pre_rel if _version_sort_key(pre_tag) >= _version_sort_key(st_tag) else stable_rel
+        else:
+            release = pre_rel or stable_rel
+    else:
+        try:
+            latest_data = _fetch_json(RELEASES_LATEST_URL, timeout=timeout)
+            release = select_latest_stable_release(latest_data)
+        except Exception:
+            release = None
+
+        if release is None:
+            all_data = _fetch_json(RELEASES_LIST_URL, timeout=timeout)
+            release = select_latest_stable_release(all_data)
 
     if release is None:
         return {
@@ -220,17 +238,34 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
     pid = os.getpid()
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="hca_update_")
     os.close(bat_fd)
+    # Note: use `ping` instead of `timeout` because `timeout` fails immediately under
+    # CREATE_NO_WINDOW / DETACHED_PROCESS when stdin is redirected. Also retry `copy /Y`
+    # so PyInstaller's outer onefile bootloader has time to release the target .exe lock.
     script = (
         "@echo off\r\n"
-        f":waitloop\r\n"
-        f'tasklist /FI "PID eq {pid}" 2>NUL | find /I "{pid}" >NUL\r\n'
-        f'if "%ERRORLEVEL%"=="0" (\r\n'
-        f"    timeout /t 1 /nobreak >NUL\r\n"
-        f"    goto waitloop\r\n"
-        f")\r\n"
-        f'move /Y "{downloaded_exe}" "{target}" >NUL\r\n'
+        "set /a tries=0\r\n"
+        ":waitloop\r\n"
+        f'tasklist /FI "PID eq {pid}" /NH 2>NUL | findstr /R "\\<{pid}\\>" >NUL\r\n'
+        'if "%ERRORLEVEL%"=="0" (\r\n'
+        "    set /a tries+=1\r\n"
+        "    if %tries% GEQ 40 goto replaceloop\r\n"
+        "    ping -n 2 127.0.0.1 >NUL\r\n"
+        "    goto waitloop\r\n"
+        ")\r\n"
+        ":replaceloop\r\n"
+        "set /a r=0\r\n"
+        ":trycopy\r\n"
+        "ping -n 2 127.0.0.1 >NUL\r\n"
+        f'copy /Y "{downloaded_exe}" "{target}" >NUL 2>&1\r\n'
+        'if "%ERRORLEVEL%"=="0" goto copied\r\n'
+        "set /a r+=1\r\n"
+        "if %r% LSS 25 goto trycopy\r\n"
+        "goto cleanup\r\n"
+        ":copied\r\n"
+        f'del /F /Q "{downloaded_exe}" >NUL 2>&1\r\n'
         f'start "" "{target}"\r\n'
-        f'del "%~f0"\r\n'
+        ":cleanup\r\n"
+        'del /F /Q "%~f0" >NUL 2>&1\r\n'
     )
     with open(bat_path, "w", encoding="utf-8") as f:
         f.write(script)

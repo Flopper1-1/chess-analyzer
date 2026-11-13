@@ -2082,7 +2082,10 @@ class SettingsDialog(QDialog):
 
     def _check_updates_now(self):
         if self.main_win and hasattr(self.main_win, "check_updates"):
-            self.update_status_lbl.setText("Checking GitHub for the newest stable release…")
+            self.update_status_lbl.setText(
+                "Checking GitHub for the newest pre-release…"
+                if self._is_prerelease else "Checking GitHub for the newest stable release…"
+            )
             self.btn_check_updates.setEnabled(False)
             self.main_win.check_updates(silent=False, status_callback=self._on_update_check_done)
 
@@ -3467,8 +3470,10 @@ class MainWindow(QMainWindow):
         def ok(path):
             self.progress.setVisible(False)
             if updater.apply_windows_exe_update(path):
-                self.close()
+                for wgt in QApplication.topLevelWidgets():
+                    wgt.close()
                 QApplication.quit()
+                QTimer.singleShot(250, lambda: os._exit(0))
             else:
                 self.status.setText("Update downloaded but could not be applied: " + path)
 
