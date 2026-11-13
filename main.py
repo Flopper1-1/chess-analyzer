@@ -95,6 +95,9 @@ class SoundPlayer:
     def __init__(self):
         self.enabled = True
         self.template_id = "original"
+        self.volume = 100
+        self.mute_when_unfocused = False
+        self.mute_brilliants_when_unfocused = False
         self._events = {}
         self._annotations = {}
         self._mci_seq = 0
@@ -106,11 +109,28 @@ class SoundPlayer:
         self._events = dict(tpl.get("events") or {})
         self._annotations = dict(tpl.get("annotations") or {})
 
+    @staticmethod
+    def _is_app_focused() -> bool:
+        app = QApplication.instance()
+        if app is None:
+            return True
+        return app.applicationState() == Qt.ApplicationActive
+
+    def _should_mute(self, event_name: str = "", symbol: str = "") -> bool:
+        if not self.enabled or self.volume <= 0:
+            return True
+        if self.mute_when_unfocused and not self._is_app_focused():
+            is_brilliant = (symbol == "!!") or (event_name == "brilliant")
+            if is_brilliant and not self.mute_brilliants_when_unfocused:
+                return False
+            return True
+        return False
+
     def _play_file(self, path: str) -> None:
-        if not path or not os.path.exists(path):
+        if not path or not os.path.exists(path) or self.volume <= 0:
             return
         low = path.lower()
-        if low.endswith(".wav") and winsound is not None:
+        if self.volume >= 100 and low.endswith(".wav") and winsound is not None:
             try:
                 winsound.PlaySound(
                     path,
@@ -124,19 +144,21 @@ class SoundPlayer:
                 winmm = ctypes.windll.winmm
                 self._mci_seq = (self._mci_seq + 1) % 64
                 alias = f"hca_snd_{self._mci_seq}"
+                vol_1000 = max(0, min(1000, int(self.volume) * 10))
                 winmm.mciSendStringW(f"close {alias}", None, 0, None)
-                winmm.mciSendStringW(f'open "{path}" alias {alias}', None, 0, None)
+                winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
+                winmm.mciSendStringW(f"setaudio {alias} volume to {vol_1000}", None, 0, None)
                 winmm.mciSendStringW(f"play {alias}", None, 0, None)
             except Exception:
                 pass
 
     def play(self, name: str) -> None:
-        if not self.enabled:
+        if self._should_mute(event_name=name):
             return
         self._play_file(self._events.get(name, ""))
 
     def play_for_move(self, event_name: str, symbol: str = "") -> None:
-        if not self.enabled:
+        if self._should_mute(event_name=event_name, symbol=symbol):
             return
         if symbol and symbol in self._annotations:
             path = self._annotations.get(symbol, "")
@@ -646,6 +668,22 @@ class EngineHolder:
                 pass
             self.engine = None
 
+    def abort(self):
+        """Immediately terminate any active engine subprocess so Stop never blocks."""
+        eng = self.engine
+        self.engine = None
+        if eng:
+            try:
+                tr = getattr(getattr(eng, "protocol", None), "transport", None)
+                if tr is not None:
+                    tr.kill()
+            except Exception:
+                pass
+            try:
+                eng.close()
+            except Exception:
+                pass
+
 
 class LockedEngine:
     """Engine proxy that takes the shared lock per call, so Best-line requests can interleave."""
@@ -709,7 +747,8 @@ class QueueWorker(QThread):
                 self.job_done.emit(job, not self.cancel_flag)
             except Exception as e:
                 job.running = False
-                self.failed.emit(str(e))
+                if not self.cancel_flag:
+                    self.failed.emit(str(e))
                 self.job_done.emit(job, False)
 
 
@@ -1654,7 +1693,8 @@ class ProfileDialog(QDialog):
         l2.addLayout(top)
 
         self.anno_list = QListWidget()
-        self.anno_list.setMaximumHeight(110)
+        self.anno_list.setMinimumHeight(140)
+        self.anno_list.setMaximumHeight(185)
         self.anno_list.currentItemChanged.connect(self._on_anno_changed)
         l2.addWidget(self.anno_list)
 
@@ -2001,6 +2041,41 @@ class SettingsDialog(QDialog):
         lev.addWidget(ev_note)
         lev.addStretch(1)
 
+        # ---- audio tab
+        page_audio = QWidget(); la = QVBoxLayout(page_audio)
+        tabs.addTab(page_audio, "Audio")
+        vol_row = QHBoxLayout()
+        vol_row.addWidget(QLabel("Master volume:"))
+        self.volume_slider = QSlider(Qt.Horizontal)
+        self.volume_slider.setRange(0, 100)
+        self.volume_slider.setValue(max(0, min(100, int(getattr(s, "sound_volume", 100)))))
+        self.volume_lbl = QLabel(f"{self.volume_slider.value()}%")
+        self.volume_lbl.setMinimumWidth(40)
+        self.volume_slider.valueChanged.connect(lambda v: self.volume_lbl.setText(f"{v}%"))
+        vol_row.addWidget(self.volume_slider, 1)
+        vol_row.addWidget(self.volume_lbl)
+        la.addLayout(vol_row)
+
+        self.mute_unfocused = QCheckBox("Mute sounds when window is unfocused")
+        self.mute_unfocused.setChecked(bool(getattr(s, "mute_when_unfocused", False)))
+        la.addWidget(self.mute_unfocused)
+
+        self.mute_brilliants_unfocused = QCheckBox("Also mute Brilliant (!!) sounds when unfocused")
+        self.mute_brilliants_unfocused.setChecked(bool(getattr(s, "mute_brilliants_when_unfocused", False)))
+        self.mute_brilliants_unfocused.setEnabled(self.mute_unfocused.isChecked())
+        self.mute_brilliants_unfocused.setStyleSheet("margin-left: 20px;")
+        self.mute_unfocused.toggled.connect(self.mute_brilliants_unfocused.setEnabled)
+        la.addWidget(self.mute_brilliants_unfocused)
+
+        audio_note = QLabel(
+            "When 'Mute sounds when window is unfocused' is enabled, Brilliant (!!) sounds still play "
+            "by default unless you also check 'Also mute Brilliant (!!) sounds when unfocused'."
+        )
+        audio_note.setWordWrap(True)
+        audio_note.setStyleSheet("font-size:11px;")
+        la.addWidget(audio_note)
+        la.addStretch(1)
+
         # ---- updates tab
         page3 = QWidget(); l3 = QVBoxLayout(page3)
         tabs.addTab(page3, "Updates")
@@ -2143,6 +2218,9 @@ class SettingsDialog(QDialog):
             background_template=getattr(cur_s, "background_template", "dark"),
             piece_template=getattr(cur_s, "piece_template", "default"),
             annotation_template=getattr(cur_s, "annotation_template", "default"),
+            sound_volume=self.volume_slider.value(),
+            mute_when_unfocused=self.mute_unfocused.isChecked(),
+            mute_brilliants_when_unfocused=self.mute_brilliants_unfocused.isChecked(),
             disable_holiday_events=self.disable_holidays.isChecked(),
             last_holiday_event=getattr(cur_s, "last_holiday_event", ""),
             pre_event_app_icon=getattr(cur_s, "pre_event_app_icon", "fluent"),
@@ -2546,6 +2624,9 @@ class MainWindow(QMainWindow):
             background_template=qs.value("background_template", "dark"),
             piece_template=qs.value("piece_template", "default"),
             annotation_template=qs.value("annotation_template", "default"),
+            sound_volume=int(qs.value("sound_volume", 100)),
+            mute_when_unfocused=qs.value("mute_when_unfocused", False, type=bool),
+            mute_brilliants_when_unfocused=qs.value("mute_brilliants_when_unfocused", False, type=bool),
             disable_holiday_events=qs.value("disable_holiday_events", False, type=bool),
             last_holiday_event=qs.value("last_holiday_event", ""),
             pre_event_app_icon=qs.value("pre_event_app_icon", "fluent"),
@@ -2863,7 +2944,8 @@ class MainWindow(QMainWindow):
     def stop(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel_flag = True
-            self.worker.wait(30000)
+            self.holder.abort()
+            self.worker.wait(2000)
         winutil.keep_awake(False)
         self.setWindowTitle(APP_TITLE)
         for j in self.jobs:
@@ -3329,8 +3411,11 @@ class MainWindow(QMainWindow):
             if ico_bytes:
                 winutil.apply_icon_to_running_exe(ico_bytes)
 
-        # 2. Sound Template
+        # 2. Sound Template & Audio Settings
         self.sound.set_template(getattr(self.settings, "sound_template", "original"))
+        self.sound.volume = int(getattr(self.settings, "sound_volume", 100))
+        self.sound.mute_when_unfocused = bool(getattr(self.settings, "mute_when_unfocused", False))
+        self.sound.mute_brilliants_when_unfocused = bool(getattr(self.settings, "mute_brilliants_when_unfocused", False))
 
         # 3. Board Template
         board_tpl = themes.resolve_active_board_template(
@@ -3571,7 +3656,10 @@ class MainWindow(QMainWindow):
                          ("preset", s.preset), ("eval_formula", s.eval_formula),
                          ("annotation_system", s.annotation_system), ("auto_update", s.auto_update),
                          ("auto_install_prereleases", s.auto_install_prereleases),
-                         ("disable_holiday_events", s.disable_holiday_events)):
+                         ("disable_holiday_events", s.disable_holiday_events),
+                         ("sound_volume", s.sound_volume),
+                         ("mute_when_unfocused", s.mute_when_unfocused),
+                         ("mute_brilliants_when_unfocused", s.mute_brilliants_when_unfocused)):
                 self.qs.setValue(k, v)
             self.apply_customizations()
             self.qs.setValue("lenient", s.lenient_brilliant)

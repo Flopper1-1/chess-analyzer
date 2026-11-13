@@ -228,6 +228,9 @@ class Settings:
     background_template: str = "dark"
     piece_template: str = "default"
     annotation_template: str = "default"
+    sound_volume: int = 100
+    mute_when_unfocused: bool = False
+    mute_brilliants_when_unfocused: bool = False
     disable_holiday_events: bool = False
     last_holiday_event: str = ""
     pre_event_app_icon: str = "fluent"
