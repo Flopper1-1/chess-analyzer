@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional, Tuple
 
-APP_VERSION = "v1.10.0-beta.5"
+APP_VERSION = "v1.10.0-beta.6"
 GITHUB_REPO = "Flopper1-1/chess-analyzer"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_LIST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
@@ -295,6 +295,7 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
         'if "%ERRORLEVEL%"=="0" goto copied\r\n'
         "set /a r+=1\r\n"
         "if %r% LSS 40 goto trycopy\r\n"
+        'echo Failed to copy update to "%~1" > "%TEMP%\\hca_update_error.log"\r\n'
         "goto cleanup\r\n"
         ":copied\r\n"
         f'del /F /Q "{downloaded_exe}" >NUL 2>&1\r\n'
@@ -314,7 +315,7 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
     subprocess.Popen(
         ["cmd.exe", "/c", bat_path],
         env=_clean_relaunch_env(),
-        creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+        creationflags=subprocess.CREATE_NO_WINDOW,
         close_fds=True,
     )
     return True

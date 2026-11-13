@@ -2153,7 +2153,8 @@ class SettingsDialog(QDialog):
 
     def _switch_channel(self):
         if self._channel_target and self.main_win and hasattr(self.main_win, "install_release"):
-            self.main_win.install_release(self._channel_target, confirm=True)
+            if self.main_win.install_release(self._channel_target, confirm=True):
+                self.reject()
 
     def _check_updates_now(self):
         if self.main_win and hasattr(self.main_win, "check_updates"):
@@ -3536,15 +3537,15 @@ class MainWindow(QMainWindow):
     def prompt_update(self, info):
         self.install_release(info, confirm=True)
 
-    def install_release(self, info, confirm: bool = True):
+    def install_release(self, info, confirm: bool = True) -> bool:
         frozen = getattr(sys, "frozen", False)
         text = "Version %s is available (you have %s)." % (info["latest_version"], APP_VERSION)
         if not (frozen and info.get("download_url") and sys.platform == "win32"):
             QMessageBox.information(self, APP_TITLE, text + "\n\n" + info.get("html_url", ""))
-            return
+            return False
         if confirm and QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
-            return
-        import tempfile
+            return False
+        import tempfile, threading
         dest = os.path.join(tempfile.gettempdir(), "hca_update_%s.exe" % info["latest_version"].lstrip("v"))
         self.status.setText("Downloading update…")
         self.progress.setVisible(True)
@@ -3558,17 +3559,25 @@ class MainWindow(QMainWindow):
                 for wgt in QApplication.topLevelWidgets():
                     wgt.close()
                 QApplication.quit()
-                QTimer.singleShot(250, lambda: os._exit(0))
+                t = threading.Timer(0.5, lambda: os._exit(0))
+                t.daemon = True
+                t.start()
             else:
-                self.status.setText("Update downloaded but could not be applied: " + path)
+                msg = "Update downloaded but could not be applied: " + path
+                self.status.setText(msg)
+                if confirm:
+                    QMessageBox.warning(self, APP_TITLE, msg)
 
         def bad(m):
             self.progress.setVisible(False)
             self.status.setText("Update download failed: " + m)
+            if confirm:
+                QMessageBox.warning(self, APP_TITLE, "Update download failed:\n" + m)
 
         w.finished_download.connect(ok)
         w.failed.connect(bad)
         w.start()
+        return True
 
     def show_win_guide(self):
         msg = (
