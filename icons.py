@@ -27,6 +27,19 @@ ICON_LIST = [
 ]
 
 _cache = {}
+active_template_id = "default"
+active_icon_overrides = {}
+
+
+def set_template(tpl: dict | None):
+    global active_template_id, active_icon_overrides
+    if not tpl or tpl.get("locked") or tpl.get("id", "default") == "default":
+        active_template_id = "default"
+        active_icon_overrides = {}
+    else:
+        active_template_id = tpl.get("id", "default")
+        active_icon_overrides = dict(tpl.get("icons") or {})
+    _cache.clear()
 
 
 def user_dir():
@@ -45,12 +58,15 @@ def user_path(stem):
 
 
 def path_for(stem):
-    up = user_path(stem)
-    return up if os.path.exists(up) else default_path(stem)
+    ov = active_icon_overrides.get(stem, "")
+    if ov and os.path.exists(ov):
+        return ov
+    return default_path(stem)
 
 
 def is_custom(stem):
-    return os.path.exists(user_path(stem))
+    ov = active_icon_overrides.get(stem, "")
+    return bool(ov and os.path.exists(ov))
 
 
 def ensure_user_copy(stem):
@@ -61,13 +77,17 @@ def ensure_user_copy(stem):
     return up
 
 
-def edit_in_paint(stem):
-    path = ensure_user_copy(stem)
+def open_in_paint(path):
     try:
         subprocess.Popen(["mspaint", path])
     except Exception:
         os.startfile(path, "edit")
     return path
+
+
+def edit_in_paint(stem):
+    path = ensure_user_copy(stem)
+    return open_in_paint(path)
 
 
 def reset(stem):
@@ -83,9 +103,7 @@ def reset_all():
         reset(stem)
 
 
-def pixmap(stem, size):
-    """Smoothly scaled pixmap (cached by file mtime and size)."""
-    p = path_for(stem)
+def pixmap_from_file(p, size):
     try:
         mt = os.path.getmtime(p)
     except OSError:
@@ -99,6 +117,11 @@ def pixmap(stem, size):
         pm = src.scaled(size, size, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         _cache[key] = pm
     return pm
+
+
+def pixmap(stem, size):
+    """Smoothly scaled pixmap (cached by file mtime and size)."""
+    return pixmap_from_file(path_for(stem), size)
 
 
 def pixmap_for_key(key, size):

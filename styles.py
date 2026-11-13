@@ -55,6 +55,19 @@ def reset():
         _current[k] = [v[1], v[2]]
 
 
+def set_template(tpl: dict | None):
+    global mode
+    reset()
+    if not tpl or tpl.get("locked") or tpl.get("id", "default") == "default":
+        mode = "icons"
+        return
+    m = tpl.get("mode", "icons")
+    mode = m if m in ("icons", "legacy") else "icons"
+    for k, v in (tpl.get("styles") or {}).items():
+        if k in _current and isinstance(v, (list, tuple)) and len(v) == 2:
+            _current[k] = [v[0], v[1]]
+
+
 def symbol(key):
     return _current[key][0] if key in _current else key
 

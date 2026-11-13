@@ -840,6 +840,154 @@ def delete_piece_template(template_id: str) -> bool:
     return False
 
 
+# ---------------------------------------------------------------- Annotation Templates
+def annotation_templates_dir() -> str:
+    d = os.path.join(data_root(), "annotation_templates")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _default_annotation_template() -> dict:
+    return {
+        "id": "default",
+        "name": "Default",
+        "locked": True,
+        "mode": "icons",
+        "icons": {},
+        "styles": {},
+    }
+
+
+def list_annotation_templates() -> List[dict]:
+    out = [_default_annotation_template()]
+    root = annotation_templates_dir()
+    for folder in sorted(os.listdir(root)):
+        manifest = os.path.join(root, folder, "template.json")
+        if os.path.isfile(manifest):
+            try:
+                with open(manifest, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                data["id"] = f"custom:{folder}"
+                data["locked"] = False
+                data.setdefault("mode", "icons")
+                data.setdefault("icons", {})
+                data.setdefault("styles", {})
+                out.append(data)
+            except Exception:
+                pass
+    return out
+
+
+def get_annotation_template(tpl_id: str) -> dict:
+    for tpl in list_annotation_templates():
+        if tpl["id"] == tpl_id:
+            return tpl
+    return _default_annotation_template()
+
+
+def _save_annotation_manifest(template_id: str, tpl: dict) -> None:
+    folder = template_id.split(":", 1)[1]
+    adir = os.path.join(annotation_templates_dir(), folder)
+    os.makedirs(adir, exist_ok=True)
+    with open(os.path.join(adir, "template.json"), "w", encoding="utf-8") as f:
+        json.dump(tpl, f, indent=2)
+
+
+def create_annotation_template(name: str) -> dict:
+    clean = (name or "").strip() or "Custom Annotations"
+    slug = _slugify(clean, "annotations")
+    root = annotation_templates_dir()
+    folder = slug
+    idx = 2
+    while os.path.exists(os.path.join(root, folder)):
+        folder = f"{slug}_{idx}"
+        idx += 1
+    adir = os.path.join(root, folder)
+    os.makedirs(adir, exist_ok=True)
+    data = {
+        "id": f"custom:{folder}",
+        "name": clean,
+        "locked": False,
+        "mode": "icons",
+        "icons": {},
+        "styles": {},
+    }
+    _save_annotation_manifest(data["id"], data)
+    return data
+
+
+def ensure_annotation_icon_copy(template_id: str, stem: str, default_png_path: str) -> str:
+    if not template_id.startswith("custom:"):
+        return ""
+    tpl = get_annotation_template(template_id)
+    if tpl.get("locked"):
+        return ""
+    folder = template_id.split(":", 1)[1]
+    adir = os.path.join(annotation_templates_dir(), folder)
+    dest = os.path.join(adir, f"{stem}.png")
+    if not os.path.exists(dest) and default_png_path and os.path.exists(default_png_path):
+        shutil.copyfile(default_png_path, dest)
+    tpl.setdefault("icons", {})[stem] = dest
+    _save_annotation_manifest(template_id, tpl)
+    return dest
+
+
+def reset_annotation_icon_slot(template_id: str, stem: str) -> bool:
+    if not template_id.startswith("custom:"):
+        return False
+    tpl = get_annotation_template(template_id)
+    if tpl.get("locked"):
+        return False
+    old = (tpl.get("icons") or {}).pop(stem, "")
+    if old and os.path.exists(old):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    _save_annotation_manifest(template_id, tpl)
+    return True
+
+
+def reset_all_annotation_icon_slots(template_id: str) -> bool:
+    if not template_id.startswith("custom:"):
+        return False
+    tpl = get_annotation_template(template_id)
+    if tpl.get("locked"):
+        return False
+    for path in list((tpl.get("icons") or {}).values()):
+        if path and os.path.exists(path):
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    tpl["icons"] = {}
+    _save_annotation_manifest(template_id, tpl)
+    return True
+
+
+def update_annotation_template_styles(template_id: str, mode: str, styles_dict: dict) -> bool:
+    if not template_id.startswith("custom:"):
+        return False
+    tpl = get_annotation_template(template_id)
+    if tpl.get("locked"):
+        return False
+    tpl["mode"] = mode if mode in ("icons", "legacy") else "icons"
+    tpl["styles"] = {k: [v[0], v[1]] for k, v in (styles_dict or {}).items()}
+    _save_annotation_manifest(template_id, tpl)
+    return True
+
+
+def delete_annotation_template(template_id: str) -> bool:
+    if not template_id.startswith("custom:"):
+        return False
+    folder = template_id.split(":", 1)[1]
+    adir = os.path.join(annotation_templates_dir(), folder)
+    if os.path.isdir(adir):
+        shutil.rmtree(adir, ignore_errors=True)
+        return True
+    return False
+
+
 # ---------------------------------------------------------------- Theme Palette & Stylesheet
 def get_theme_palette(bg: dict) -> dict:
     """Return UI palette tokens derived from a background template."""

@@ -1005,6 +1005,7 @@ class ProfileDialog(QDialog):
         self._sel_board = getattr(settings, "board_template", "brown_tan")
         self._sel_bg = getattr(settings, "background_template", "dark")
         self._sel_pieces = getattr(settings, "piece_template", "default")
+        self._sel_annotations = getattr(settings, "annotation_template", "default")
         self._disable_holidays = bool(getattr(settings, "disable_holiday_events", False))
 
         lay = QVBoxLayout(self)
@@ -1641,6 +1642,26 @@ class ProfileDialog(QDialog):
         l2 = QVBoxLayout(page)
         self.tabs.addTab(page, "Annotations")
 
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>Annotation Template Library</b>"))
+        top.addStretch(1)
+        self.btn_new_anno = QPushButton("New Template…")
+        self.btn_del_anno = QPushButton("Delete")
+        self.btn_new_anno.clicked.connect(self._create_anno_tpl)
+        self.btn_del_anno.clicked.connect(self._delete_anno_tpl)
+        top.addWidget(self.btn_new_anno)
+        top.addWidget(self.btn_del_anno)
+        l2.addLayout(top)
+
+        self.anno_list = QListWidget()
+        self.anno_list.setMaximumHeight(110)
+        self.anno_list.currentItemChanged.connect(self._on_anno_changed)
+        l2.addWidget(self.anno_list)
+
+        self.anno_lock_lbl = QLabel("")
+        self.anno_lock_lbl.setStyleSheet("font-size:11px;")
+        l2.addWidget(self.anno_lock_lbl)
+
         self.mode = QComboBox()
         self.mode.addItem("Icons (new)", "icons")
         self.mode.addItem("Legacy (symbols and colours)", "legacy")
@@ -1675,12 +1696,12 @@ class ProfileDialog(QDialog):
             grid.addWidget(tag, row, 2)
             grid.addWidget(eb, row, 3)
             grid.addWidget(rb, row, 4)
-            self.icon_rows[stem] = (pv, tag)
+            self.icon_rows[stem] = (pv, tag, eb, rb)
         sc.setWidget(inner)
         il.addWidget(sc, 1)
-        ra = QPushButton("Reset ALL icons to default")
-        ra.clicked.connect(self.reset_all_icons)
-        il.addWidget(ra)
+        self.btn_reset_all_icons = QPushButton("Reset ALL icons to default")
+        self.btn_reset_all_icons.clicked.connect(self.reset_all_icons)
+        il.addWidget(self.btn_reset_all_icons)
         self.stack.addWidget(ip)
 
         lp = QWidget()
@@ -1702,21 +1723,94 @@ class ProfileDialog(QDialog):
             g2.addWidget(btn, row, 2)
             self.style_rows[key] = [ed, btn, col]
         ll.addLayout(g2)
-        rb2 = QPushButton("Reset legacy annotations to defaults")
-        rb2.clicked.connect(self.reset_styles)
-        ll.addWidget(rb2)
+        self.btn_reset_legacy_styles = QPushButton("Reset legacy annotations to defaults")
+        self.btn_reset_legacy_styles.clicked.connect(self.reset_styles)
+        ll.addWidget(self.btn_reset_legacy_styles)
         ll.addStretch(1)
         self.stack.addWidget(lp)
         self.mode.currentIndexChanged.connect(lambda: self.stack.setCurrentIndex(self.mode.currentIndex()))
         self.stack.setCurrentIndex(self.mode.currentIndex())
-        self.refresh_icons()
+        self._reload_anno_list()
 
-    def refresh_icons(self):
-        for stem, (pv, tag) in self.icon_rows.items():
-            pm = icons.pixmap(stem, 32)
+    def _reload_anno_list(self):
+        self.anno_list.blockSignals(True)
+        self.anno_list.clear()
+        sel_row = 0
+        for i, tpl in enumerate(themes.list_annotation_templates()):
+            tag = " [Built-in]" if tpl["locked"] else " [Custom]"
+            li = QListWidgetItem(tpl["name"] + tag)
+            li.setData(Qt.UserRole, tpl)
+            self.anno_list.addItem(li)
+            if tpl["id"] == self._sel_annotations:
+                sel_row = i
+        if self.anno_list.count() > 0:
+            self.anno_list.setCurrentRow(sel_row)
+        self.anno_list.blockSignals(False)
+        self._on_anno_changed()
+
+    def _on_anno_changed(self):
+        li = self.anno_list.currentItem()
+        tpl = li.data(Qt.UserRole) if li else None
+        if not tpl:
+            return
+        self._sel_annotations = tpl["id"]
+        locked = bool(tpl.get("locked"))
+        self.btn_del_anno.setEnabled(not locked)
+        self.anno_lock_lbl.setText(
+            "Default annotation template (read-only). Create a new template to customize icons or legacy styles."
+            if locked else "Custom annotation template: edit icons in Paint or customize legacy symbols & colours."
+        )
+        m = tpl.get("mode", "icons") if not locked else "icons"
+        self.mode.setEnabled(not locked)
+        self.mode.setCurrentIndex(max(0, self.mode.findData(m)))
+        self.stack.setCurrentIndex(self.mode.currentIndex())
+        self.btn_reset_all_icons.setEnabled(not locked)
+        self.btn_reset_legacy_styles.setEnabled(not locked)
+
+        tpl_styles = tpl.get("styles") or {}
+        for key, (_name, def_sym, def_col) in styles.DEFAULTS.items():
+            ed, btn, _col = self.style_rows[key]
+            pair = tpl_styles.get(key) if not locked else None
+            sym = pair[0] if isinstance(pair, (list, tuple)) and len(pair) == 2 else def_sym
+            col = pair[1] if isinstance(pair, (list, tuple)) and len(pair) == 2 else def_col
+            ed.setText(sym)
+            ed.setEnabled(not locked)
+            btn.setEnabled(not locked)
+            self.style_rows[key][2] = col
+            self._paint_btn(btn, col)
+
+        self.refresh_icons(tpl)
+
+    def _create_anno_tpl(self):
+        nm, ok = QInputDialog.getText(
+            self, "New Annotation Template", "Annotation template name:", QLineEdit.Normal, "My Annotations"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.create_annotation_template(nm.strip())
+        self._sel_annotations = created["id"]
+        self._reload_anno_list()
+
+    def _delete_anno_tpl(self):
+        if themes.delete_annotation_template(self._sel_annotations):
+            self._sel_annotations = "default"
+            self._reload_anno_list()
+
+    def refresh_icons(self, tpl=None):
+        if tpl is None:
+            tpl = themes.get_annotation_template(self._sel_annotations)
+        locked = bool(tpl.get("locked"))
+        ov_map = (tpl.get("icons") or {}) if not locked else {}
+        for stem, (pv, tag, eb, rb) in self.icon_rows.items():
+            ov = ov_map.get(stem, "")
+            is_cust = bool(ov and os.path.exists(ov))
+            path = ov if is_cust else icons.default_path(stem)
+            pm = icons.pixmap_from_file(path, 32)
             if pm is not None:
                 pv.setPixmap(pm)
-            tag.setText("custom" if icons.is_custom(stem) else "")
+            tag.setText("custom" if is_cust else "")
+            eb.setEnabled(not locked)
+            rb.setEnabled((not locked) and is_cust)
 
     def changeEvent(self, e):
         if e.type() == QEvent.ActivationChange and self.isActiveWindow() and hasattr(self, "icon_rows"):
@@ -1724,16 +1818,20 @@ class ProfileDialog(QDialog):
         super().changeEvent(e)
 
     def edit_icon(self, stem):
-        icons.edit_in_paint(stem)
-        self.refresh_icons()
+        if not self._sel_annotations.startswith("custom:"):
+            return
+        p = themes.ensure_annotation_icon_copy(self._sel_annotations, stem, icons.default_path(stem))
+        if p:
+            icons.open_in_paint(p)
+            self._reload_anno_list()
 
     def reset_icon(self, stem):
-        icons.reset(stem)
-        self.refresh_icons()
+        if themes.reset_annotation_icon_slot(self._sel_annotations, stem):
+            self._reload_anno_list()
 
     def reset_all_icons(self):
-        icons.reset_all()
-        self.refresh_icons()
+        if themes.reset_all_annotation_icon_slots(self._sel_annotations):
+            self._reload_anno_list()
 
     @staticmethod
     def _paint_btn(btn, col):
@@ -1814,6 +1912,7 @@ class ProfileDialog(QDialog):
             "board_template": self._sel_board,
             "background_template": self._sel_bg,
             "piece_template": self._sel_pieces,
+            "annotation_template": self._sel_annotations,
         }
 
 
@@ -2040,6 +2139,7 @@ class SettingsDialog(QDialog):
             board_template=getattr(cur_s, "board_template", "brown_tan"),
             background_template=getattr(cur_s, "background_template", "dark"),
             piece_template=getattr(cur_s, "piece_template", "default"),
+            annotation_template=getattr(cur_s, "annotation_template", "default"),
             disable_holiday_events=self.disable_holidays.isChecked(),
             last_holiday_event=getattr(cur_s, "last_holiday_event", ""),
             pre_event_app_icon=getattr(cur_s, "pre_event_app_icon", "fluent"),
@@ -2442,6 +2542,7 @@ class MainWindow(QMainWindow):
             board_template=qs.value("board_template", "brown_tan"),
             background_template=qs.value("background_template", "dark"),
             piece_template=qs.value("piece_template", "default"),
+            annotation_template=qs.value("annotation_template", "default"),
             disable_holiday_events=qs.value("disable_holiday_events", False, type=bool),
             last_holiday_event=qs.value("last_holiday_event", ""),
             pre_event_app_icon=qs.value("pre_event_app_icon", "fluent"),
@@ -3240,6 +3341,11 @@ class MainWindow(QMainWindow):
         piece_tpl = themes.get_piece_template(getattr(self.settings, "piece_template", "default"))
         self.board.set_piece_theme(piece_tpl)
 
+        # 5. Annotation Template
+        anno_tpl = themes.get_annotation_template(getattr(self.settings, "annotation_template", "default"))
+        icons.set_template(anno_tpl)
+        styles.set_template(anno_tpl)
+
         # 5. Background Template & Global UI Theme
         bg = themes.get_background_template(getattr(self.settings, "background_template", "dark"))
         img_path = bg.get("image_path") or ""
@@ -3270,8 +3376,10 @@ class MainWindow(QMainWindow):
             self.qs.setValue(k, v)
         self.qs.setValue("name", self.settings.player_name)
 
-        styles.set_all(d.result_styles())
-        styles.mode = d.mode.currentData()
+        anno_id = cust.get("annotation_template", "default")
+        if anno_id.startswith("custom:"):
+            themes.update_annotation_template_styles(anno_id, d.mode.currentData(), d.result_styles())
+        self.apply_customizations()
         styles.save(self.qs)
         icons._cache.clear()
 

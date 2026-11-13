@@ -227,6 +227,7 @@ class Settings:
     board_template: str = "brown_tan"
     background_template: str = "dark"
     piece_template: str = "default"
+    annotation_template: str = "default"
     disable_holiday_events: bool = False
     last_holiday_event: str = ""
     pre_event_app_icon: str = "fluent"
