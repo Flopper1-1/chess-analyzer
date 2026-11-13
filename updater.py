@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional, Tuple
 
-APP_VERSION = "v1.10.0-beta.4"
+APP_VERSION = "v1.10.0-beta.5"
 GITHUB_REPO = "Flopper1-1/chess-analyzer"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_LIST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
@@ -211,20 +211,53 @@ def download_update(
         download_url,
         headers={"User-Agent": f"HollysChessAnalyzer/{APP_VERSION.lstrip('v')}"},
     )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        total = int(resp.headers.get("Content-Length") or 0)
-        downloaded = 0
-        chunk_size = 65536
-        with open(dest_path, "wb") as out:
-            while True:
-                chunk = resp.read(chunk_size)
-                if not chunk:
-                    break
-                out.write(chunk)
-                downloaded += len(chunk)
-                if progress_cb:
-                    progress_cb(downloaded, total)
+    part_path = dest_path + ".part"
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            total = int(resp.headers.get("Content-Length") or 0)
+            downloaded = 0
+            chunk_size = 65536
+            with open(part_path, "wb") as out:
+                while True:
+                    chunk = resp.read(chunk_size)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb:
+                        progress_cb(downloaded, total)
+        if total > 0 and downloaded != total:
+            raise IOError(f"Incomplete download: got {downloaded} of {total} bytes")
+        if dest_path.lower().endswith(".exe"):
+            with open(part_path, "rb") as f:
+                if f.read(2) != b"MZ":
+                    raise IOError("Downloaded file is not a valid Windows executable")
+        os.replace(part_path, dest_path)
+    except Exception:
+        try:
+            if os.path.exists(part_path):
+                os.remove(part_path)
+        except OSError:
+            pass
+        raise
     return dest_path
+
+
+def _clean_relaunch_env() -> dict:
+    """Return a copy of os.environ stripped of PyInstaller bootloader variables."""
+    env = os.environ.copy()
+    for key in (
+        "_MEIPASS2",
+        "_PYI_ARCHIVE_FILE",
+        "_PYI_APPLICATION_HOME_DIR",
+        "_PYI_PARENT_PROCESS_LEVEL",
+        "_PYI_SPLASH_IPC",
+        "TCL_LIBRARY",
+        "TK_LIBRARY",
+    ):
+        env.pop(key, None)
+    env["PYINSTALLER_RESET_ENVIRONMENT"] = "1"
+    return env
 
 
 def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = None) -> bool:
@@ -239,8 +272,10 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="hca_update_")
     os.close(bat_fd)
     # Note: use `ping` instead of `timeout` because `timeout` fails immediately under
-    # CREATE_NO_WINDOW / DETACHED_PROCESS when stdin is redirected. Also retry `copy /Y`
-    # so PyInstaller's outer onefile bootloader has time to release the target .exe lock.
+    # CREATE_NO_WINDOW / DETACHED_PROCESS when stdin is redirected. Also clear PyInstaller's
+    # bootloader env vars (`_MEIPASS2`, `_PYI_*`) and set `PYINSTALLER_RESET_ENVIRONMENT=1`
+    # so the relaunched onefile .exe does not inherit the dying process's `_MEI` temp dir
+    # (which causes PyInstaller Error -3).
     script = (
         "@echo off\r\n"
         "set /a tries=0\r\n"
@@ -259,10 +294,16 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
         f'copy /Y "{downloaded_exe}" "{target}" >NUL 2>&1\r\n'
         'if "%ERRORLEVEL%"=="0" goto copied\r\n'
         "set /a r+=1\r\n"
-        "if %r% LSS 25 goto trycopy\r\n"
+        "if %r% LSS 40 goto trycopy\r\n"
         "goto cleanup\r\n"
         ":copied\r\n"
         f'del /F /Q "{downloaded_exe}" >NUL 2>&1\r\n'
+        'set "_MEIPASS2="\r\n'
+        'set "_PYI_ARCHIVE_FILE="\r\n'
+        'set "_PYI_APPLICATION_HOME_DIR="\r\n'
+        'set "_PYI_PARENT_PROCESS_LEVEL="\r\n'
+        'set "_PYI_SPLASH_IPC="\r\n'
+        'set "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
         f'start "" "{target}"\r\n'
         ":cleanup\r\n"
         'del /F /Q "%~f0" >NUL 2>&1\r\n'
@@ -272,6 +313,7 @@ def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = No
 
     subprocess.Popen(
         ["cmd.exe", "/c", bat_path],
+        env=_clean_relaunch_env(),
         creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
         close_fds=True,
     )
