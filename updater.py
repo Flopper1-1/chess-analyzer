@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional, Tuple
 
-APP_VERSION = "v1.10.0-beta.6"
+APP_VERSION = "v1.10.0-beta.7"
 GITHUB_REPO = "Flopper1-1/chess-analyzer"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_LIST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"
@@ -204,14 +204,14 @@ def download_update(
     download_url: str,
     dest_path: str,
     progress_cb: Optional[Callable[[int, int], None]] = None,
-    timeout: float = 30.0,
+    timeout: float = 45.0,
 ) -> str:
     """Download the release asset to dest_path, invoking progress_cb(downloaded, total)."""
     req = urllib.request.Request(
         download_url,
         headers={"User-Agent": f"HollysChessAnalyzer/{APP_VERSION.lstrip('v')}"},
     )
-    part_path = dest_path + ".part"
+    part_path = f"{dest_path}.{os.getpid()}.part"
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             total = int(resp.headers.get("Content-Length") or 0)
@@ -260,62 +260,108 @@ def _clean_relaunch_env() -> dict:
     return env
 
 
+def _wait_pids_for_update(target: str) -> list:
+    """Return current PID plus PyInstaller outer bootloader PPID (if matching `target`)."""
+    pid = os.getpid()
+    pids = [pid]
+    try:
+        ppid = os.getppid()
+        if ppid and ppid != pid:
+            import winutil
+            pimg = winutil.get_process_image_path(ppid)
+            if pimg and os.path.normcase(os.path.abspath(pimg)) == os.path.normcase(os.path.abspath(target)):
+                pids.append(ppid)
+    except Exception:
+        pass
+    return pids
+
+
 def apply_windows_exe_update(downloaded_exe: str, target_exe: Optional[str] = None) -> bool:
     """Launch a background batch script on Windows to replace the running .exe and restart it."""
     if sys.platform != "win32":
         return False
-    target = target_exe or (sys.executable if getattr(sys, "frozen", False) else None)
-    if not target or not os.path.exists(downloaded_exe):
+    target_raw = target_exe or (sys.executable if getattr(sys, "frozen", False) else None)
+    if not target_raw or not downloaded_exe or not os.path.isfile(downloaded_exe):
         return False
+    target = os.path.abspath(target_raw)
+    downloaded = os.path.abspath(downloaded_exe)
+    if target.lower().endswith(".exe"):
+        try:
+            with open(downloaded, "rb") as f:
+                if f.read(2) != b"MZ":
+                    return False
+        except OSError:
+            return False
 
     pid = os.getpid()
+    wait_pids = _wait_pids_for_update(target)
+    target_dir = os.path.dirname(target) or tempfile.gettempdir()
+    staged = f"{target}.new.{pid}"
+    backup = f"{target}.old.{pid}"
+
     bat_fd, bat_path = tempfile.mkstemp(suffix=".bat", prefix="hca_update_")
     os.close(bat_fd)
-    # Note: use `ping` instead of `timeout` because `timeout` fails immediately under
-    # CREATE_NO_WINDOW / DETACHED_PROCESS when stdin is redirected. Also clear PyInstaller's
-    # bootloader env vars (`_MEIPASS2`, `_PYI_*`) and set `PYINSTALLER_RESET_ENVIRONMENT=1`
-    # so the relaunched onefile .exe does not inherit the dying process's `_MEI` temp dir
-    # (which causes PyInstaller Error -3).
-    script = (
-        "@echo off\r\n"
-        "set /a tries=0\r\n"
-        ":waitloop\r\n"
-        f'tasklist /FI "PID eq {pid}" /NH 2>NUL | findstr /R "\\<{pid}\\>" >NUL\r\n'
-        'if "%ERRORLEVEL%"=="0" (\r\n'
-        "    set /a tries+=1\r\n"
-        "    if %tries% GEQ 40 goto replaceloop\r\n"
-        "    ping -n 2 127.0.0.1 >NUL\r\n"
-        "    goto waitloop\r\n"
-        ")\r\n"
-        ":replaceloop\r\n"
-        "set /a r=0\r\n"
-        ":trycopy\r\n"
-        "ping -n 2 127.0.0.1 >NUL\r\n"
-        f'copy /Y "{downloaded_exe}" "{target}" >NUL 2>&1\r\n'
-        'if "%ERRORLEVEL%"=="0" goto copied\r\n'
-        "set /a r+=1\r\n"
-        "if %r% LSS 40 goto trycopy\r\n"
-        'echo Failed to copy update to "%~1" > "%TEMP%\\hca_update_error.log"\r\n'
-        "goto cleanup\r\n"
-        ":copied\r\n"
-        f'del /F /Q "{downloaded_exe}" >NUL 2>&1\r\n'
-        'set "_MEIPASS2="\r\n'
-        'set "_PYI_ARCHIVE_FILE="\r\n'
-        'set "_PYI_APPLICATION_HOME_DIR="\r\n'
-        'set "_PYI_PARENT_PROCESS_LEVEL="\r\n'
-        'set "_PYI_SPLASH_IPC="\r\n'
-        'set "PYINSTALLER_RESET_ENVIRONMENT=1"\r\n'
-        f'start "" "{target}"\r\n'
-        ":cleanup\r\n"
-        'del /F /Q "%~f0" >NUL 2>&1\r\n'
-    )
-    with open(bat_path, "w", encoding="utf-8") as f:
+
+    lines = [
+        "@echo off",
+        "chcp 65001 >NUL",
+    ]
+    for wp in wait_pids:
+        lines.extend([
+            "set /a tries=0",
+            f":wait_{wp}",
+            f'tasklist /FI "PID eq {wp}" /FO CSV /NH 2>NUL | find ",""{wp}""," >NUL',
+            f"if errorlevel 1 goto wait_done_{wp}",
+            "set /a tries+=1",
+            f"if %tries% GEQ 45 goto wait_done_{wp}",
+            "ping -n 2 127.0.0.1 >NUL",
+            f"goto wait_{wp}",
+            f":wait_done_{wp}",
+        ])
+
+    lines.extend([
+        "set /a r=0",
+        ":tryreplace",
+        f'copy /Y "{downloaded}" "{staged}" >NUL 2>&1',
+        f'if not exist "{staged}" goto try_direct',
+        f'del /F /Q "{backup}" >NUL 2>&1',
+        f'if exist "{target}" move /Y "{target}" "{backup}" >NUL 2>&1',
+        f'move /Y "{staged}" "{target}" >NUL 2>&1 && if exist "{target}" goto replaced',
+        f'if not exist "{target}" if exist "{backup}" move /Y "{backup}" "{target}" >NUL 2>&1',
+        f'del /F /Q "{staged}" >NUL 2>&1',
+        ":try_direct",
+        f'copy /Y "{downloaded}" "{target}" >NUL 2>&1 && if exist "{target}" goto replaced',
+        "set /a r+=1",
+        "if %r% LSS 60 ping -n 2 127.0.0.1 >NUL",
+        "if %r% LSS 60 goto tryreplace",
+        f'echo Failed to replace "{target}" with "{downloaded}" > "%TEMP%\\hca_update_error.log"',
+        "goto cleanup",
+        ":replaced",
+        f'del /F /Q "{downloaded}" >NUL 2>&1',
+        f'del /F /Q "{backup}" >NUL 2>&1',
+        'set "_MEIPASS2="',
+        'set "_PYI_ARCHIVE_FILE="',
+        'set "_PYI_APPLICATION_HOME_DIR="',
+        'set "_PYI_PARENT_PROCESS_LEVEL="',
+        'set "_PYI_SPLASH_IPC="',
+        'set "PYINSTALLER_RESET_ENVIRONMENT=1"',
+        f'start "" /D "{target_dir}" "{target}"',
+        ":cleanup",
+        'del /F /Q "%~f0" >NUL 2>&1',
+    ])
+    script = "\r\n".join(lines) + "\r\n"
+    with open(bat_path, "w", encoding="utf-8", newline="") as f:
         f.write(script)
 
+    flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
     subprocess.Popen(
         ["cmd.exe", "/c", bat_path],
         env=_clean_relaunch_env(),
-        creationflags=subprocess.CREATE_NO_WINDOW,
+        cwd=tempfile.gettempdir(),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=flags,
         close_fds=True,
     )
     return True

@@ -458,6 +458,7 @@ def test_profile_rules_and_updater():
     import updater
     assert updater.is_newer_version("v1.10.0", "v1.9.0")
     assert updater.is_newer_version("v1.10.0-beta.2", "v1.10.0-beta.1")
+    assert updater.is_newer_version("v1.10.0-beta.10", "v1.10.0-beta.7")
     assert updater.is_newer_version("v1.10.0", "v1.10.0-beta.2")
     assert not updater.is_newer_version("v1.9.0", "v1.9.0")
     assert updater.is_prerelease_version("v1.10.0-beta.1")
@@ -472,6 +473,33 @@ def test_profile_rules_and_updater():
     assert not M.should_show_board_avatar("", chess.WHITE, h)
     assert M.should_show_board_avatar("Holly", chess.WHITE, h)
     assert not M.should_show_board_avatar("Holly", chess.BLACK, h)
+
+
+def test_windows_updater_validation_and_cleanup(tmp_path):
+    import updater
+    import winutil
+
+    target = tmp_path / "Holly's Chess Analyzer.exe"
+    target.write_bytes(b"MZold")
+
+    # Reject invalid / non-MZ downloaded payload
+    bad_src = tmp_path / "bad.exe"
+    bad_src.write_bytes(b"<html>not an exe</html>")
+    assert updater.apply_windows_exe_update(str(bad_src), str(target)) is False
+
+    # Cleanup removes leftover .old / .old.<pid> / .new.<pid> / .hca_old_* files
+    leftovers = [
+        tmp_path / "Holly's Chess Analyzer.exe.old",
+        tmp_path / "Holly's Chess Analyzer.exe.old.1234",
+        tmp_path / "Holly's Chess Analyzer.exe.new.1234",
+        tmp_path / ".hca_old_1234.exe",
+    ]
+    for p in leftovers:
+        p.write_bytes(b"junk")
+    winutil.cleanup_old_exe_files(str(target))
+    for p in leftovers:
+        assert not p.exists()
+    assert target.exists()
 
 
 def test_holiday_events_and_app_icons(tmp_path, monkeypatch):

@@ -47,6 +47,25 @@ def keep_awake(on):
         pass
 
 
+def get_process_image_path(pid: int) -> str:
+    """Return the full executable path for `pid` on Windows, or '' if unavailable."""
+    if _k32 is None or not pid or pid <= 0:
+        return ""
+    try:
+        handle = _k32.OpenProcess(0x1000, False, int(pid))  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return ""
+        try:
+            size = ctypes.c_ulong(1024)
+            buf = ctypes.create_unicode_buffer(size.value)
+            ok = _k32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size))
+            return buf.value if ok else ""
+        finally:
+            _k32.CloseHandle(handle)
+    except Exception:
+        return ""
+
+
 def notify_shell_icon_change():
     """Ask Windows Explorer / taskbar to refresh cached executable icons."""
     if _shell32 is None:
@@ -202,28 +221,40 @@ def apply_icon_to_running_exe(ico_bytes: bytes, target_exe: str = None) -> str:
     try:
         bat = os.path.join(tempfile.gettempdir(), f"hca_icon_swap_{os.getpid()}.bat")
         pid = os.getpid()
-        with open(bat, "w", encoding="utf-8") as f:
+        with open(bat, "w", encoding="utf-8", newline="") as f:
             f.write(
                 "@echo off\r\n"
+                "chcp 65001 >NUL\r\n"
+                "set /a tries=0\r\n"
                 ":wait\r\n"
-                f"tasklist /FI \"PID eq {pid}\" 2>NUL | find /I \"{pid}\" >NUL\r\n"
-                "if not errorlevel 1 (\r\n"
-                "  timeout /t 1 /nobreak >NUL\r\n"
-                "  goto wait\r\n"
-                ")\r\n"
-                f"copy /y \"{staged}\" \"{exe_path}\" >NUL 2>&1\r\n"
-                f"del /f /q \"{staged}\" >NUL 2>&1\r\n"
-                "del \"%~f0\" >NUL 2>&1\r\n"
+                f'tasklist /FI "PID eq {pid}" /FO CSV /NH 2>NUL | find ",""{pid}""," >NUL\r\n'
+                "if errorlevel 1 goto do_copy\r\n"
+                "set /a tries+=1\r\n"
+                "if %tries% GEQ 30 goto do_copy\r\n"
+                "ping -n 2 127.0.0.1 >NUL\r\n"
+                "goto wait\r\n"
+                ":do_copy\r\n"
+                f'copy /y "{staged}" "{exe_path}" >NUL 2>&1\r\n'
+                f'del /f /q "{staged}" >NUL 2>&1\r\n'
+                'del /f /q "%~f0" >NUL 2>&1\r\n'
             )
-        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-        subprocess.Popen(["cmd", "/c", bat], creationflags=flags, close_fds=True)
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
+        subprocess.Popen(
+            ["cmd.exe", "/c", bat],
+            cwd=tempfile.gettempdir(),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            close_fds=True,
+        )
         return "deferred"
     except Exception:
         return "failed"
 
 
 def cleanup_old_exe_files(target_exe: str = None) -> None:
-    """Remove leftover .old/.hca_old_* executable backups from previous icon swaps."""
+    """Remove leftover .old/.new/.hca_old_* executable backups from previous swaps or updates."""
     if sys.platform != "win32":
         return
     exe_path = target_exe or (sys.executable if getattr(sys, "frozen", False) else "")
@@ -233,7 +264,13 @@ def cleanup_old_exe_files(target_exe: str = None) -> None:
     base = os.path.basename(exe_path)
     try:
         for fn in os.listdir(exe_dir):
-            if fn == base + ".old" or (fn.startswith(".hca_old_") and fn.endswith(".exe")):
+            if (
+                fn == base + ".old"
+                or fn.startswith(base + ".old.")
+                or fn.startswith(base + ".new.")
+                or (fn.startswith(".hca_old_") and fn.endswith(".exe"))
+                or (fn.startswith(".hca_new_") and fn.endswith(".exe"))
+            ):
                 try:
                     os.remove(os.path.join(exe_dir, fn))
                 except OSError:

@@ -1,4 +1,5 @@
 import ctypes
+import hashlib
 import io
 import math
 import os
@@ -2634,6 +2635,7 @@ class MainWindow(QMainWindow):
             pre_event_board_template=qs.value("pre_event_board_template", "brown_tan"),
         )
         self._last_exe_icon_id = None
+        self._updating_exit = False
         self.channel_worker = None
         self._bg_pixmap = None
         styles.load(qs)
@@ -3407,10 +3409,27 @@ class MainWindow(QMainWindow):
             if app_inst is not None:
                 app_inst.setWindowIcon(app_ic)
         if getattr(sys, "frozen", False) and icon_info.get("id") != self._last_exe_icon_id:
-            self._last_exe_icon_id = icon_info.get("id")
+            icon_id = icon_info.get("id") or "fluent"
+            self._last_exe_icon_id = icon_id
             ico_bytes = themes.image_to_ico_bytes(icon_info.get("path", ""))
             if ico_bytes:
-                winutil.apply_icon_to_running_exe(ico_bytes)
+                try:
+                    exe_sz = os.path.getsize(sys.executable)
+                except OSError:
+                    exe_sz = 0
+                ico_hash = hashlib.sha1(ico_bytes).hexdigest()[:12]
+                stamp = f"{icon_id}:{exe_sz}:{ico_hash}"
+                prev_stamp = self.qs.value("exe_icon_stamp", "")
+                if icon_id == "fluent" and not prev_stamp:
+                    self.qs.setValue("exe_icon_stamp", stamp)
+                elif prev_stamp != stamp:
+                    res_icon = winutil.apply_icon_to_running_exe(ico_bytes)
+                    if res_icon == "updated":
+                        try:
+                            new_sz = os.path.getsize(sys.executable)
+                        except OSError:
+                            new_sz = exe_sz
+                        self.qs.setValue("exe_icon_stamp", f"{icon_id}:{new_sz}:{ico_hash}")
 
         # 2. Sound Template & Audio Settings
         self.sound.set_template(getattr(self.settings, "sound_template", "original"))
@@ -3534,8 +3553,8 @@ class MainWindow(QMainWindow):
                 self.install_release(pre, confirm=False)
         self.check_channels(_on_channels)
 
-    def prompt_update(self, info):
-        self.install_release(info, confirm=True)
+    def prompt_update(self, info) -> bool:
+        return self.install_release(info, confirm=True)
 
     def install_release(self, info, confirm: bool = True) -> bool:
         frozen = getattr(sys, "frozen", False)
@@ -3543,21 +3562,74 @@ class MainWindow(QMainWindow):
         if not (frozen and info.get("download_url") and sys.platform == "win32"):
             QMessageBox.information(self, APP_TITLE, text + "\n\n" + info.get("html_url", ""))
             return False
+        if getattr(self, "download_worker", None) and self.download_worker.isRunning():
+            if confirm:
+                QMessageBox.information(self, APP_TITLE, "An update download is already in progress.")
+            return False
         if confirm and QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
             return False
         import tempfile, threading
-        dest = os.path.join(tempfile.gettempdir(), "hca_update_%s.exe" % info["latest_version"].lstrip("v"))
-        self.status.setText("Downloading update…")
+        ver_slug = info["latest_version"].lstrip("v")
+        dest = os.path.join(tempfile.gettempdir(), f"hca_update_{ver_slug}_{os.getpid()}.exe")
+        self.status.setText(f"Downloading update {info['latest_version']}…")
+        self.progress.setMaximum(0)
+        self.progress.setValue(0)
         self.progress.setVisible(True)
+        for wgt in list(QApplication.topLevelWidgets()):
+            if isinstance(wgt, SettingsDialog) and wgt.isVisible():
+                wgt.reject()
         w = UpdateDownloadWorker(info["download_url"], dest)
         self.download_worker = w
-        w.progress.connect(lambda a, b: (self.progress.setMaximum(max(1, b)), self.progress.setValue(a)))
+
+        def on_prog(done, total):
+            if total > 0:
+                self.progress.setMaximum(total)
+                self.progress.setValue(done)
+                pct = int(done * 100 / total)
+                self.status.setText(
+                    f"Downloading update {info['latest_version']}… {pct}% "
+                    f"({done / 1048576:.1f} / {total / 1048576:.1f} MB)"
+                )
+            else:
+                self.progress.setMaximum(0)
+                self.status.setText(f"Downloading update {info['latest_version']}… ({done / 1048576:.1f} MB)")
+
+        w.progress.connect(on_prog)
 
         def ok(path):
             self.progress.setVisible(False)
+            self.status.setText("Applying update and restarting…")
+            QApplication.processEvents()
+            try:
+                w.wait(2000)
+            except Exception:
+                pass
             if updater.apply_windows_exe_update(path):
-                for wgt in QApplication.topLevelWidgets():
-                    wgt.close()
+                self._updating_exit = True
+                try:
+                    self.qs.sync()
+                except Exception:
+                    pass
+                try:
+                    self.stop()
+                except Exception:
+                    pass
+                try:
+                    self.holder.abort()
+                except Exception:
+                    pass
+                for worker_attr in ("update_worker", "channel_worker"):
+                    wrk = getattr(self, worker_attr, None)
+                    if wrk is not None and wrk.isRunning():
+                        try:
+                            wrk.wait(500)
+                        except Exception:
+                            pass
+                for wgt in list(QApplication.topLevelWidgets()):
+                    try:
+                        wgt.close()
+                    except Exception:
+                        pass
                 QApplication.quit()
                 t = threading.Timer(0.5, lambda: os._exit(0))
                 t.daemon = True
@@ -3754,7 +3826,10 @@ def main():
     w.show()
     if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
         w.load_path(sys.argv[1])
-    sys.exit(app.exec())
+    rc = app.exec()
+    if getattr(w, "_updating_exit", False):
+        os._exit(0)
+    sys.exit(rc)
 
 
 if __name__ == "__main__":
