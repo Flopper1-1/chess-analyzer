@@ -1641,17 +1641,6 @@ class ProfileDialog(QDialog):
         l2 = QVBoxLayout(page)
         self.tabs.addTab(page, "Annotations")
 
-        self.annotation_system = QComboBox()
-        self.annotation_system.addItem("Modern Expected-Points System (Default)", "modern")
-        self.annotation_system.addItem("Legacy Annotation System", "legacy")
-        self.annotation_system.setCurrentIndex(
-            max(0, self.annotation_system.findData(getattr(self.settings, "annotation_system", "modern")))
-        )
-        sys_row = QHBoxLayout()
-        sys_row.addWidget(QLabel("Annotation system:"))
-        sys_row.addWidget(self.annotation_system, 1)
-        l2.addLayout(sys_row)
-
         self.mode = QComboBox()
         self.mode.addItem("Icons (new)", "icons")
         self.mode.addItem("Legacy (symbols and colours)", "legacy")
@@ -1857,6 +1846,12 @@ class SettingsDialog(QDialog):
         self.eval_formula.addItem("Improved Eval Determination (Default)", "improved")
         self.eval_formula.addItem("Win Probability (Legacy)", "win_prob")
         self.eval_formula.setCurrentIndex(max(0, self.eval_formula.findData(getattr(s, "eval_formula", "improved"))))
+        self.annotation_system = QComboBox()
+        self.annotation_system.addItem("Modern Expected-Points System (Default)", "modern")
+        self.annotation_system.addItem("Legacy Annotation System", "legacy")
+        self.annotation_system.setCurrentIndex(
+            max(0, self.annotation_system.findData(getattr(s, "annotation_system", "modern")))
+        )
         self.lenient = QCheckBox("Lenient brilliants (smaller sacrifices and near-best moves count)")
         self.lenient.setChecked(s.lenient_brilliant)
         self.preset = QComboBox()
@@ -1877,6 +1872,7 @@ class SettingsDialog(QDialog):
         f.addRow("Analysis scope", self.scope)
         f.addRow("My side", self.side)
         f.addRow("Eval bar formula", self.eval_formula)
+        f.addRow("Annotation system", self.annotation_system)
         f.addRow("", self.lenient)
         f.addRow("Preset", self.preset)
         f.addRow("Depth (slider)", srow)
@@ -1915,6 +1911,11 @@ class SettingsDialog(QDialog):
         self.auto_update = QCheckBox("Automatically check for updates on startup (newest stable releases only)")
         self.auto_update.setChecked(bool(getattr(s, "auto_update", True)))
         l3.addWidget(self.auto_update)
+        self._is_prerelease = updater.is_prerelease_version(APP_VERSION)
+        self.auto_install_prereleases = QCheckBox("Automatically install any new pre-releases on startup")
+        self.auto_install_prereleases.setChecked(bool(getattr(s, "auto_install_prereleases", True)))
+        self.auto_install_prereleases.setVisible(self._is_prerelease)
+        l3.addWidget(self.auto_install_prereleases)
         upd_note = QLabel(
             "When enabled, Holly's Chess Analyzer checks GitHub for the newest stable release "
             "(pre-releases and drafts are ignored) and offers a one-click update."
@@ -1928,7 +1929,6 @@ class SettingsDialog(QDialog):
         chk_row.addWidget(self.btn_check_updates)
 
         self._channel_target = None
-        self._is_prerelease = updater.is_prerelease_version(APP_VERSION)
         btn_txt = (
             "Go Back to Latest Stable Version"
             if self._is_prerelease else "Switch to Latest Pre-release"
@@ -2032,8 +2032,9 @@ class SettingsDialog(QDialog):
             self.preset.currentData(),
             self.lenient.isChecked(),
             eval_formula=self.eval_formula.currentData(),
-            annotation_system=getattr(cur_s, "annotation_system", "modern"),
+            annotation_system=self.annotation_system.currentData(),
             auto_update=self.auto_update.isChecked(),
+            auto_install_prereleases=self.auto_install_prereleases.isChecked(),
             app_icon=getattr(cur_s, "app_icon", "fluent"),
             sound_template=getattr(cur_s, "sound_template", "original"),
             board_template=getattr(cur_s, "board_template", "brown_tan"),
@@ -2435,6 +2436,7 @@ class MainWindow(QMainWindow):
             eval_formula=qs.value("eval_formula", "improved"),
             annotation_system=qs.value("annotation_system", "modern"),
             auto_update=qs.value("auto_update", True, type=bool),
+            auto_install_prereleases=qs.value("auto_install_prereleases", True, type=bool),
             app_icon=qs.value("app_icon", "fluent"),
             sound_template=qs.value("sound_template", "original"),
             board_template=qs.value("board_template", "brown_tan"),
@@ -2582,8 +2584,11 @@ class MainWindow(QMainWindow):
                            "QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{background:#1f1f1f;}")
         self.apply_customizations()
         self.refresh_profile_ui()
-        if self.settings.auto_update and "--selftest" not in sys.argv:
-            QTimer.singleShot(1400, lambda: self.check_updates(silent=True))
+        if "--selftest" not in sys.argv:
+            if updater.is_prerelease_version(APP_VERSION) and getattr(self.settings, "auto_install_prereleases", True):
+                QTimer.singleShot(1400, self.check_prerelease_auto_update)
+            elif self.settings.auto_update:
+                QTimer.singleShot(1400, lambda: self.check_updates(silent=True))
 
     # ------------------------------------------------------------ loading
     def ensure_book(self):
@@ -3258,14 +3263,11 @@ class MainWindow(QMainWindow):
 
     def apply_profile_dialog(self, d: ProfileDialog):
         old_name = self.settings.player_name
-        old_ann_sys = getattr(self.settings, "annotation_system", "modern")
         self.settings.player_name = d.result_name()
         cust = d.result_customizations()
         for k, v in cust.items():
             setattr(self.settings, k, v)
             self.qs.setValue(k, v)
-        self.settings.annotation_system = d.annotation_system.currentData()
-        self.qs.setValue("annotation_system", self.settings.annotation_system)
         self.qs.setValue("name", self.settings.player_name)
 
         styles.set_all(d.result_styles())
@@ -3277,10 +3279,6 @@ class MainWindow(QMainWindow):
             self.orient()
             if self.settings.scope != "all":
                 self.restart_all()
-        elif old_ann_sys != self.settings.annotation_system:
-            for j in self.jobs:
-                if j.results:
-                    A.reclassify_results(j.game, j.results, self.settings)
         if self.game:
             for k in range(len(self.basic)):
                 self.render_row(k)
@@ -3328,6 +3326,16 @@ class MainWindow(QMainWindow):
         w.finished_channels.connect(lambda data: callback(data, ""))
         w.failed.connect(lambda err: callback({}, err))
         w.start()
+
+    def check_prerelease_auto_update(self):
+        """When running a pre-release build, automatically install any newer pre-release."""
+        def _on_channels(data, err):
+            if err or not data:
+                return
+            pre = data.get("prerelease")
+            if pre and pre.get("update_available") and pre.get("download_url"):
+                self.install_release(pre, confirm=False)
+        self.check_channels(_on_channels)
 
     def prompt_update(self, info):
         self.install_release(info, confirm=True)
@@ -3449,6 +3457,7 @@ class MainWindow(QMainWindow):
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
                          ("preset", s.preset), ("eval_formula", s.eval_formula),
                          ("annotation_system", s.annotation_system), ("auto_update", s.auto_update),
+                         ("auto_install_prereleases", s.auto_install_prereleases),
                          ("disable_holiday_events", s.disable_holiday_events)):
                 self.qs.setValue(k, v)
             self.apply_customizations()

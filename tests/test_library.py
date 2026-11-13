@@ -457,6 +457,8 @@ def test_favorites_and_brilliant_sorting(tmp_path):
 def test_profile_rules_and_updater():
     import updater
     assert updater.is_newer_version("v1.10.0", "v1.9.0")
+    assert updater.is_newer_version("v1.10.0-beta.2", "v1.10.0-beta.1")
+    assert updater.is_newer_version("v1.10.0", "v1.10.0-beta.2")
     assert not updater.is_newer_version("v1.9.0", "v1.9.0")
     assert updater.is_prerelease_version("v1.10.0-beta.1")
     assert not updater.is_prerelease_version("v1.9.1")

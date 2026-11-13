@@ -1057,6 +1057,11 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             background-color: {p['surface']};
             border: {border_w} solid {p['border']};
         }}
+        QScrollArea QWidget#qt_scrollarea_viewport,
+        QScrollArea > QWidget > QWidget {{
+            background-color: {p['surface']};
+            color: {p['fg']};
+        }}
     """
 
 

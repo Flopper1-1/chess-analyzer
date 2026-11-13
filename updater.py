@@ -24,14 +24,31 @@ def parse_version(tag: str) -> Tuple[int, ...]:
     return tuple(int(p) for p in parts)
 
 
+def _version_sort_key(tag: str) -> Tuple[Tuple[int, ...], int, Tuple[int, ...]]:
+    """Return a sortable key ((major, minor, patch, ...), is_stable, (pre_nums...))."""
+    clean = (tag or "").strip().lstrip("vV")
+    base, _, pre = clean.partition("-")
+    base = base.split("+")[0]
+    base_nums = tuple(int(p) for p in re.findall(r"\d+", base)) or (0,)
+    if not pre:
+        return (base_nums, 1, ())
+    pre_nums = tuple(int(p) for p in re.findall(r"\d+", pre)) or (0,)
+    return (base_nums, 0, pre_nums)
+
+
 def is_newer_version(remote_tag: str, local_tag: str = APP_VERSION) -> bool:
-    """Return True if remote_tag is strictly newer than local_tag."""
-    r = list(parse_version(remote_tag))
-    l = list(parse_version(local_tag))
-    max_len = max(len(r), len(l))
-    r.extend([0] * (max_len - len(r)))
-    l.extend([0] * (max_len - len(l)))
-    return tuple(r) > tuple(l)
+    """Return True if remote_tag is strictly newer than local_tag (supports pre-release tags)."""
+    rb, r_stab, rp = _version_sort_key(remote_tag)
+    lb, l_stab, lp = _version_sort_key(local_tag)
+    max_len = max(len(rb), len(lb))
+    rb_pad = rb + (0,) * (max_len - len(rb))
+    lb_pad = lb + (0,) * (max_len - len(lb))
+    if rb_pad != lb_pad:
+        return rb_pad > lb_pad
+    if r_stab != l_stab:
+        return r_stab > l_stab
+    p_len = max(len(rp), len(lp))
+    return (rp + (0,) * (p_len - len(rp))) > (lp + (0,) * (p_len - len(lp)))
 
 
 def is_prerelease_version(tag: str = APP_VERSION) -> bool:
@@ -56,7 +73,7 @@ def select_latest_stable_release(data) -> Optional[dict]:
     ]
     if not stable:
         return None
-    stable.sort(key=lambda r: parse_version(r.get("tag_name", "")), reverse=True)
+    stable.sort(key=lambda r: _version_sort_key(r.get("tag_name", "")), reverse=True)
     return stable[0]
 
 
@@ -77,7 +94,7 @@ def select_latest_prerelease(data) -> Optional[dict]:
     ]
     if not pres:
         return None
-    pres.sort(key=lambda r: parse_version(r.get("tag_name", "")), reverse=True)
+    pres.sort(key=lambda r: _version_sort_key(r.get("tag_name", "")), reverse=True)
     return pres[0]
 
 

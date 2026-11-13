@@ -221,6 +221,7 @@ class Settings:
     eval_formula: str = "improved"      # improved | win_prob
     annotation_system: str = "modern"   # modern | legacy
     auto_update: bool = True            # check GitHub newest stable release on startup
+    auto_install_prereleases: bool = True  # auto-install newer pre-releases when running a pre-release build
     app_icon: str = "fluent"
     sound_template: str = "original"
     board_template: str = "brown_tan"
