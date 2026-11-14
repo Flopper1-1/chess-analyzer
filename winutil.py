@@ -8,7 +8,45 @@ import sys
 import tempfile
 
 _k32 = ctypes.windll.kernel32 if sys.platform == "win32" else None
+_k32_err = ctypes.WinDLL("kernel32", use_last_error=True) if sys.platform == "win32" else None
 _shell32 = ctypes.windll.shell32 if sys.platform == "win32" else None
+_instance_mutex = None
+
+
+def acquire_single_instance(name: str = "Local\\HollysChessAnalyzer_SingleInstance") -> bool:
+    """Acquire a Windows named mutex so only one instance runs at a time."""
+    global _instance_mutex
+    if _k32_err is None:
+        return True
+    if _instance_mutex:
+        return True
+    try:
+        _k32_err.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        _k32_err.CreateMutexW.restype = ctypes.c_void_p
+        _k32_err.CloseHandle.argtypes = [ctypes.c_void_p]
+        _k32_err.CloseHandle.restype = ctypes.c_bool
+        h = _k32_err.CreateMutexW(None, False, name)
+        err = ctypes.get_last_error()
+        if not h:
+            return True
+        if err == 183:  # ERROR_ALREADY_EXISTS
+            _k32_err.CloseHandle(h)
+            return False
+        _instance_mutex = h
+        return True
+    except Exception:
+        return True
+
+
+def release_single_instance() -> None:
+    """Release the single-instance mutex handle if held by this process."""
+    global _instance_mutex
+    if _k32_err is not None and _instance_mutex:
+        try:
+            _k32_err.CloseHandle(_instance_mutex)
+        except Exception:
+            pass
+        _instance_mutex = None
 
 
 class _PPT(ctypes.Structure):

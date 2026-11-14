@@ -1,6 +1,7 @@
 import ctypes
 import hashlib
 import io
+import json
 import math
 import os
 import sys
@@ -25,6 +26,7 @@ from PySide6.QtWidgets import (
     QComboBox, QLineEdit, QSpinBox, QProgressBar, QListWidget, QListWidgetItem, QHeaderView, QMessageBox,
     QAbstractItemView, QSizePolicy, QToolBar, QToolTip, QColorDialog, QTabWidget, QGridLayout,
     QSlider, QStackedWidget, QScrollArea, QCheckBox, QFrame, QSystemTrayIcon, QInputDialog,
+    QKeySequenceEdit,
 )
 
 import analysis as A
@@ -42,6 +44,23 @@ APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
 ISSUES_URL = "https://github.com/Flopper1-1/chess-analyzer/issues"
 SURVEY_URL = "https://forms.gle/qeVYFdKAeZpdAWW97"
+
+DEFAULT_KEYBINDS = [
+    ("prev_move", "Previous move", "Left"),
+    ("next_move", "Next move", "Right"),
+    ("prev_move_alt", "Previous move (alt)", "Up"),
+    ("next_move_alt", "Next move (alt)", "Down"),
+    ("first_pos", "First position", "Home"),
+    ("last_pos", "Last position", "End"),
+    ("back_10", "Back 10 moves", "PgUp"),
+    ("fwd_10", "Forward 10 moves", "PgDown"),
+    ("flip_board", "Flip board", "F"),
+    ("best_line", "Show best line for current move", "B"),
+    ("rename_game", "Rename current game", "F2"),
+    ("open_pgn", "Open / Paste PGN", "Ctrl+O"),
+    ("save_library", "Save to library", "Ctrl+S"),
+    ("open_library", "Open library", "Ctrl+L"),
+]
 
 
 def elide_profile_name(name: str, max_chars: int = 16, font_metrics=None, max_px: int = 125) -> str:
@@ -2081,6 +2100,53 @@ class SettingsDialog(QDialog):
         la.addWidget(audio_note)
         la.addStretch(1)
 
+        # ---- keys tab
+        page_keys = QWidget(); lk = QVBoxLayout(page_keys)
+        tabs.addTab(page_keys, "Keys")
+        keys_note = QLabel("Click a shortcut field and press a new key or key combination to edit it:")
+        keys_note.setWordWrap(True)
+        keys_note.setStyleSheet("font-size:11px;")
+        lk.addWidget(keys_note)
+
+        keys_scroll = QScrollArea()
+        keys_scroll.setWidgetResizable(True)
+        keys_scroll.setFrameShape(QFrame.NoFrame)
+        keys_inner = QWidget()
+        keys_grid = QGridLayout(keys_inner)
+        keys_grid.setContentsMargins(0, 4, 4, 4)
+        keys_grid.setVerticalSpacing(6)
+        keys_grid.setColumnStretch(0, 1)
+
+        cur_kb = dict(getattr(self.main_win, "keybinds", {}) or {})
+        self._keybind_edits = {}
+        self._keybind_descs = {}
+        for row_idx, (action_id, desc, default_seq) in enumerate(DEFAULT_KEYBINDS):
+            seq_val = cur_kb.get(action_id, default_seq)
+            lbl = QLabel(desc)
+            ed = QKeySequenceEdit(QKeySequence(seq_val))
+            ed.setMaximumSequenceLength(1)
+            ed.setClearButtonEnabled(True)
+            ed.setMinimumWidth(145)
+            btn_rst = QPushButton("Reset")
+            btn_rst.setFixedWidth(60)
+            btn_rst.clicked.connect(
+                lambda _=False, e=ed, dseq=default_seq: e.setKeySequence(QKeySequence(dseq))
+            )
+            keys_grid.addWidget(lbl, row_idx, 0)
+            keys_grid.addWidget(ed, row_idx, 1)
+            keys_grid.addWidget(btn_rst, row_idx, 2)
+            self._keybind_edits[action_id] = ed
+            self._keybind_descs[action_id] = desc
+
+        keys_scroll.setWidget(keys_inner)
+        lk.addWidget(keys_scroll, 1)
+        keys_bottom = QHBoxLayout()
+        keys_bottom.addStretch(1)
+        self.btn_reset_keys = QPushButton("Reset All to Defaults")
+        self.btn_reset_keys.clicked.connect(self._reset_all_keybinds)
+        keys_bottom.addWidget(self.btn_reset_keys)
+        lk.addLayout(keys_bottom)
+
         # ---- updates tab
         page3 = QWidget(); l3 = QVBoxLayout(page3)
         tabs.addTab(page3, "Updates")
@@ -2201,6 +2267,37 @@ class SettingsDialog(QDialog):
             self.preset.setCurrentIndex(0)
             self.preset.blockSignals(False)
 
+    def _reset_all_keybinds(self):
+        for action_id, _desc, default_seq in DEFAULT_KEYBINDS:
+            ed = self._keybind_edits.get(action_id)
+            if ed is not None:
+                ed.setKeySequence(QKeySequence(default_seq))
+
+    def accept(self):
+        seen = {}
+        for action_id, ed in self._keybind_edits.items():
+            seq = ed.keySequence().toString().strip()
+            if not seq:
+                continue
+            if seq in seen:
+                other_desc = self._keybind_descs[seen[seq]]
+                cur_desc = self._keybind_descs[action_id]
+                QMessageBox.warning(
+                    self,
+                    "Duplicate Keybind",
+                    f"The shortcut '{seq}' is assigned to both '{other_desc}' and '{cur_desc}'.\n\n"
+                    "Please choose distinct keybinds or clear one of them.",
+                )
+                return
+            seen[seq] = action_id
+        super().accept()
+
+    def result_keybinds(self) -> dict:
+        return {
+            action_id: ed.keySequence().toString().strip()
+            for action_id, ed in self._keybind_edits.items()
+        }
+
     def result_settings(self):
         cur_s = self.main_win.settings if (self.main_win and getattr(self.main_win, "settings", None)) else None
         cur_name = cur_s.player_name if cur_s is not None else self._player_name
@@ -2234,17 +2331,36 @@ class SettingsDialog(QDialog):
         )
 
 
-class PasteDialog(QDialog):
+class OpenOrPasteDialog(QDialog):
+    """Unified dialog to open a PGN file from disk or paste PGN/FEN text."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Paste PGN or FEN")
-        self.resize(520, 380)
+        self.setWindowTitle("Open or Paste PGN / FEN")
+        self.resize(540, 410)
+        self.file_path = ""
         l = QVBoxLayout(self)
+        top = QHBoxLayout()
+        top.addWidget(QLabel("Open a .pgn file or paste PGN / FEN below:"), 1)
+        self.btn_browse = QPushButton("Open PGN File…")
+        self.btn_browse.clicked.connect(self._browse_file)
+        top.addWidget(self.btn_browse)
+        l.addLayout(top)
         self.text = QPlainTextEdit()
-        l.addWidget(self.text)
+        self.text.setPlaceholderText("Paste PGN moves or a FEN position here…")
+        l.addWidget(self.text, 1)
         bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
         l.addWidget(bb)
+
+    def _browse_file(self):
+        p, _ = QFileDialog.getOpenFileName(self, "Open PGN", "", "PGN files (*.pgn);;All files (*)")
+        if p:
+            self.file_path = p
+            self.accept()
+
+
+PasteDialog = OpenOrPasteDialog
 
 
 class LibraryDialog(QDialog):
@@ -2732,7 +2848,7 @@ class MainWindow(QMainWindow):
         self.addToolBar(tb)
         self.tb = tb
         self.save_act = None
-        for t, fn in (("Open PGN…", self.open_file), ("Paste PGN/FEN…", self.paste),
+        for t, fn in (("Open / Paste PGN…", self.open_or_paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
                       ("Library…", self.open_library), ("Settings…", self.open_settings)):
@@ -2742,8 +2858,6 @@ class MainWindow(QMainWindow):
         self.game_combo = QComboBox(); self.game_combo.setVisible(False)
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         tb.addWidget(self.game_combo)
-        tb.addAction("Win% Guide", self.show_win_guide)
-        tb.addAction("Keys", self.show_keys)
         tb.addAction("Report an Issue", self.report_issue)
 
         spacer = QWidget()
@@ -2756,24 +2870,9 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.profile_btn)
 
         self.table.currentCellChanged.connect(lambda r, c, pr, pc: r >= 0 and r != self.cur and self.goto(r))
-        self.keymap = [
-            (Qt.Key_Left, "Previous move", lambda: self.goto(self.cur - 1)),
-            (Qt.Key_Right, "Next move", lambda: self.goto(self.cur + 1)),
-            (Qt.Key_Up, "Previous move", lambda: self.goto(self.cur - 1)),
-            (Qt.Key_Down, "Next move", lambda: self.goto(self.cur + 1)),
-            (Qt.Key_Home, "First position", lambda: self.goto(0)),
-            (Qt.Key_End, "Last position", lambda: self.goto(len(self.basic))),
-            (Qt.Key_PageUp, "Back 10 moves", lambda: self.goto(self.cur - 10)),
-            (Qt.Key_PageDown, "Forward 10 moves", lambda: self.goto(self.cur + 10)),
-            (Qt.Key_F, "Flip board", self.flip),
-            (Qt.Key_B, "Show best line for current move", lambda: self.show_best(self.cur)),
-            (Qt.Key_F2, "Rename current game", self.rename_current_game),
-            (QKeySequence("Ctrl+O"), "Open PGN", self.open_file),
-            (QKeySequence("Ctrl+S"), "Save to library", self.save_to_library),
-            (QKeySequence("Ctrl+L"), "Open library", self.open_library),
-        ]
-        for key, _d, fn in self.keymap:
-            QShortcut(QKeySequence(key), self, activated=fn)
+        self._shortcuts = []
+        self.keybinds = self.load_keybinds()
+        self.apply_keybinds()
         self.setStyleSheet("QMainWindow,QWidget{background:#2b2b2b;color:#ddd;} QTableWidget{background:#1f1f1f;gridline-color:#333;}"
                            "QPushButton{background:#444;border:1px solid #555;padding:3px 8px;} QHeaderView::section{background:#333;color:#ddd;}"
                            "QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{background:#1f1f1f;}")
@@ -2798,6 +2897,71 @@ class MainWindow(QMainWindow):
         for u in e.mimeData().urls():
             self.load_path(u.toLocalFile()); break
 
+    def _keybind_callbacks(self):
+        return {
+            "prev_move": lambda: self.goto(self.cur - 1),
+            "next_move": lambda: self.goto(self.cur + 1),
+            "prev_move_alt": lambda: self.goto(self.cur - 1),
+            "next_move_alt": lambda: self.goto(self.cur + 1),
+            "first_pos": lambda: self.goto(0),
+            "last_pos": lambda: self.goto(len(self.basic)),
+            "back_10": lambda: self.goto(self.cur - 10),
+            "fwd_10": lambda: self.goto(self.cur + 10),
+            "flip_board": self.flip,
+            "best_line": lambda: self.show_best(self.cur),
+            "rename_game": self.rename_current_game,
+            "open_pgn": self.open_or_paste,
+            "save_library": self.save_to_library,
+            "open_library": self.open_library,
+        }
+
+    def load_keybinds(self) -> dict:
+        kb = {aid: dseq for aid, _desc, dseq in DEFAULT_KEYBINDS}
+        raw = self.qs.value("keybinds", "")
+        if raw:
+            try:
+                saved = json.loads(str(raw))
+                if isinstance(saved, dict):
+                    for aid, _desc, _dseq in DEFAULT_KEYBINDS:
+                        if aid in saved and isinstance(saved[aid], str):
+                            kb[aid] = QKeySequence(saved[aid]).toString().strip()
+            except Exception:
+                pass
+        return kb
+
+    def save_keybinds(self):
+        try:
+            self.qs.setValue("keybinds", json.dumps(self.keybinds))
+        except Exception:
+            pass
+
+    def apply_keybinds(self):
+        for sc in getattr(self, "_shortcuts", []):
+            try:
+                sc.setEnabled(False)
+                sc.setKey(QKeySequence())
+                sc.deleteLater()
+            except Exception:
+                pass
+        self._shortcuts = []
+        callbacks = self._keybind_callbacks()
+        self.keymap = []
+        for aid, desc, dseq in DEFAULT_KEYBINDS:
+            seq = self.keybinds.get(aid, dseq)
+            fn = callbacks[aid]
+            self.keymap.append((seq, desc, fn))
+            if seq:
+                sc = QShortcut(QKeySequence(seq), self, activated=fn)
+                self._shortcuts.append(sc)
+
+    def open_or_paste(self):
+        d = OpenOrPasteDialog(self)
+        if d.exec():
+            if d.file_path:
+                self.load_path(d.file_path)
+            else:
+                self.load_text(d.text.toPlainText())
+
     def open_file(self):
         p, _ = QFileDialog.getOpenFileName(self, "Open PGN", "", "PGN files (*.pgn);;All files (*)")
         if p:
@@ -2808,9 +2972,7 @@ class MainWindow(QMainWindow):
             self.load_text(f.read())
 
     def paste(self):
-        d = PasteDialog(self)
-        if d.exec():
-            self.load_text(d.text.toPlainText())
+        self.open_or_paste()
 
     def load_text(self, text):
         games = parse_input(text)
@@ -3615,6 +3777,7 @@ class MainWindow(QMainWindow):
                 pass
             if updater.apply_windows_exe_update(path):
                 self._updating_exit = True
+                winutil.release_single_instance()
                 try:
                     self.qs.sync()
                 except Exception:
@@ -3659,34 +3822,6 @@ class MainWindow(QMainWindow):
         w.failed.connect(bad)
         w.start()
         return True
-
-    def show_win_guide(self):
-        msg = (
-            "<h3>Evaluation Bar &amp; Move Annotations Guide</h3>"
-            "<p><b>Evaluation Bar Formulas (selectable in Settings):</b></p>"
-            "<ul>"
-            "<li><b>Improved Eval Determination (Default):</b> Starts strictly at <code>0.0</code> (50%/50%) before any moves are played, "
-            "dampens tiny engine tempo noise near <code>0.00</code>, uses a WDL-calibrated smooth curve, and clamps non-mate advantages "
-            "to <code>[2.5%, 97.5%]</code> so <code>100%</code> is reserved exclusively for forced checkmate.</li>"
-            "<li><b>Win Probability (Legacy):</b> Uses the Lichess logistic formula "
-            "<code>win% = 50 + 50 · (2 / (1 + e^(-0.00368208 · cp)) - 1)</code>.</li>"
-            "</ul>"
-            "<p><b>Annotation Systems (selectable in Settings):</b></p>"
-            "<ul>"
-            "<li><b>Modern Expected-Points System (Default):</b> Context-aware classification using Expected Points loss (ΔEP), "
-            "true pre-move position evaluation, MultiPV uniqueness for <b>Great (!)</b> and <b>Miss</b>, winning-position protection, "
-            "and sound sacrifice / underpromotion verification for <b>Brilliant (!!)</b>.</li>"
-            "<li><b>Legacy Annotation System:</b> Classic fixed win-percentage drop thresholds "
-            "(<b>Inaccuracy (?!)</b> 5–10%, <b>Mistake (?)</b> 10–20%, <b>Blunder (??)</b> &gt;20%).</li>"
-            "</ul>"
-        )
-        QMessageBox.information(self, "Evaluation & Annotations Guide", msg)
-
-    def show_keys(self):
-        lines = []
-        for key, desc, _fn in self.keymap:
-            lines.append("%s: %s" % (QKeySequence(key).toString(), desc))
-        QMessageBox.information(self, "Keyboard shortcuts", "\n".join(lines))
 
     def _open_url(self, url: str):
         if not QDesktopServices.openUrl(QUrl(url)):
@@ -3793,6 +3928,9 @@ class MainWindow(QMainWindow):
                          ("mute_brilliants_when_unfocused", s.mute_brilliants_when_unfocused)):
                 self.qs.setValue(k, v)
             self.apply_customizations()
+            self.keybinds = d.result_keybinds()
+            self.save_keybinds()
+            self.apply_keybinds()
             self.qs.setValue("lenient", s.lenient_brilliant)
             self.evalbar.formula = s.eval_formula
             self.graph.formula = s.eval_formula
@@ -3875,12 +4013,21 @@ def main():
     app = QApplication(sys.argv)
     icon = QIcon(resource_path("icon.ico"))
     app.setWindowIcon(icon)
+    if not winutil.acquire_single_instance():
+        QMessageBox.critical(
+            None,
+            APP_TITLE,
+            "Holly's Chess Analyzer is already running.\n\n"
+            "Please close the existing window before opening it again.",
+        )
+        sys.exit(1)
     w = MainWindow()
     w.setWindowIcon(icon)
     w.show()
     if len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
         w.load_path(sys.argv[1])
     rc = app.exec()
+    winutil.release_single_instance()
     if getattr(w, "_updating_exit", False):
         os._exit(0)
     sys.exit(rc)
