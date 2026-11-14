@@ -4,6 +4,7 @@ import io
 import json
 import math
 import os
+import random
 import sys
 import threading
 import time
@@ -18,7 +19,7 @@ import chess.pgn
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRectF, QPointF, QSize, QEvent, QTimer, QUrl
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
-    QDesktopServices,
+    QDesktopServices, QRadialGradient,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -26,7 +27,7 @@ from PySide6.QtWidgets import (
     QComboBox, QLineEdit, QSpinBox, QProgressBar, QListWidget, QListWidgetItem, QHeaderView, QMessageBox,
     QAbstractItemView, QSizePolicy, QToolBar, QToolTip, QColorDialog, QTabWidget, QGridLayout,
     QSlider, QStackedWidget, QScrollArea, QCheckBox, QFrame, QSystemTrayIcon, QInputDialog,
-    QKeySequenceEdit,
+    QKeySequenceEdit, QGroupBox,
 )
 
 import analysis as A
@@ -978,12 +979,13 @@ class ProfileButtonWidget(QFrame):
         lay.addWidget(self.avatar_label)
         self.refresh("")
 
-    def set_theme(self, panel_bg: str, text_fg: str, border_fg: str, muted_fg: str = "#aaaaaa", hover_bg: str = "#303030") -> None:
+    def set_theme(self, panel_bg: str, text_fg: str, border_fg: str, muted_fg: str = "#aaaaaa",
+                  hover_bg: str = "#303030", accent_fg: str = "#26c6da") -> None:
         self._text_fg = text_fg
         self._muted_fg = muted_fg
         self.setStyleSheet(
             f"QFrame#ProfileButton {{ background:{panel_bg}; border:1px solid {border_fg}; border-radius:4px; padding:2px 6px; }}"
-            f"QFrame#ProfileButton:hover {{ background:{hover_bg}; border:1px solid #26c6da; }}"
+            f"QFrame#ProfileButton:hover {{ background:{hover_bg}; border:1px solid {accent_fg}; }}"
         )
         cur = self.name_label.text()
         if cur and cur != "Profile":
@@ -1041,12 +1043,35 @@ def _bg_swatch_icon(bg: dict, size: int = 36) -> QIcon:
         pm = QPixmap(img_path)
         if not pm.isNull():
             return QIcon(icons.crop_to_square_pixmap(pm, size))
+    bg_id = bg.get("id", "")
     pm = QPixmap(size, size)
-    pm.fill(QColor(bg.get("window_bg", "#1e1e1e")))
     p = QPainter(pm)
-    p.setPen(QColor(bg.get("text_fg", "#e6e6e6")))
-    p.drawRect(0, 0, size - 1, size - 1)
-    p.fillRect(4, size - 10, size - 8, 6, QColor(bg.get("panel_bg", "#252526")))
+    if bg_id == "christmas":
+        half = size // 2
+        p.fillRect(0, 0, half, size, QColor("#7c1414"))
+        p.fillRect(half, 0, size - half, size, QColor("#115928"))
+        p.fillRect(4, size - 10, size - 8, 6, QColor("#eab308"))
+        p.setPen(QColor("#ffffff"))
+        p.drawRect(0, 0, size - 1, size - 1)
+    elif bg_id == "new_year":
+        pm.fill(QColor("#0b0e17"))
+        for dx, dy, col in (
+            (10, 10, "#fbbf24"), (24, 9, "#38bdf8"), (18, 18, "#f472b6"),
+            (12, 22, "#4ade80"), (26, 20, "#a78bfa"),
+        ):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(col))
+            p.drawEllipse(dx - 2, dy - 2, 4, 4)
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QColor("#334155"))
+        p.drawRect(0, 0, size - 1, size - 1)
+    else:
+        win_col = themes.normalize_hex(bg.get("ui_color", "")) or bg.get("window_bg", "#1e1e1e")
+        pm.fill(QColor(win_col))
+        p.setPen(QColor(bg.get("text_fg", "#e6e6e6")))
+        p.drawRect(0, 0, size - 1, size - 1)
+        acc = themes.normalize_hex(bg.get("accent_color", "")) or bg.get("accent_bg", "") or bg.get("panel_bg", "#252526")
+        p.fillRect(4, size - 10, size - 8, 6, QColor(acc))
     p.end()
     return QIcon(pm)
 
@@ -1067,6 +1092,9 @@ class ProfileDialog(QDialog):
         self._sel_sound = getattr(settings, "sound_template", "original")
         self._sel_board = getattr(settings, "board_template", "brown_tan")
         self._sel_bg = getattr(settings, "background_template", "dark")
+        self._ui_color = themes.normalize_hex(getattr(settings, "ui_color", ""))
+        self._accent_color = themes.normalize_hex(getattr(settings, "accent_color", ""))
+        self._reloading_bg = False
         self._sel_pieces = getattr(settings, "piece_template", "default")
         self._sel_annotations = getattr(settings, "annotation_template", "default")
         self._disable_holidays = bool(getattr(settings, "disable_holiday_events", False))
@@ -1527,10 +1555,13 @@ class ProfileDialog(QDialog):
         row = QHBoxLayout()
         row.addWidget(QLabel("<b>Background Library</b>"))
         row.addStretch(1)
-        self.btn_add_bg = QPushButton("Add Image Background…")
+        self.btn_add_color_bg = QPushButton("Add Color…")
+        self.btn_add_bg = QPushButton("Add Image…")
         self.btn_del_bg = QPushButton("Delete")
+        self.btn_add_color_bg.clicked.connect(self._add_custom_color_bg)
         self.btn_add_bg.clicked.connect(self._add_custom_bg)
         self.btn_del_bg.clicked.connect(self._delete_custom_bg)
+        row.addWidget(self.btn_add_color_bg)
         row.addWidget(self.btn_add_bg)
         row.addWidget(self.btn_del_bg)
         lay.addLayout(row)
@@ -1544,14 +1575,65 @@ class ProfileDialog(QDialog):
         self.bg_info = QLabel("")
         self.bg_info.setWordWrap(True)
         lay.addWidget(self.bg_info)
+
+        col_box = QGroupBox("UI & Accent Colors")
+        col_form = QFormLayout(col_box)
+
+        ui_row = QHBoxLayout()
+        self.ui_color_swatch = QLabel()
+        self.ui_color_swatch.setFixedSize(26, 20)
+        self.lbl_ui_color = QLabel("Theme default")
+        self.btn_ui_color = QPushButton("Choose…")
+        self.btn_ui_color_reset = QPushButton("Reset")
+        self.btn_ui_color.clicked.connect(self._pick_ui_color)
+        self.btn_ui_color_reset.clicked.connect(self._reset_ui_color)
+        ui_row.addWidget(self.ui_color_swatch)
+        ui_row.addWidget(self.lbl_ui_color, 1)
+        ui_row.addWidget(self.btn_ui_color)
+        ui_row.addWidget(self.btn_ui_color_reset)
+        col_form.addRow("UI color:", ui_row)
+
+        acc_row = QHBoxLayout()
+        self.accent_color_swatch = QLabel()
+        self.accent_color_swatch.setFixedSize(26, 20)
+        self.lbl_accent_color = QLabel("Theme default")
+        self.btn_accent_color = QPushButton("Choose…")
+        self.btn_accent_color_reset = QPushButton("Reset")
+        self.btn_accent_color.clicked.connect(self._pick_accent_color)
+        self.btn_accent_color_reset.clicked.connect(self._reset_accent_color)
+        acc_row.addWidget(self.accent_color_swatch)
+        acc_row.addWidget(self.lbl_accent_color, 1)
+        acc_row.addWidget(self.btn_accent_color)
+        acc_row.addWidget(self.btn_accent_color_reset)
+        col_form.addRow("Accent color:", acc_row)
+
+        act_row = QHBoxLayout()
+        self.btn_save_color_preset = QPushButton("Save Colors as Preset…")
+        self.btn_reset_all_colors = QPushButton("Reset Both to Default")
+        self.btn_save_color_preset.clicked.connect(self._save_colors_as_preset)
+        self.btn_reset_all_colors.clicked.connect(self._reset_all_colors)
+        act_row.addStretch(1)
+        act_row.addWidget(self.btn_save_color_preset)
+        act_row.addWidget(self.btn_reset_all_colors)
+        col_form.addRow("", act_row)
+        lay.addWidget(col_box)
+
         self._reload_bg_list()
 
     def _reload_bg_list(self):
+        self._reloading_bg = True
         self.bg_list.blockSignals(True)
         self.bg_list.clear()
         sel_row = 0
-        for i, bg in enumerate(themes.list_background_templates()):
-            tag = " [Built-in]" if bg["locked"] else " [Custom Image]"
+        for i, bg in enumerate(themes.list_background_templates(disable_holidays=self._disable_holidays)):
+            if bg.get("holiday"):
+                tag = " [Holiday Event]"
+            elif bg.get("locked"):
+                tag = " [Built-in]"
+            elif bg.get("image_path"):
+                tag = " [Custom Image]"
+            else:
+                tag = " [Custom Color]"
             li = QListWidgetItem(_bg_swatch_icon(bg), bg["name"] + tag)
             li.setData(Qt.UserRole, bg)
             self.bg_list.addItem(li)
@@ -1561,18 +1643,116 @@ class ProfileDialog(QDialog):
             self.bg_list.setCurrentRow(sel_row)
         self.bg_list.blockSignals(False)
         self._on_bg_changed()
+        self._reloading_bg = False
 
     def _on_bg_changed(self):
         li = self.bg_list.currentItem()
         bg = li.data(Qt.UserRole) if li else None
         if not bg:
             return
+        prev_id = self._sel_bg
         self._sel_bg = bg["id"]
+        if not self._reloading_bg and prev_id != self._sel_bg and not bg.get("image_path"):
+            self._ui_color = ""
+            self._accent_color = ""
         self.btn_del_bg.setEnabled(not bg.get("locked"))
-        self.bg_info.setText(
-            f"<b>{bg['name']}</b><br>"
-            + ("Built-in theme template (cannot be edited)." if bg.get("locked") else f"Custom image: {bg.get('image_path', '')}")
+        bg_id = bg.get("id", "")
+        if bg_id == "halloween":
+            desc = "Halloween theme with a glowing orange interface."
+        elif bg_id == "christmas":
+            desc = "Christmas theme that slowly shifts between festive red and green."
+        elif bg_id == "new_year":
+            desc = "Dark midnight sky theme with animated fireworks in the background."
+        elif bg.get("locked"):
+            desc = "Built-in theme template."
+        elif bg.get("image_path"):
+            desc = f"Custom image: {bg.get('image_path', '')}"
+        else:
+            desc = f"Custom colors (UI: {bg.get('ui_color', '')}, Accent: {bg.get('accent_color', '')})"
+        self.bg_info.setText(f"<b>{bg['name']}</b><br>{desc}")
+        self._refresh_color_controls()
+
+    def _refresh_color_controls(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        ui_show = self._ui_color or pal["bg"]
+        acc_show = self._accent_color or pal["accent"]
+        self.ui_color_swatch.setStyleSheet(f"background:{ui_show}; border:1px solid #888; border-radius:3px;")
+        self.accent_color_swatch.setStyleSheet(f"background:{acc_show}; border:1px solid #888; border-radius:3px;")
+        self.lbl_ui_color.setText(f"{self._ui_color} (Custom)" if self._ui_color else f"{pal['bg']} (Theme default)")
+        self.lbl_accent_color.setText(f"{self._accent_color} (Custom)" if self._accent_color else f"{pal['accent']} (Theme default)")
+        self.btn_ui_color_reset.setEnabled(bool(self._ui_color))
+        self.btn_accent_color_reset.setEnabled(bool(self._accent_color))
+        self.btn_reset_all_colors.setEnabled(bool(self._ui_color or self._accent_color))
+
+    def _pick_ui_color(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        col = QColorDialog.getColor(QColor(self._ui_color or pal["bg"]), self, "Choose UI Color")
+        if col.isValid():
+            self._ui_color = col.name(QColor.HexRgb).lower()
+            self._refresh_color_controls()
+
+    def _reset_ui_color(self):
+        self._ui_color = ""
+        self._refresh_color_controls()
+
+    def _pick_accent_color(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        col = QColorDialog.getColor(QColor(self._accent_color or pal["accent"]), self, "Choose Accent Color")
+        if col.isValid():
+            self._accent_color = col.name(QColor.HexRgb).lower()
+            self._refresh_color_controls()
+
+    def _reset_accent_color(self):
+        self._accent_color = ""
+        self._refresh_color_controls()
+
+    def _reset_all_colors(self):
+        self._ui_color = ""
+        self._accent_color = ""
+        self._refresh_color_controls()
+
+    def _save_colors_as_preset(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        ui_val = self._ui_color or pal["bg"]
+        acc_val = self._accent_color or pal["accent"]
+        nm, ok = QInputDialog.getText(
+            self, "Save Color Preset", "Background preset name:", QLineEdit.Normal, "Custom Colors"
         )
+        if not ok or not nm.strip():
+            return
+        created = themes.create_custom_color_background(nm.strip(), ui_val, acc_val)
+        if created:
+            self._sel_bg = created["id"]
+            self._ui_color = ""
+            self._accent_color = ""
+            self._reload_bg_list()
+
+    def _add_custom_color_bg(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        ui_col = QColorDialog.getColor(QColor(self._ui_color or pal["bg"]), self, "Choose UI Color for Preset")
+        if not ui_col.isValid():
+            return
+        acc_col = QColorDialog.getColor(QColor(self._accent_color or pal["accent"]), self, "Choose Accent Color for Preset")
+        if not acc_col.isValid():
+            return
+        ui_hex = ui_col.name(QColor.HexRgb).lower()
+        acc_hex = acc_col.name(QColor.HexRgb).lower()
+        nm, ok = QInputDialog.getText(
+            self, "Background Name", "Color background name:", QLineEdit.Normal, f"Theme {ui_hex}"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.create_custom_color_background(nm.strip(), ui_hex, acc_hex)
+        if created:
+            self._sel_bg = created["id"]
+            self._ui_color = ""
+            self._accent_color = ""
+            self._reload_bg_list()
 
     def _add_custom_bg(self):
         p, _ = QFileDialog.getOpenFileName(
@@ -1975,6 +2155,8 @@ class ProfileDialog(QDialog):
             "sound_template": self._sel_sound,
             "board_template": self._sel_board,
             "background_template": self._sel_bg,
+            "ui_color": self._ui_color,
+            "accent_color": self._accent_color,
             "piece_template": self._sel_pieces,
             "annotation_template": self._sel_annotations,
         }
@@ -2000,11 +2182,13 @@ class SettingsDialog(QDialog):
         self.scope.addItem("All moves (both sides)", "all")
         self.scope.addItem("My side only (faster)", "mine")
         self.scope.addItem("My side + brilliants (fast)", "mine_brilliant")
+        self.scope.addItem("My side only + brilliants/blunders/misses", "mine_bbm")
         self.scope.setCurrentIndex(max(0, self.scope.findData(s.scope)))
         self.side = QComboBox()
-        for t, d in (("Both", "both"), ("White", "white"), ("Black", "black")):
+        for t, d in (("Auto", "both"), ("White", "white"), ("Black", "black")):
             self.side.addItem(t, d)
-        self.side.setCurrentIndex(max(0, self.side.findData(s.side)))
+        side_val = "both" if getattr(s, "side", "both") == "auto" else s.side
+        self.side.setCurrentIndex(max(0, self.side.findData(side_val)))
         self.eval_formula = QComboBox()
         self.eval_formula.addItem("Improved Eval Determination (Default)", "improved")
         self.eval_formula.addItem("Win Probability (Legacy)", "win_prob")
@@ -2328,6 +2512,9 @@ class SettingsDialog(QDialog):
             last_holiday_event=getattr(cur_s, "last_holiday_event", ""),
             pre_event_app_icon=getattr(cur_s, "pre_event_app_icon", "fluent"),
             pre_event_board_template=getattr(cur_s, "pre_event_board_template", "brown_tan"),
+            pre_event_background_template=getattr(cur_s, "pre_event_background_template", "dark"),
+            ui_color=getattr(cur_s, "ui_color", ""),
+            accent_color=getattr(cur_s, "accent_color", ""),
         )
 
 
@@ -2753,6 +2940,9 @@ class MainWindow(QMainWindow):
             last_holiday_event=qs.value("last_holiday_event", ""),
             pre_event_app_icon=qs.value("pre_event_app_icon", "fluent"),
             pre_event_board_template=qs.value("pre_event_board_template", "brown_tan"),
+            pre_event_background_template=qs.value("pre_event_background_template", "dark"),
+            ui_color=qs.value("ui_color", ""),
+            accent_color=qs.value("accent_color", ""),
         )
         self._last_exe_icon_id = None
         self._updating_exit = False
@@ -2760,6 +2950,17 @@ class MainWindow(QMainWindow):
         self._survey_prompted = False
         self.channel_worker = None
         self._bg_pixmap = None
+        self._christmas_phase = 0.0
+        self._christmas_timer = QTimer(self)
+        self._christmas_timer.setInterval(140)
+        self._christmas_timer.timeout.connect(self._tick_christmas_theme)
+        self._fireworks_active = False
+        self._fireworks_rockets = []
+        self._fireworks_sparks = []
+        self._fireworks_last_ts = time.monotonic()
+        self._fireworks_timer = QTimer(self)
+        self._fireworks_timer.setInterval(33)
+        self._fireworks_timer.timeout.connect(self._tick_fireworks)
         styles.load(qs)
         self.sound = SoundPlayer()
         self.holder = EngineHolder()
@@ -3545,6 +3746,121 @@ class MainWindow(QMainWindow):
         self.profile_btn.refresh(self.settings.player_name)
         self.update_player_bars()
 
+    _FIREWORK_COLORS = ("#fbbf24", "#38bdf8", "#f472b6", "#4ade80", "#fb7185", "#a78bfa", "#ff8a65", "#facc15")
+
+    def _spawn_firework_burst(self, cx: float, cy: float, color_hex: str = None):
+        col = color_hex or random.choice(self._FIREWORK_COLORS)
+        col2 = random.choice(self._FIREWORK_COLORS)
+        count = random.randint(42, 58)
+        for i in range(count):
+            ang = (2.0 * math.pi * i) / count + random.uniform(-0.08, 0.08)
+            spd = random.uniform(95.0, 260.0)
+            c = col if (i % 3 != 0) else col2
+            self._fireworks_sparks.append([
+                float(cx), float(cy),
+                math.cos(ang) * spd, math.sin(ang) * spd,
+                0.0, random.uniform(1.05, 1.7), c, random.uniform(2.6, 4.4),
+            ])
+
+    def _launch_firework_rocket(self, w: int, h: int):
+        x = random.uniform(max(40.0, 0.08 * w), max(80.0, 0.92 * w))
+        vx = random.uniform(-42.0, 42.0)
+        vy = -random.uniform(max(260.0, 0.45 * h), max(410.0, 0.72 * h))
+        target_y = random.uniform(max(40.0, 0.12 * h), max(90.0, 0.62 * h))
+        col = random.choice(self._FIREWORK_COLORS)
+        self._fireworks_rockets.append([x, float(h + 6), vx, vy, target_y, col])
+
+    def _step_fireworks_dt(self, dt: float, w: int, h: int):
+        next_rockets = []
+        for r in self._fireworks_rockets:
+            r[0] += r[2] * dt
+            r[1] += r[3] * dt
+            r[3] += 110.0 * dt
+            if r[1] <= r[4] or r[3] >= -20.0:
+                self._spawn_firework_burst(r[0], r[1], r[5])
+            else:
+                next_rockets.append(r)
+        self._fireworks_rockets = next_rockets
+
+        drag = pow(0.35, dt)
+        next_sparks = []
+        for s in self._fireworks_sparks:
+            s[4] += dt
+            if s[4] < s[5]:
+                s[2] *= drag
+                s[3] = s[3] * drag + 88.0 * dt
+                s[0] += s[2] * dt
+                s[1] += s[3] * dt
+                next_sparks.append(s)
+        self._fireworks_sparks = next_sparks
+
+        if len(self._fireworks_rockets) < 2 and (len(self._fireworks_sparks) < 75 or random.random() < 0.10):
+            self._launch_firework_rocket(w, h)
+
+    def _seed_fireworks(self):
+        self._fireworks_rockets.clear()
+        self._fireworks_sparks.clear()
+        self._fireworks_last_ts = time.monotonic()
+        w = max(800, self.width())
+        h = max(600, self.height())
+        self._spawn_firework_burst(w * 0.72, h * 0.25, "#fbbf24")
+        self._spawn_firework_burst(w * 0.84, h * 0.52, "#38bdf8")
+        self._spawn_firework_burst(w * 0.63, h * 0.72, "#f472b6")
+        self._launch_firework_rocket(w, h)
+        self._launch_firework_rocket(w, h)
+        for _ in range(7):
+            self._step_fireworks_dt(0.035, w, h)
+
+    def _tick_fireworks(self):
+        if not self._fireworks_active:
+            return
+        now = time.monotonic()
+        dt = min(0.06, max(0.005, now - self._fireworks_last_ts))
+        self._fireworks_last_ts = now
+        w = max(320, self.width())
+        h = max(240, self.height())
+        self._step_fireworks_dt(dt, w, h)
+        self.update()
+
+    def _draw_fireworks(self, p: QPainter, bg_hex: str):
+        p.fillRect(self.rect(), QColor(bg_hex or "#0b0e17"))
+        p.setRenderHint(QPainter.Antialiasing, True)
+        for rx, ry, rvx, rvy, _ty, rcol in self._fireworks_rockets:
+            qc = QColor(rcol)
+            qc.setAlpha(240)
+            p.setPen(QPen(qc, 2.5))
+            p.drawLine(QPointF(rx, ry), QPointF(rx - rvx * 0.055, ry - rvy * 0.055))
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 255, 255, 245))
+            p.drawEllipse(QPointF(rx, ry), 2.8, 2.8)
+        for sx, sy, svx, svy, age, life, scol, ssz in self._fireworks_sparks:
+            frac = max(0.0, 1.0 - (age / max(0.05, life)))
+            alpha = int(255 * pow(frac, 1.35))
+            if alpha <= 4:
+                continue
+            qc = QColor(scol)
+            # Soft outer glow halo
+            qc_glow = QColor(qc)
+            qc_glow.setAlpha(int(alpha * 0.30))
+            p.setPen(Qt.NoPen)
+            p.setBrush(qc_glow)
+            r_glow = ssz * (1.55 + 0.65 * frac)
+            p.drawEllipse(QPointF(sx, sy), r_glow, r_glow)
+            # Comet tail
+            qc_tail = QColor(qc)
+            qc_tail.setAlpha(int(alpha * 0.70))
+            p.setPen(QPen(qc_tail, max(1.4, ssz * 0.65)))
+            p.drawLine(QPointF(sx, sy), QPointF(sx - svx * 0.05, sy - svy * 0.05))
+            # Bright inner star
+            qc.setAlpha(alpha)
+            p.setPen(Qt.NoPen)
+            p.setBrush(qc)
+            r_dot = ssz * (0.62 + 0.48 * frac)
+            p.drawEllipse(QPointF(sx, sy), r_dot, r_dot)
+            if frac > 0.45:
+                p.setBrush(QColor(255, 255, 255, int(alpha * 0.75)))
+                p.drawEllipse(QPointF(sx, sy), r_dot * 0.45, r_dot * 0.45)
+
     def paintEvent(self, e):
         if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
             p = QPainter(self)
@@ -3556,14 +3872,62 @@ class MainWindow(QMainWindow):
             p.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
             p.fillRect(self.rect(), QColor(0, 0, 0, 85))
             return
+        if self._fireworks_active:
+            p = QPainter(self)
+            bg = themes.get_background_template(
+                getattr(self.settings, "background_template", "new_year"),
+                disable_holidays=bool(getattr(self.settings, "disable_holiday_events", False)),
+            )
+            pal = themes.get_theme_palette(
+                bg,
+                ui_color=getattr(self.settings, "ui_color", ""),
+                accent_color=getattr(self.settings, "accent_color", ""),
+            )
+            self._draw_fireworks(p, pal["bg"])
+            return
         super().paintEvent(e)
+
+    def _apply_theme_only(self, bg: dict, is_custom_image: bool, phase: float = 0.0):
+        ui_col = getattr(self.settings, "ui_color", "")
+        acc_col = getattr(self.settings, "accent_color", "")
+        qss = themes.build_app_stylesheet(
+            bg, is_custom_image=is_custom_image, ui_color=ui_col, accent_color=acc_col, phase=phase
+        )
+        app_inst = QApplication.instance()
+        if app_inst is not None:
+            app_inst.setStyleSheet(qss)
+            self.setStyleSheet("")
+        else:
+            self.setStyleSheet(qss)
+        pal = themes.get_theme_palette(bg, ui_color=ui_col, accent_color=acc_col, phase=phase)
+        self.top_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
+        self.bottom_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
+        self.profile_btn.set_theme(
+            pal["bar_bg"], pal["bar_fg"], pal["bar_border"], pal["muted"], pal["btn_hover"], pal["accent"]
+        )
+        self.graph.set_theme(pal["graph_bg"], pal["graph_fill"], pal["graph_mid"], pal["border"])
+
+    def _tick_christmas_theme(self):
+        dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
+        bg = themes.get_background_template(
+            getattr(self.settings, "background_template", "dark"),
+            disable_holidays=dis_hol,
+        )
+        if bg.get("animated") != "christmas_shift":
+            self._christmas_timer.stop()
+            return
+        self._christmas_phase = (self._christmas_phase + 0.006) % 1.0
+        if QApplication.activePopupWidget() is not None:
+            return
+        has_img = self._bg_pixmap is not None and not self._bg_pixmap.isNull()
+        self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
 
     def apply_customizations(self):
         """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
         if themes.sync_holiday_event_state(self.settings):
             for k in (
-                "app_icon", "board_template", "last_holiday_event",
-                "pre_event_app_icon", "pre_event_board_template",
+                "app_icon", "board_template", "background_template", "last_holiday_event",
+                "pre_event_app_icon", "pre_event_board_template", "pre_event_background_template",
             ):
                 self.qs.setValue(k, getattr(self.settings, k))
         dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
@@ -3625,25 +3989,35 @@ class MainWindow(QMainWindow):
         icons.set_template(anno_tpl)
         styles.set_template(anno_tpl)
 
-        # 5. Background Template & Global UI Theme
-        bg = themes.get_background_template(getattr(self.settings, "background_template", "dark"))
+        # 6. Background Template, Animated Holiday Effects & Global UI Theme
+        bg = themes.get_background_template(
+            getattr(self.settings, "background_template", "dark"),
+            disable_holidays=dis_hol,
+        )
         img_path = bg.get("image_path") or ""
         has_img = bool(img_path and os.path.exists(img_path))
         self._bg_pixmap = QPixmap(img_path) if has_img else None
 
-        qss = themes.build_app_stylesheet(bg, is_custom_image=has_img)
-        app_inst = QApplication.instance()
-        if app_inst is not None:
-            app_inst.setStyleSheet(qss)
-            self.setStyleSheet("")
+        anim_mode = bg.get("animated") or ""
+        if anim_mode == "christmas_shift":
+            if not self._christmas_timer.isActive():
+                self._christmas_timer.start()
         else:
-            self.setStyleSheet(qss)
+            self._christmas_timer.stop()
 
-        pal = themes.get_theme_palette(bg)
-        self.top_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
-        self.bottom_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
-        self.profile_btn.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"], pal["muted"], pal["btn_hover"])
-        self.graph.set_theme(pal["graph_bg"], pal["graph_fill"], pal["graph_mid"], pal["border"])
+        if anim_mode == "fireworks" and not has_img:
+            if not self._fireworks_active:
+                self._fireworks_active = True
+                self._seed_fireworks()
+            if not self._fireworks_timer.isActive():
+                self._fireworks_timer.start()
+        else:
+            self._fireworks_active = False
+            self._fireworks_timer.stop()
+            self._fireworks_rockets.clear()
+            self._fireworks_sparks.clear()
+
+        self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
         self.update()
 
     def apply_profile_dialog(self, d: ProfileDialog):
@@ -3662,17 +4036,20 @@ class MainWindow(QMainWindow):
         styles.save(self.qs)
         icons._cache.clear()
 
-        if (old_name or "").strip().lower() != self.settings.player_name.lower() and self.game:
-            self.orient()
-            if self.settings.scope != "all":
-                self.restart_all()
+        name_changed = (old_name or "").strip().lower() != self.settings.player_name.lower()
+        if name_changed:
+            for j in self.jobs:
+                if j.results:
+                    A.reclassify_results(j.game, j.results, self.settings)
         if self.game:
+            if name_changed:
+                self.orient()
             for k in range(len(self.basic)):
-                self.render_row(k)
-            self.update_stats()
-            self.go(self.cur)
+                self.set_row(k)
+            self.refresh_graph()
+            self.update_accuracy(final=bool(self.job and self.job.done))
+            self.goto(self.cur, animate=False, play_sound=False)
 
-        self.apply_customizations()
         self.refresh_profile_ui()
 
     def open_profile(self):
@@ -3935,27 +4312,18 @@ class MainWindow(QMainWindow):
             self.evalbar.formula = s.eval_formula
             self.graph.formula = s.eval_formula
 
-            # Only re-analyze with Stockfish if engine or search-depth/scope parameters changed.
+            # Only re-analyze with Stockfish if engine or search-depth parameters changed.
             engine_changed = (
                 old.threads != s.threads
                 or old.hash_mb != s.hash_mb
                 or old.engine_path != s.engine_path
             )
-            analysis_changed = (
-                engine_changed
-                or old.scope != s.scope
-                or old.depth != s.depth
-                or (s.scope == "mine_brilliant" and old.lenient_brilliant != s.lenient_brilliant)
-                or (
-                    s.scope != "all"
-                    and (
-                        old.side != s.side
-                        or (old.player_name or "").strip().lower() != (s.player_name or "").strip().lower()
-                    )
-                )
-            )
+            analysis_changed = engine_changed or old.depth != s.depth
             reclassify_needed = (
-                old.annotation_system != s.annotation_system
+                old.scope != s.scope
+                or old.side != s.side
+                or (old.player_name or "").strip().lower() != (s.player_name or "").strip().lower()
+                or old.annotation_system != s.annotation_system
                 or old.lenient_brilliant != s.lenient_brilliant
             )
             if analysis_changed:
@@ -3982,6 +4350,11 @@ class MainWindow(QMainWindow):
                     self.graph.update()
 
     def closeEvent(self, e):
+        try:
+            self._christmas_timer.stop()
+            self._fireworks_timer.stop()
+        except Exception:
+            pass
         try:
             self.maybe_prompt_survey()
         except Exception:

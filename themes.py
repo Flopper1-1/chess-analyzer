@@ -2,7 +2,9 @@
 board templates, background themes, and piece templates.
 """
 from datetime import datetime
+import colorsys
 import json
+import math
 import os
 import random
 import re
@@ -184,6 +186,56 @@ BUILTIN_BACKGROUNDS = [
         "locked": True,
     },
 ]
+
+HOLIDAY_BACKGROUNDS = {
+    "halloween": {
+        "id": "halloween",
+        "name": "Halloween (Orange)",
+        "window_bg": "#b54500",
+        "panel_bg": "#963800",
+        "button_bg": "#c9540a",
+        "button_border": "#ffa347",
+        "header_bg": "#8f3200",
+        "text_fg": "#fff4e6",
+        "grid_fg": "#c9540a",
+        "accent_bg": "#ff8f1f",
+        "image_path": "",
+        "locked": True,
+        "holiday": True,
+    },
+    "christmas": {
+        "id": "christmas",
+        "name": "Christmas (Red & Green Shift)",
+        "window_bg": "#7c1414",
+        "panel_bg": "#115928",
+        "button_bg": "#941b1b",
+        "button_border": "#22c55e",
+        "header_bg": "#5e1010",
+        "text_fg": "#ffffff",
+        "grid_fg": "#1e6e36",
+        "accent_bg": "#16a34a",
+        "image_path": "",
+        "locked": True,
+        "holiday": True,
+        "animated": "christmas_shift",
+    },
+    "new_year": {
+        "id": "new_year",
+        "name": "New Year's (Dark Fireworks)",
+        "window_bg": "#0b0e17",
+        "panel_bg": "#141827",
+        "button_bg": "#1e2438",
+        "button_border": "#334155",
+        "header_bg": "#141827",
+        "text_fg": "#eef2ff",
+        "grid_fg": "#232b42",
+        "accent_bg": "#fbbf24",
+        "image_path": "",
+        "locked": True,
+        "holiday": True,
+        "animated": "fireworks",
+    },
+}
 
 _NEW_YEAR_LIGHT_CHOICES = [
     "#ffd54f", "#ff8a65", "#4dd0e1", "#aed581", "#ba68c8",
@@ -672,8 +724,13 @@ def backgrounds_dir() -> str:
     return d
 
 
-def list_background_templates() -> List[dict]:
+def list_background_templates(disable_holidays: bool = False) -> List[dict]:
     out = [dict(b) for b in BUILTIN_BACKGROUNDS]
+    if not disable_holidays:
+        for hid in HOLIDAY_IDS:
+            hb = HOLIDAY_BACKGROUNDS.get(hid)
+            if hb:
+                out.append(dict(hb))
     root = backgrounds_dir()
     for folder in sorted(os.listdir(root)):
         manifest = os.path.join(root, folder, "template.json")
@@ -689,11 +746,47 @@ def list_background_templates() -> List[dict]:
     return out
 
 
-def get_background_template(bg_id: str) -> dict:
-    for bg in list_background_templates():
+def get_background_template(bg_id: str, disable_holidays: bool = False) -> dict:
+    for bg in list_background_templates(disable_holidays=disable_holidays):
         if bg["id"] == bg_id:
             return bg
     return dict(BUILTIN_BACKGROUNDS[0])
+
+
+def create_custom_color_background(name: str, ui_color: str, accent_color: str = "") -> Optional[dict]:
+    ui_hex = normalize_hex(ui_color)
+    if not ui_hex:
+        return None
+    acc_hex = normalize_hex(accent_color)
+    clean = (name or "").strip() or f"Custom {ui_hex}"
+    slug = _slugify(clean, "bg_color")
+    root = backgrounds_dir()
+    folder = slug
+    idx = 2
+    while os.path.exists(os.path.join(root, folder)):
+        folder = f"{slug}_{idx}"
+        idx += 1
+    bdir = os.path.join(root, folder)
+    os.makedirs(bdir, exist_ok=True)
+    pal = get_theme_palette({"id": "dark"}, ui_color=ui_hex, accent_color=acc_hex)
+    data = {
+        "id": f"custom:{folder}",
+        "name": clean,
+        "window_bg": pal["bg"],
+        "panel_bg": pal["panel"],
+        "button_bg": pal["btn_bg"],
+        "button_border": pal["border"],
+        "header_bg": pal["panel"],
+        "text_fg": pal["fg"],
+        "grid_fg": pal["border"],
+        "ui_color": ui_hex,
+        "accent_color": acc_hex or pal["accent"],
+        "image_path": "",
+        "locked": False,
+    }
+    with open(os.path.join(bdir, "template.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return data
 
 
 def create_custom_background(name: str, image_path: str) -> Optional[dict]:
@@ -989,11 +1082,156 @@ def delete_annotation_template(template_id: str) -> bool:
 
 
 # ---------------------------------------------------------------- Theme Palette & Stylesheet
-def get_theme_palette(bg: dict) -> dict:
-    """Return UI palette tokens derived from a background template."""
+def normalize_hex(color: str) -> str:
+    """Validate and normalize a CSS hex color string to '#rrggbb', else ''."""
+    s = (color or "").strip()
+    if not s:
+        return ""
+    qc = QColor(s)
+    if not qc.isValid():
+        return ""
+    return qc.name(QColor.HexRgb).lower()
+
+
+def _hex_rgb(hex_color: str) -> tuple:
+    qc = QColor(normalize_hex(hex_color) or "#1e1e1e")
+    return qc.red(), qc.green(), qc.blue()
+
+
+def relative_luminance(hex_color: str) -> float:
+    """Compute WCAG relative luminance [0.0..1.0] for an opaque hex color."""
+    r, g, b = _hex_rgb(hex_color)
+    def _lin(c: int) -> float:
+        x = c / 255.0
+        return x / 12.92 if x <= 0.03928 else ((x + 0.055) / 1.055) ** 2.4
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def contrast_fg(bg_hex: str) -> str:
+    """Choose crisp black or white foreground text for a given background color."""
+    return "#111827" if relative_luminance(bg_hex) > 0.26 else "#ffffff"
+
+
+def shift_lightness(hex_color: str, delta: float) -> str:
+    """Adjust HLS lightness of hex_color by delta cleanly."""
+    r, g, b = _hex_rgb(hex_color)
+    h, l, s = colorsys.rgb_to_hls(r / 255.0, g / 255.0, b / 255.0)
+    l2 = max(0.0, min(1.0, l + delta))
+    r2, g2, b2 = colorsys.hls_to_rgb(h, l2, s)
+    return "#{:02x}{:02x}{:02x}".format(
+        max(0, min(255, int(round(r2 * 255)))),
+        max(0, min(255, int(round(g2 * 255)))),
+        max(0, min(255, int(round(b2 * 255)))),
+    )
+
+
+def blend_hex(c1: str, c2: str, t: float) -> str:
+    """Linearly interpolate between two hex colors at ratio t in [0.0, 1.0]."""
+    ratio = max(0.0, min(1.0, float(t)))
+    r1, g1, b1 = _hex_rgb(c1)
+    r2, g2, b2 = _hex_rgb(c2)
+    return "#{:02x}{:02x}{:02x}".format(
+        int(round(r1 + (r2 - r1) * ratio)),
+        int(round(g1 + (g2 - g1) * ratio)),
+        int(round(b1 + (b2 - b1) * ratio)),
+    )
+
+
+def rgba_css(hex_color: str, alpha: int = 215) -> str:
+    """Format hex_color as CSS 'rgba(r, g, b, a)'."""
+    r, g, b = _hex_rgb(hex_color)
+    a = max(0, min(255, int(alpha)))
+    return f"rgba({r}, {g}, {b}, {a})"
+
+
+def christmas_palette(phase: float = 0.0) -> dict:
+    """Return a Christmas UI palette slowly shifting between crimson red and pine green."""
+    w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
+    w = w * w * (3.0 - 2.0 * w)
+    if w <= 0.5:
+        u = w * 2.0
+        bg = blend_hex("#7c1414", "#6e4e10", u)
+        accent = blend_hex("#16a34a", "#eab308", u)
+        border = blend_hex("#f87171", "#fbbf24", u)
+    else:
+        u = (w - 0.5) * 2.0
+        bg = blend_hex("#6e4e10", "#115928", u)
+        accent = blend_hex("#eab308", "#dc2626", u)
+        border = blend_hex("#fbbf24", "#4ade80", u)
+    panel = shift_lightness(bg, -0.05)
+    surface = shift_lightness(bg, -0.08)
+    surface_alt = shift_lightness(bg, -0.02)
+    btn_bg = shift_lightness(bg, 0.05)
+    btn_hover = shift_lightness(bg, 0.13)
+    fg = "#ffffff"
+    return {
+        "bg": bg,
+        "panel": panel,
+        "surface": surface,
+        "surface_alt": surface_alt,
+        "fg": fg,
+        "muted": "#fde68a",
+        "border": border,
+        "accent": accent,
+        "accent_fg": contrast_fg(accent),
+        "btn_bg": btn_bg,
+        "btn_hover": btn_hover,
+        "btn_hover_fg": fg,
+        "graph_bg": surface,
+        "graph_fill": "#f8fafc",
+        "graph_mid": accent,
+        "bar_bg": panel,
+        "bar_border": border,
+        "bar_fg": fg,
+    }
+
+
+def apply_color_overrides(pal: dict, ui_color: str = "", accent_color: str = "") -> dict:
+    """Derive a full cohesive palette when custom UI or accent colors are set."""
+    p = dict(pal)
+    ui_hex = normalize_hex(ui_color)
+    acc_hex = normalize_hex(accent_color)
+    if ui_hex:
+        is_light = relative_luminance(ui_hex) > 0.42
+        fg = "#111827" if is_light else "#f3f4f6"
+        muted = "#4b5563" if is_light else "#cbd5e1"
+        panel = shift_lightness(ui_hex, -0.05 if is_light else 0.05)
+        surface = shift_lightness(ui_hex, 0.06 if is_light else 0.06)
+        surface_alt = shift_lightness(ui_hex, -0.03 if is_light else 0.11)
+        btn_bg = shift_lightness(ui_hex, 0.05 if is_light else 0.10)
+        btn_hover = shift_lightness(ui_hex, -0.09 if is_light else 0.18)
+        border = shift_lightness(ui_hex, -0.20 if is_light else 0.22)
+        p.update({
+            "bg": ui_hex,
+            "panel": panel,
+            "surface": surface,
+            "surface_alt": surface_alt,
+            "fg": fg,
+            "muted": muted,
+            "border": border,
+            "btn_bg": btn_bg,
+            "btn_hover": btn_hover,
+            "btn_hover_fg": fg,
+            "graph_bg": panel if is_light else surface,
+            "graph_fill": "#ffffff" if is_light else "#e5e7eb",
+            "bar_bg": panel,
+            "bar_border": border,
+            "bar_fg": fg,
+        })
+    if acc_hex:
+        p["accent"] = acc_hex
+        p["accent_fg"] = contrast_fg(acc_hex)
+        p["graph_mid"] = acc_hex
+    acc_lum = relative_luminance(p["accent"])
+    p["accent_hover"] = shift_lightness(p["accent"], -0.08 if acc_lum > 0.4 else 0.09)
+    return p
+
+
+def get_theme_palette(bg: dict, ui_color: str = "", accent_color: str = "", phase: float = 0.0) -> dict:
+    """Return UI palette tokens derived from a background template and optional color overrides."""
     bg_id = bg.get("id", "dark")
     if bg_id == "light":
-        return {
+        base = {
             "bg": "#f3f4f6",
             "panel": "#e5e7eb",
             "surface": "#ffffff",
@@ -1013,8 +1251,8 @@ def get_theme_palette(bg: dict) -> dict:
             "bar_border": "#cbd5e1",
             "bar_fg": "#111827",
         }
-    if bg_id == "high_contrast":
-        return {
+    elif bg_id == "high_contrast":
+        base = {
             "bg": "#000000",
             "panel": "#000000",
             "surface": "#0a0a0a",
@@ -1034,8 +1272,8 @@ def get_theme_palette(bg: dict) -> dict:
             "bar_border": "#ffffff",
             "bar_fg": "#ffffff",
         }
-    if bg_id == "aqua_blue":
-        return {
+    elif bg_id == "aqua_blue":
+        base = {
             "bg": "#0b2230",
             "panel": "#102d3e",
             "surface": "#123447",
@@ -1055,32 +1293,90 @@ def get_theme_palette(bg: dict) -> dict:
             "bar_border": "#26c6da",
             "bar_fg": "#e6f7ff",
         }
-    return {
-        "bg": "#1e1e1e",
-        "panel": "#252526",
-        "surface": "#252526",
-        "surface_alt": "#2d2d30",
-        "fg": "#e6e6e6",
-        "muted": "#aaaaaa",
-        "border": "#3f3f46",
-        "accent": "#2b6cb0",
-        "accent_fg": "#ffffff",
-        "btn_bg": "#2d2d30",
-        "btn_hover": "#3e3e42",
-        "btn_hover_fg": "#e6e6e6",
-        "graph_bg": "#262626",
-        "graph_fill": "#d9d9d9",
-        "graph_mid": "#777777",
-        "bar_bg": "#232323",
-        "bar_border": "#3a3a3a",
-        "bar_fg": "#e6e6e6",
-    }
+    elif bg_id == "halloween":
+        base = {
+            "bg": "#b54500",
+            "panel": "#963800",
+            "surface": "#853000",
+            "surface_alt": "#9c3c02",
+            "fg": "#fff4e6",
+            "muted": "#ffd1a3",
+            "border": "#ffa347",
+            "accent": "#ff8f1f",
+            "accent_fg": "#1a0900",
+            "btn_bg": "#c9540a",
+            "btn_hover": "#e86917",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#853000",
+            "graph_fill": "#ffe8cc",
+            "graph_mid": "#ff8f1f",
+            "bar_bg": "#963800",
+            "bar_border": "#ffa347",
+            "bar_fg": "#fff4e6",
+        }
+    elif bg_id == "christmas":
+        base = christmas_palette(phase)
+    elif bg_id == "new_year":
+        base = {
+            "bg": "#0b0e17",
+            "panel": "#141827",
+            "surface": "#141827",
+            "surface_alt": "#1c2236",
+            "fg": "#eef2ff",
+            "muted": "#94a3b8",
+            "border": "#334155",
+            "accent": "#fbbf24",
+            "accent_fg": "#111827",
+            "btn_bg": "#1e2438",
+            "btn_hover": "#2c3552",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#111522",
+            "graph_fill": "#e2e8f0",
+            "graph_mid": "#fbbf24",
+            "bar_bg": "#141827",
+            "bar_border": "#334155",
+            "bar_fg": "#eef2ff",
+        }
+    else:
+        base = {
+            "bg": "#1e1e1e",
+            "panel": "#252526",
+            "surface": "#252526",
+            "surface_alt": "#2d2d30",
+            "fg": "#e6e6e6",
+            "muted": "#aaaaaa",
+            "border": "#3f3f46",
+            "accent": "#2b6cb0",
+            "accent_fg": "#ffffff",
+            "btn_bg": "#2d2d30",
+            "btn_hover": "#3e3e42",
+            "btn_hover_fg": "#e6e6e6",
+            "graph_bg": "#262626",
+            "graph_fill": "#d9d9d9",
+            "graph_mid": "#777777",
+            "bar_bg": "#232323",
+            "bar_border": "#3a3a3a",
+            "bar_fg": "#e6e6e6",
+        }
+    eff_ui = normalize_hex(ui_color) or normalize_hex(bg.get("ui_color", ""))
+    eff_acc = normalize_hex(accent_color) or normalize_hex(bg.get("accent_color", ""))
+    return apply_color_overrides(base, ui_color=eff_ui, accent_color=eff_acc)
 
 
-def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
+def build_app_stylesheet(
+    bg: dict,
+    is_custom_image: bool = False,
+    ui_color: str = "",
+    accent_color: str = "",
+    phase: float = 0.0,
+) -> str:
     """Build a complete Qt stylesheet covering MainWindow, Dialogs, Tabs, and Inputs."""
-    p = get_theme_palette(bg)
-    main_bg = "transparent" if is_custom_image else p["bg"]
+    p = get_theme_palette(bg, ui_color=ui_color, accent_color=accent_color, phase=phase)
+    animated_bg = bg.get("animated") or ""
+    is_fireworks = animated_bg == "fireworks"
+    main_bg = "transparent" if (is_custom_image or is_fireworks) else p["bg"]
+    toolbar_bg = rgba_css(p["panel"], 165) if is_fireworks else p["panel"]
+    pane_bg = rgba_css(p["surface"], 145) if is_fireworks else p["surface"]
     border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
     return f"""
         QMainWindow {{
@@ -1095,7 +1391,7 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             color: {p['fg']};
         }}
         QToolBar {{
-            background-color: {p['panel']};
+            background-color: {toolbar_bg};
             border-bottom: {border_w} solid {p['border']};
             spacing: 4px;
             padding: 2px 4px;
@@ -1132,10 +1428,21 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             border-top-left-radius: 4px;
             border-top-right-radius: 4px;
         }}
+        QTabBar::tab:hover {{
+            background-color: {p['btn_hover']};
+            color: {p['btn_hover_fg']};
+            border-color: {p['accent']};
+        }}
         QTabBar::tab:selected {{
             background-color: {p['accent']};
             color: {p['accent_fg']};
+            border-color: {p['accent']};
             font-weight: bold;
+        }}
+        QTabBar::tab:selected:hover {{
+            background-color: {p['accent_hover']};
+            color: {p['accent_fg']};
+            border-color: {p['fg']};
         }}
         QGroupBox {{
             border: {border_w} solid {p['border']};
@@ -1173,7 +1480,7 @@ def build_app_stylesheet(bg: dict, is_custom_image: bool = False) -> str:
             selection-color: {p['accent_fg']};
         }}
         QTableWidget, QListWidget, QTreeWidget {{
-            background-color: {p['surface']};
+            background-color: {pane_bg};
             color: {p['fg']};
             border: {border_w} solid {p['border']};
             gridline-color: {p['border']};
@@ -1256,25 +1563,38 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
         if last != cur:
             cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
             cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
+            cur_bg = getattr(settings, "background_template", "dark") or "dark"
             if cur_icon not in HOLIDAY_IDS:
                 settings.pre_event_app_icon = cur_icon
             if cur_board not in HOLIDAY_IDS:
                 settings.pre_event_board_template = cur_board
+            if cur_bg not in HOLIDAY_IDS:
+                settings.pre_event_background_template = cur_bg
             settings.app_icon = cur
             if cur in HOLIDAY_BOARDS:
                 settings.board_template = cur
+            if cur in HOLIDAY_BACKGROUNDS:
+                settings.background_template = cur
             settings.last_holiday_event = cur
             changed = True
     else:
         cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
         cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
-        if last or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS:
+        cur_bg = getattr(settings, "background_template", "dark") or "dark"
+        if last or disabled or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS:
             pre_icon = getattr(settings, "pre_event_app_icon", "fluent") or "fluent"
             pre_board = getattr(settings, "pre_event_board_template", "brown_tan") or "brown_tan"
+            pre_bg = getattr(settings, "pre_event_background_template", "dark") or "dark"
             if cur_icon in HOLIDAY_IDS or last:
                 settings.app_icon = pre_icon if pre_icon not in HOLIDAY_IDS else "fluent"
+                changed = True
             if cur_board in HOLIDAY_IDS or last:
                 settings.board_template = pre_board if pre_board not in HOLIDAY_IDS else "brown_tan"
-            settings.last_holiday_event = ""
-            changed = True
+                changed = True
+            if (last or disabled) and cur_bg in HOLIDAY_IDS:
+                settings.background_template = pre_bg if pre_bg not in HOLIDAY_IDS else "dark"
+                changed = True
+            if last:
+                settings.last_holiday_event = ""
+                changed = True
     return changed

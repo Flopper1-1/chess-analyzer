@@ -8,7 +8,7 @@ import tempfile
 import urllib.request
 from typing import Callable, Optional, Tuple
 
-APP_VERSION = "v1.10.0-beta.9"
+APP_VERSION = "v1.10.0-beta.10"
 GITHUB_REPO = "Flopper1-1/chess-analyzer"
 RELEASES_LATEST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 RELEASES_LIST_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases"

@@ -209,8 +209,8 @@ def extract_game_clocks(game) -> dict:
 
 @dataclass
 class Settings:
-    scope: str = "all"                  # all | mine | mine_brilliant
-    side: str = "both"                  # white | black | both
+    scope: str = "all"                  # all | mine | mine_brilliant | mine_bbm
+    side: str = "both"                  # white | black | both | auto
     player_name: str = ""
     depth: int = 16
     threads: int = 1
@@ -235,6 +235,9 @@ class Settings:
     last_holiday_event: str = ""
     pre_event_app_icon: str = "fluent"
     pre_event_board_template: str = "brown_tan"
+    pre_event_background_template: str = "dark"
+    ui_color: str = ""
+    accent_color: str = ""
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""
@@ -259,7 +262,25 @@ class Settings:
                 side = "white"
             elif b and not w:
                 side = "black"
-        return {"white": {chess.WHITE}, "black": {chess.BLACK}, "both": {chess.WHITE, chess.BLACK}}[side]
+        return {
+            "white": {chess.WHITE},
+            "black": {chess.BLACK},
+            "both": {chess.WHITE, chess.BLACK},
+            "auto": {chess.WHITE, chess.BLACK},
+        }.get((side or "both").lower(), {chess.WHITE, chess.BLACK})
+
+
+def _scope_allows(sym: str, mover: bool, tracked: set, scope: str, is_book: bool = False) -> bool:
+    """Return True if a move symbol should be displayed under the configured analysis scope."""
+    if scope == "all" or mover in tracked:
+        return True
+    if is_book:
+        return False
+    if scope == "mine_brilliant":
+        return sym == "!!"
+    if scope == "mine_bbm":
+        return sym in ("!!", "??", "miss")
+    return False
 
 
 @dataclass
@@ -413,7 +434,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             return False
         if i not in full_cache:
             full_cache[i] = tracked_mover(i) or (
-                settings.scope == "mine_brilliant" and (
+                settings.scope in ("mine_brilliant", "mine_bbm") and (
                     C.is_sacrifice(boards[i], moves[i], sac_threshold)
                     or C.is_underpromotion(moves[i])
                 ))
@@ -497,7 +518,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         if b.legal_moves.count() == 1 and not r.book:
             # only one legal move: forced, never judged
             r.symbol, r.analysed = "forced", tracked_mover(i)
-        elif before and is_full(i) and after_score is not None:
+        elif before and after_score is not None:
             best_cp = _norm_cp(C.cp_of(before[0]["score"].pov(mover)))
             after_cp = _norm_cp(C.cp_of(after_score.pov(mover)))
             is_capture = b.is_capture(mv)
@@ -609,32 +630,34 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 prev_critical=prev_critical,
                 already_overwhelming=already_overwhelming,
             )
-            if mover not in tracked and not all_scope and sym != "!!":
-                pass  # untracked opponent move: only brilliants are reported
-            else:
-                r.symbol, r.loss, r.analysed = sym, loss, True
-                r.brilliant_type = ""
-                if r.book:
-                    r.symbol = "/"
-                elif r.symbol == "!!":
+            r.loss, r.analysed = loss, True
+            r.brilliant_type = ""
+            if r.book:
+                r.symbol = "/" if _scope_allows("/", mover, tracked, settings.scope, is_book=True) else ""
+            elif _scope_allows(sym, mover, tracked, settings.scope):
+                r.symbol = sym
+                if r.symbol == "!!":
                     r.brilliant_type = C.brilliant_category(b, mv)
+            else:
+                r.symbol = ""
 
-                # Chess.com Game Review continuity: when a non-book move is the engine's top move
-                # (Best, Great, or Brilliant), the position's evaluation remains unchanged from the
-                # evaluation entering the move.
-                if (
-                    (is_best or r.symbol == "!!")
-                    and not r.book
-                    and r.symbol in ("+++", "!", "!!")
-                    and i > 0
-                    and results[i - 1].eval_after is not None
-                    and not C.is_deadlocked_position(boards[i + 1], after_pv)
-                ):
-                    r.eval_before = results[i - 1].eval_after
-                    r.eval_after = results[i - 1].eval_after
-                    r.eval_after_text = results[i - 1].eval_after_text
-        elif r.book and tracked_mover(i):
-            r.symbol, r.analysed = "/", True
+            # Chess.com Game Review continuity: when a non-book move is the engine's top move
+            # (Best, Great, or Brilliant), the position's evaluation remains unchanged from the
+            # evaluation entering the move.
+            if (
+                (is_best or sym == "!!")
+                and not r.book
+                and sym in ("+++", "!", "!!")
+                and i > 0
+                and results[i - 1].eval_after is not None
+                and not C.is_deadlocked_position(boards[i + 1], after_pv)
+            ):
+                r.eval_before = results[i - 1].eval_after
+                r.eval_after = results[i - 1].eval_after
+                r.eval_after_text = results[i - 1].eval_after_text
+        elif r.book:
+            r.analysed = True
+            r.symbol = "/" if _scope_allows("/", mover, tracked, settings.scope, is_book=True) else ""
         return r
 
     for i in range(n + 1):
@@ -643,7 +666,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         b = boards[i]
         if is_full(i) or (i == n and all_scope):
             infos[i] = analyse_position(engine, b, full_depth, 2)
-        elif i > 0 and tracked_mover(i - 1):
+        elif i > 0 and (tracked_mover(i - 1) or i == n):
             infos[i] = analyse_position(engine, b, fast_depth, 1)
         else:
             infos[i] = []
@@ -659,14 +682,13 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
 
 
 def reclassify_results(game, results: List[MoveResult], settings: Settings) -> None:
-    """Re-evaluate move symbols in-place when switching between 'modern' and 'legacy'
-    annotation systems or toggling 'lenient_brilliant', without re-running Stockfish."""
+    """Re-evaluate move symbols in-place when changing scope, side, annotation system,
+    or toggling 'lenient_brilliant', without re-running Stockfish."""
     if not game or not results:
         return
     sac_threshold = 1 if settings.lenient_brilliant else 2
     max_loss = 5.0 if settings.lenient_brilliant else 2.5
     tracked = settings.tracked_colors(game.headers)
-    all_scope = settings.scope == "all"
 
     b = game.board()
     boards_hist = [b.copy()]
@@ -687,9 +709,8 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
             r.symbol = "forced"
             r.brilliant_type = ""
         elif r.book:
-            if all_scope or mover in tracked:
-                r.symbol = "/"
-                r.brilliant_type = ""
+            r.symbol = "/" if _scope_allows("/", mover, tracked, settings.scope, is_book=True) else ""
+            r.brilliant_type = ""
         elif r.analysed and r.eval_after is not None:
             raw_best_w = r.eval_before if r.eval_before is not None else r.eval_after
             best_cp = raw_best_w if mover == chess.WHITE else -raw_best_w
@@ -781,8 +802,12 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 prev_critical=prev_critical,
                 already_overwhelming=already_overwhelming,
             )
-            r.symbol = sym
-            r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""
+            if _scope_allows(sym, mover, tracked, settings.scope):
+                r.symbol = sym
+                r.brilliant_type = C.brilliant_category(b, mv) if sym == "!!" else ""
+            else:
+                r.symbol = ""
+                r.brilliant_type = ""
         prev_was_capture = b.is_capture(mv)
         prev_move = mv
         moves_hist.append(mv)
