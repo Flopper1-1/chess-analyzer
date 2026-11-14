@@ -6,6 +6,7 @@ import os
 import sys
 import threading
 import time
+import webbrowser
 try:
     import winsound
 except ImportError:
@@ -16,6 +17,7 @@ import chess.pgn
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRectF, QPointF, QSize, QEvent, QTimer, QUrl
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
+    QDesktopServices,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -38,6 +40,8 @@ import updater
 
 APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
+ISSUES_URL = "https://github.com/Flopper1-1/chess-analyzer/issues"
+SURVEY_URL = "https://forms.gle/qeVYFdKAeZpdAWW97"
 
 
 def elide_profile_name(name: str, max_chars: int = 16, font_metrics=None, max_px: int = 125) -> str:
@@ -2636,6 +2640,8 @@ class MainWindow(QMainWindow):
         )
         self._last_exe_icon_id = None
         self._updating_exit = False
+        self._analyzed_game_this_session = False
+        self._survey_prompted = False
         self.channel_worker = None
         self._bg_pixmap = None
         styles.load(qs)
@@ -2738,6 +2744,7 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.game_combo)
         tb.addAction("Win% Guide", self.show_win_guide)
         tb.addAction("Keys", self.show_keys)
+        tb.addAction("Report an Issue", self.report_issue)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -2999,6 +3006,8 @@ class MainWindow(QMainWindow):
     def on_job_done(self, job, ok):
         job.running = False
         job.done = ok
+        if ok:
+            self._analyzed_game_this_session = True
         self.refresh_combo(job)
         if job is self.job:
             self.progress.setVisible(any(j.running for j in self.jobs))
@@ -3679,6 +3688,47 @@ class MainWindow(QMainWindow):
             lines.append("%s: %s" % (QKeySequence(key).toString(), desc))
         QMessageBox.information(self, "Keyboard shortcuts", "\n".join(lines))
 
+    def _open_url(self, url: str):
+        if not QDesktopServices.openUrl(QUrl(url)):
+            webbrowser.open(url)
+
+    def report_issue(self):
+        self._open_url(ISSUES_URL)
+
+    def maybe_prompt_survey(self):
+        if (
+            getattr(self, "_updating_exit", False)
+            or getattr(self, "_survey_prompted", False)
+            or not getattr(self, "_analyzed_game_this_session", False)
+            or "--selftest" in sys.argv
+        ):
+            return
+        status = str(self.qs.value("survey_status", "") or "").strip().lower()
+        if status in ("completed", "never"):
+            return
+        self._survey_prompted = True
+        box = QMessageBox(self)
+        box.setWindowTitle(APP_TITLE)
+        box.setIcon(QMessageBox.Question)
+        box.setText("Would you like to take a quick survey to help improve Holly's Chess Analyzer?")
+        btn_ok = box.addButton("Ok", QMessageBox.AcceptRole)
+        btn_later = box.addButton("Ask me later", QMessageBox.NoRole)
+        btn_never = box.addButton("Do not ask again", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_ok)
+        box.setEscapeButton(btn_later)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_ok:
+            self.qs.setValue("survey_status", "completed")
+            self.qs.sync()
+            self._open_url(SURVEY_URL)
+        elif clicked is btn_never:
+            self.qs.setValue("survey_status", "never")
+            self.qs.sync()
+        else:
+            self.qs.setValue("survey_status", "ask_later")
+            self.qs.sync()
+
     # ------------------------------------------------------------ best lines
     def show_best(self, row):
         self.goto(row)
@@ -3794,6 +3844,10 @@ class MainWindow(QMainWindow):
                     self.graph.update()
 
     def closeEvent(self, e):
+        try:
+            self.maybe_prompt_survey()
+        except Exception:
+            pass
         try:
             self.stop()
         finally:
