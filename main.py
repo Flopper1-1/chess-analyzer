@@ -1046,7 +1046,14 @@ def _bg_swatch_icon(bg: dict, size: int = 36) -> QIcon:
     bg_id = bg.get("id", "")
     pm = QPixmap(size, size)
     p = QPainter(pm)
-    if bg_id == "christmas":
+    if bg_id == "halloween":
+        half = size // 2
+        p.fillRect(0, 0, half, size, QColor("#b54500"))
+        p.fillRect(half, 0, size - half, size, QColor("#0c0a0e"))
+        p.fillRect(4, size - 10, size - 8, 6, QColor("#ff8f1f"))
+        p.setPen(QColor("#ffa347"))
+        p.drawRect(0, 0, size - 1, size - 1)
+    elif bg_id == "christmas":
         half = size // 2
         p.fillRect(0, 0, half, size, QColor("#7c1414"))
         p.fillRect(half, 0, size - half, size, QColor("#115928"))
@@ -1552,6 +1559,17 @@ class ProfileDialog(QDialog):
         lay = QVBoxLayout(page)
         self.tabs.addTab(page, "Background")
 
+        holiday = themes.active_holiday_event(disabled=self._disable_holidays)
+        if holiday and holiday in themes.HOLIDAY_BACKGROUNDS:
+            hb = themes.HOLIDAY_BACKGROUNDS[holiday]
+            hl = QLabel(
+                f"Limited-time event available in library: <b>{hb['name']}</b> "
+                "(only available during this holiday window)."
+            )
+            hl.setWordWrap(True)
+            hl.setStyleSheet("color:#26c6da; font-size:12px;")
+            lay.addWidget(hl)
+
         row = QHBoxLayout()
         row.addWidget(QLabel("<b>Background Library</b>"))
         row.addStretch(1)
@@ -1658,7 +1676,7 @@ class ProfileDialog(QDialog):
         self.btn_del_bg.setEnabled(not bg.get("locked"))
         bg_id = bg.get("id", "")
         if bg_id == "halloween":
-            desc = "Halloween theme with a glowing orange interface."
+            desc = "Halloween theme that slowly shifts between pumpkin orange and spooky black."
         elif bg_id == "christmas":
             desc = "Christmas theme that slowly shifts between festive red and green."
         elif bg_id == "new_year":
@@ -3913,7 +3931,7 @@ class MainWindow(QMainWindow):
             getattr(self.settings, "background_template", "dark"),
             disable_holidays=dis_hol,
         )
-        if bg.get("animated") != "christmas_shift":
+        if bg.get("animated") not in ("christmas_shift", "halloween_shift"):
             self._christmas_timer.stop()
             return
         self._christmas_phase = (self._christmas_phase + 0.006) % 1.0
@@ -3999,7 +4017,7 @@ class MainWindow(QMainWindow):
         self._bg_pixmap = QPixmap(img_path) if has_img else None
 
         anim_mode = bg.get("animated") or ""
-        if anim_mode == "christmas_shift":
+        if anim_mode in ("christmas_shift", "halloween_shift"):
             if not self._christmas_timer.isActive():
                 self._christmas_timer.start()
         else:

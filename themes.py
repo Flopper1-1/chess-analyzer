@@ -190,7 +190,7 @@ BUILTIN_BACKGROUNDS = [
 HOLIDAY_BACKGROUNDS = {
     "halloween": {
         "id": "halloween",
-        "name": "Halloween (Orange)",
+        "name": "Halloween (Orange & Black Shift)",
         "window_bg": "#b54500",
         "panel_bg": "#963800",
         "button_bg": "#c9540a",
@@ -202,6 +202,7 @@ HOLIDAY_BACKGROUNDS = {
         "image_path": "",
         "locked": True,
         "holiday": True,
+        "animated": "halloween_shift",
     },
     "christmas": {
         "id": "christmas",
@@ -724,13 +725,17 @@ def backgrounds_dir() -> str:
     return d
 
 
-def list_background_templates(disable_holidays: bool = False) -> List[dict]:
+def list_background_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    """Return user-selectable background templates, including the active holiday background only during its event window."""
     out = [dict(b) for b in BUILTIN_BACKGROUNDS]
-    if not disable_holidays:
-        for hid in HOLIDAY_IDS:
-            hb = HOLIDAY_BACKGROUNDS.get(hid)
-            if hb:
-                out.append(dict(hb))
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    if holiday and holiday in HOLIDAY_BACKGROUNDS:
+        hb = dict(HOLIDAY_BACKGROUNDS[holiday])
+        hb["holiday"] = True
+        out.append(hb)
     root = backgrounds_dir()
     for folder in sorted(os.listdir(root)):
         manifest = os.path.join(root, folder, "template.json")
@@ -746,8 +751,13 @@ def list_background_templates(disable_holidays: bool = False) -> List[dict]:
     return out
 
 
-def get_background_template(bg_id: str, disable_holidays: bool = False) -> dict:
-    for bg in list_background_templates(disable_holidays=disable_holidays):
+def get_background_template(
+    bg_id: str,
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Resolve the active background template; holiday backgrounds are only available during their event window."""
+    for bg in list_background_templates(disable_holidays=disable_holidays, now=now):
         if bg["id"] == bg_id:
             return bg
     return dict(BUILTIN_BACKGROUNDS[0])
@@ -1144,6 +1154,42 @@ def rgba_css(hex_color: str, alpha: int = 215) -> str:
     return f"rgba({r}, {g}, {b}, {a})"
 
 
+def halloween_palette(phase: float = 0.0) -> dict:
+    """Return a Halloween UI palette slowly shifting between pumpkin orange and spooky black."""
+    w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
+    w = w * w * (3.0 - 2.0 * w)
+    bg = blend_hex("#b54500", "#0c0a0e", w)
+    panel = blend_hex("#963800", "#161219", w)
+    surface = blend_hex("#853000", "#131016", w)
+    surface_alt = blend_hex("#9c3c02", "#1c1721", w)
+    btn_bg = blend_hex("#c9540a", "#221b26", w)
+    btn_hover = blend_hex("#e86917", "#36283b", w)
+    border = blend_hex("#ffa347", "#ea580c", w)
+    accent = blend_hex("#ff8f1f", "#f97316", w)
+    fg = blend_hex("#fff4e6", "#f5ebe0", w)
+    muted = blend_hex("#ffd1a3", "#fdba74", w)
+    return {
+        "bg": bg,
+        "panel": panel,
+        "surface": surface,
+        "surface_alt": surface_alt,
+        "fg": fg,
+        "muted": muted,
+        "border": border,
+        "accent": accent,
+        "accent_fg": contrast_fg(accent),
+        "btn_bg": btn_bg,
+        "btn_hover": btn_hover,
+        "btn_hover_fg": "#ffffff",
+        "graph_bg": surface,
+        "graph_fill": "#ffe8cc",
+        "graph_mid": accent,
+        "bar_bg": panel,
+        "bar_border": border,
+        "bar_fg": fg,
+    }
+
+
 def christmas_palette(phase: float = 0.0) -> dict:
     """Return a Christmas UI palette slowly shifting between crimson red and pine green."""
     w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
@@ -1294,26 +1340,7 @@ def get_theme_palette(bg: dict, ui_color: str = "", accent_color: str = "", phas
             "bar_fg": "#e6f7ff",
         }
     elif bg_id == "halloween":
-        base = {
-            "bg": "#b54500",
-            "panel": "#963800",
-            "surface": "#853000",
-            "surface_alt": "#9c3c02",
-            "fg": "#fff4e6",
-            "muted": "#ffd1a3",
-            "border": "#ffa347",
-            "accent": "#ff8f1f",
-            "accent_fg": "#1a0900",
-            "btn_bg": "#c9540a",
-            "btn_hover": "#e86917",
-            "btn_hover_fg": "#ffffff",
-            "graph_bg": "#853000",
-            "graph_fill": "#ffe8cc",
-            "graph_mid": "#ff8f1f",
-            "bar_bg": "#963800",
-            "bar_border": "#ffa347",
-            "bar_fg": "#fff4e6",
-        }
+        base = halloween_palette(phase)
     elif bg_id == "christmas":
         base = christmas_palette(phase)
     elif bg_id == "new_year":
@@ -1581,7 +1608,7 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
         cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
         cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
         cur_bg = getattr(settings, "background_template", "dark") or "dark"
-        if last or disabled or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS:
+        if last or disabled or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS or cur_bg in HOLIDAY_IDS:
             pre_icon = getattr(settings, "pre_event_app_icon", "fluent") or "fluent"
             pre_board = getattr(settings, "pre_event_board_template", "brown_tan") or "brown_tan"
             pre_bg = getattr(settings, "pre_event_background_template", "dark") or "dark"
@@ -1591,7 +1618,7 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
             if cur_board in HOLIDAY_IDS or last:
                 settings.board_template = pre_board if pre_board not in HOLIDAY_IDS else "brown_tan"
                 changed = True
-            if (last or disabled) and cur_bg in HOLIDAY_IDS:
+            if cur_bg in HOLIDAY_IDS or last:
                 settings.background_template = pre_bg if pre_bg not in HOLIDAY_IDS else "dark"
                 changed = True
             if last:
