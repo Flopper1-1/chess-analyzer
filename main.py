@@ -1910,10 +1910,16 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Piece Template Library</b>"))
         top.addStretch(1)
         self.btn_new_pieces = QPushButton("New Piece Template…")
+        self.btn_import_pieces_folder = QPushButton("Import Folder…")
+        self.btn_import_pieces_files = QPushButton("Auto-Detect Files…")
         self.btn_del_pieces = QPushButton("Delete")
         self.btn_new_pieces.clicked.connect(self._create_pieces_tpl)
+        self.btn_import_pieces_folder.clicked.connect(self._import_pieces_folder)
+        self.btn_import_pieces_files.clicked.connect(self._import_piece_files)
         self.btn_del_pieces.clicked.connect(self._delete_pieces_tpl)
         top.addWidget(self.btn_new_pieces)
+        top.addWidget(self.btn_import_pieces_folder)
+        top.addWidget(self.btn_import_pieces_files)
         top.addWidget(self.btn_del_pieces)
         lay.addLayout(top)
 
@@ -1971,9 +1977,10 @@ class ProfileDialog(QDialog):
         self._sel_pieces = tpl["id"]
         locked = bool(tpl.get("locked"))
         self.btn_del_pieces.setEnabled(not locked)
+        self.btn_import_pieces_files.setEnabled(not locked)
         self.pieces_lock_lbl.setText(
-            "Default piece template (read-only). Create a new template to upload custom piece PNGs."
-            if locked else "Custom piece template: upload a PNG for each piece (blank slots fall back to Default)."
+            "Built-in piece template (read-only). Create a new template or use 'Import Folder…' to add custom pieces."
+            if locked else "Custom piece template: upload PNGs manually or use 'Import Folder…' / 'Auto-Detect Files…' to match filenames automatically."
         )
         pieces = tpl.get("pieces") or {}
         for pkey, st, btn_set, btn_clr in self.piece_slot_widgets:
@@ -2003,6 +2010,43 @@ class ProfileDialog(QDialog):
     def _clear_piece_slot(self, pkey: str):
         if themes.clear_piece_slot(self._sel_pieces, pkey):
             self._reload_pieces_list()
+
+    def _import_pieces_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing Piece Images")
+        if not folder:
+            return
+        target_id = self._sel_pieces
+        if not target_id.startswith("custom:"):
+            default_name = themes.capitalize_asset_name(os.path.basename(folder.rstrip("\\/"))) or "Custom Pieces"
+            nm, ok = QInputDialog.getText(
+                self, "New Piece Template", "Piece template name:", QLineEdit.Normal, default_name
+            )
+            if not ok or not nm.strip():
+                return
+            created = themes.create_piece_template(nm.strip())
+            target_id = created["id"]
+            self._sel_pieces = target_id
+        matched, unmatched = themes.import_pieces_from_folder(target_id, folder)
+        self._reload_pieces_list()
+        msg = f"Automatically detected and imported {matched} piece(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Piece Auto-Detection", msg)
+
+    def _import_piece_files(self):
+        if not self._sel_pieces.startswith("custom:"):
+            return
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Piece Images", "", "Images (*.png *.webp *.jpg *.jpeg *.bmp);;All files (*)"
+        )
+        if not files:
+            return
+        matched, unmatched = themes.import_piece_files(self._sel_pieces, files)
+        self._reload_pieces_list()
+        msg = f"Automatically detected and imported {matched} piece(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Piece Auto-Detection", msg)
 
     # ---- Tab 7: Annotations (moved from Settings)
     def _build_annotations_tab(self):

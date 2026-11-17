@@ -10,7 +10,7 @@ import random
 import re
 import shutil
 import struct
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from PySide6.QtCore import QBuffer, QByteArray, QIODevice, Qt
 from PySide6.QtGui import QColor, QImage, QPixmap
@@ -845,6 +845,71 @@ def delete_custom_background(bg_id: str) -> bool:
 
 
 # ---------------------------------------------------------------- Piece Templates
+PIECE_IMAGE_EXTS = (".png", ".webp", ".jpg", ".jpeg", ".bmp", ".svg")
+
+_PIECE_WORD_MAP = {
+    "king": "K",
+    "queen": "Q",
+    "rook": "R",
+    "castle": "R",
+    "bishop": "B",
+    "knight": "N",
+    "horse": "N",
+    "pawn": "P",
+}
+_PIECE_CHAR_MAP = {"k": "K", "q": "Q", "r": "R", "b": "B", "n": "N", "p": "P"}
+
+
+def detect_piece_key_from_filename(filename: str) -> Optional[str]:
+    """Infer a standard piece slot key ('wK'..'bP') from an image filename."""
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    if not stem:
+        return None
+    compact = re.sub(r"[^a-zA-Z]", "", stem).lower()
+    if len(compact) == 2 and compact[0] in ("w", "b") and compact[1] in _PIECE_CHAR_MAP:
+        return compact[0] + _PIECE_CHAR_MAP[compact[1]]
+
+    raw_tokens = re.findall(r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|[^a-zA-Z]|$)", stem)
+    tokens = [t.lower() for t in raw_tokens if t]
+    if not tokens:
+        return None
+
+    color = None
+    rem: List[str] = []
+    for tok in tokens:
+        if color is None and tok in ("white", "w"):
+            color = "w"
+        elif color is None and tok in ("black", "b"):
+            color = "b"
+        else:
+            rem.append(tok)
+    if color is None:
+        return None
+
+    for tok in rem:
+        if tok in _PIECE_WORD_MAP:
+            return color + _PIECE_WORD_MAP[tok]
+    for tok in rem:
+        if tok in _PIECE_CHAR_MAP:
+            return color + _PIECE_CHAR_MAP[tok]
+    return None
+
+
+def detect_pieces_in_folder(folder_path: str) -> Dict[str, str]:
+    """Scan a directory and map detected piece keys ('wK'..'bP') to image file paths."""
+    detected: Dict[str, str] = {}
+    if not folder_path or not os.path.isdir(folder_path):
+        return detected
+    for fname in sorted(os.listdir(folder_path)):
+        low = fname.lower()
+        if not low.endswith(PIECE_IMAGE_EXTS):
+            continue
+        pkey = detect_piece_key_from_filename(fname)
+        if pkey and pkey not in detected:
+            detected[pkey] = os.path.join(folder_path, fname)
+    return detected
+
+
 def piece_templates_dir() -> str:
     d = os.path.join(data_root(), "piece_templates")
     os.makedirs(d, exist_ok=True)
@@ -853,16 +918,35 @@ def piece_templates_dir() -> str:
 
 def list_piece_templates() -> List[dict]:
     out = [{"id": "default", "name": "Default", "locked": True, "pieces": {}}]
+    bundled_root = resource_path(os.path.join("assets", "pieces"))
+    if os.path.isdir(bundled_root):
+        for folder in sorted(os.listdir(bundled_root), key=str.lower):
+            fdir = os.path.join(bundled_root, folder)
+            if not os.path.isdir(fdir):
+                continue
+            pieces = detect_pieces_in_folder(fdir)
+            if pieces:
+                out.append({
+                    "id": _slugify(folder, folder.lower()),
+                    "name": capitalize_asset_name(folder),
+                    "locked": True,
+                    "pieces": pieces,
+                })
     root = piece_templates_dir()
     for folder in sorted(os.listdir(root)):
-        manifest = os.path.join(root, folder, "template.json")
+        fdir = os.path.join(root, folder)
+        manifest = os.path.join(fdir, "template.json")
         if os.path.isfile(manifest):
             try:
                 with open(manifest, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
-                data.setdefault("pieces", {})
+                pieces = data.setdefault("pieces", {})
+                # Fill any unmapped slots automatically from image filenames in the folder
+                for k, p in detect_pieces_in_folder(fdir).items():
+                    if k not in pieces or not os.path.exists(pieces[k]):
+                        pieces[k] = p
                 out.append(data)
             except Exception:
                 pass
@@ -891,6 +975,35 @@ def create_piece_template(name: str) -> dict:
     with open(os.path.join(pdir, "template.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return data
+
+
+def import_piece_files(template_id: str, file_paths: List[str]) -> Tuple[int, List[str]]:
+    """Auto-detect and import multiple piece image files by filename into a custom template."""
+    if not template_id.startswith("custom:"):
+        return 0, [os.path.basename(p) for p in (file_paths or [])]
+    matched = 0
+    unmatched: List[str] = []
+    for p in file_paths or []:
+        if not p or not os.path.isfile(p):
+            continue
+        pkey = detect_piece_key_from_filename(p)
+        if pkey and set_piece_slot(template_id, pkey, p):
+            matched += 1
+        else:
+            unmatched.append(os.path.basename(p))
+    return matched, unmatched
+
+
+def import_pieces_from_folder(template_id: str, folder_path: str) -> Tuple[int, List[str]]:
+    """Auto-detect and import all recognized piece images from a folder into a custom template."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return 0, []
+    files = [
+        os.path.join(folder_path, fname)
+        for fname in sorted(os.listdir(folder_path))
+        if fname.lower().endswith(PIECE_IMAGE_EXTS)
+    ]
+    return import_piece_files(template_id, files)
 
 
 def set_piece_slot(template_id: str, piece_key: str, source_path: str) -> bool:
