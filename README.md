@@ -114,8 +114,8 @@ python main.py
 ## 🐛 Report a Bug or Crash
 
 If you encounter an unexpected crash, error, or bug, please let us know:
-- 📋 **[Crash & Bug Report Form](https://forms.gle/NyNHs2tAn8jYpRP76)** — Quick Google Form (no GitHub account required).
-- 🐙 **[GitHub Issues](https://github.com/Flopper1-1/chess-analyzer/issues)** — Open a detailed issue ticket on GitHub.
+- 📋 **[Compatibility Form](https://forms.gle/NyNHs2tAn8jYpRP76)** — Quick Google Form (no GitHub account required).
+- 🐙 **[Bugs & Issues](https://github.com/Flopper1-1/chess-analyzer/issues)** — Open a detailed issue ticket on GitHub.
 
 ---
 
