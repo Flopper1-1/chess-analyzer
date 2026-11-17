@@ -1198,7 +1198,7 @@ class ProfileDialog(QDialog):
         self.main_win = parent
         self.settings = settings
         self.setWindowTitle("Profile & Customizations")
-        self.resize(680, 560)
+        self.resize(700, 620)
         self._pending_image_path = None
         self._reset_requested = False
 
@@ -1375,10 +1375,22 @@ class ProfileDialog(QDialog):
         self._sel_app_icon = added["id"]
         self._reload_icon_list()
 
+    def _confirm_delete(self, kind: str, name: str) -> bool:
+        res = QMessageBox.question(
+            self,
+            f"Delete {kind}",
+            f"Are you sure you want to delete '{name}'?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        return res == QMessageBox.Yes
+
     def _delete_custom_icon(self):
         li = self.icon_list.currentItem()
         item = li.data(Qt.UserRole) if li else None
         if not item or item["locked"]:
+            return
+        if not self._confirm_delete("App Icon", item["name"]):
             return
         if themes.delete_custom_app_icon(item["id"]):
             self._sel_app_icon = "fluent"
@@ -1388,21 +1400,32 @@ class ProfileDialog(QDialog):
     def _build_sound_tab(self):
         page = QWidget()
         lay = QVBoxLayout(page)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
         self.tabs.addTab(page, "Sounds")
 
         top = QHBoxLayout()
         top.addWidget(QLabel("<b>Sound Template Library</b>"))
         top.addStretch(1)
         self.btn_new_sound = QPushButton("New Template…")
+        self.btn_import_sound_folder = QPushButton("Import Folder…")
+        self.btn_import_sound_files = QPushButton("Auto-Detect Files…")
         self.btn_del_sound = QPushButton("Delete")
         self.btn_new_sound.clicked.connect(self._create_sound_tpl)
+        self.btn_import_sound_folder.clicked.connect(self._import_sounds_folder)
+        self.btn_import_sound_files.clicked.connect(self._import_sound_files)
         self.btn_del_sound.clicked.connect(self._delete_sound_tpl)
         top.addWidget(self.btn_new_sound)
+        top.addWidget(self.btn_import_sound_folder)
+        top.addWidget(self.btn_import_sound_files)
         top.addWidget(self.btn_del_sound)
         lay.addLayout(top)
 
         self.sound_list = QListWidget()
-        self.sound_list.setMaximumHeight(115)
+        self.sound_list.setObjectName("CompactTemplateList")
+        self.sound_list.setSpacing(0)
+        self.sound_list.setUniformItemSizes(True)
+        self.sound_list.setMaximumHeight(130)
         self.sound_list.currentItemChanged.connect(self._on_sound_tpl_changed)
         lay.addWidget(self.sound_list)
 
@@ -1414,6 +1437,9 @@ class ProfileDialog(QDialog):
         sc.setWidgetResizable(True)
         inner = QWidget()
         self.sound_grid = QGridLayout(inner)
+        self.sound_grid.setContentsMargins(6, 4, 6, 4)
+        self.sound_grid.setVerticalSpacing(2)
+        self.sound_grid.setHorizontalSpacing(8)
         self.sound_slot_widgets = []
         row_idx = 0
         self.sound_grid.addWidget(QLabel("<b>Move & Game Events</b>"), row_idx, 0, 1, 4)
@@ -1426,6 +1452,8 @@ class ProfileDialog(QDialog):
         for key, label in themes.ANNOTATION_SLOTS:
             self._add_sound_slot_row(row_idx, "annotations", key, label)
             row_idx += 1
+        self.sound_grid.setColumnStretch(1, 1)
+        self.sound_grid.setRowStretch(row_idx, 1)
         sc.setWidget(inner)
         lay.addWidget(sc, 1)
         self._reload_sound_list()
@@ -1435,6 +1463,8 @@ class ProfileDialog(QDialog):
         st = QLabel("None")
         btn_set = QPushButton("Replace…")
         btn_clr = QPushButton("Remove")
+        for b in (btn_set, btn_clr):
+            b.setStyleSheet("padding:2px 8px;")
         btn_set.clicked.connect(lambda _=False, c=category, k=key: self._replace_sound_slot(c, k))
         btn_clr.clicked.connect(lambda _=False, c=category, k=key: self._clear_sound_slot(c, k))
         self.sound_grid.addWidget(lbl, row_idx, 0)
@@ -1467,9 +1497,10 @@ class ProfileDialog(QDialog):
         self._sel_sound = tpl["id"]
         locked = bool(tpl.get("locked"))
         self.btn_del_sound.setEnabled(not locked)
+        self.btn_import_sound_files.setEnabled(not locked)
         self.sound_lock_lbl.setText(
-            "Built-in template (read-only). Create a new template to customize or add annotation sounds."
-            if locked else "Custom template: replace or remove event sounds and per-annotation sounds."
+            "Built-in template (read-only). Create a new template or use 'Import Folder…' to auto-detect sounds."
+            if locked else "Custom template: replace manually or use 'Import Folder…' / 'Auto-Detect Files…' to match filenames."
         )
         for category, key, st, btn_set, btn_clr in self.sound_slot_widgets:
             path = (tpl.get(category) or {}).get(key, "")
@@ -1487,9 +1518,53 @@ class ProfileDialog(QDialog):
         self._reload_sound_list()
 
     def _delete_sound_tpl(self):
+        li = self.sound_list.currentItem()
+        tpl = li.data(Qt.UserRole) if li else None
+        if not tpl or tpl.get("locked"):
+            return
+        if not self._confirm_delete("Sound Template", tpl["name"]):
+            return
         if themes.delete_sound_template(self._sel_sound):
             self._sel_sound = "original"
             self._reload_sound_list()
+
+    def _import_sounds_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing Sound Files")
+        if not folder:
+            return
+        target_id = self._sel_sound
+        if not target_id.startswith("custom:"):
+            default_name = themes.capitalize_asset_name(os.path.basename(folder.rstrip("\\/"))) or "Custom Sounds"
+            nm, ok = QInputDialog.getText(
+                self, "New Sound Template", "Sound template name:", QLineEdit.Normal, default_name
+            )
+            if not ok or not nm.strip():
+                return
+            base_id = self._sel_sound if self._sel_sound in ("original", "legacy") else "original"
+            created = themes.create_sound_template(nm.strip(), copy_from_id=base_id)
+            target_id = created["id"]
+            self._sel_sound = target_id
+        matched, unmatched = themes.import_sounds_from_folder(target_id, folder)
+        self._reload_sound_list()
+        msg = f"Automatically detected and imported {matched} sound(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Sound Auto-Detection", msg)
+
+    def _import_sound_files(self):
+        if not self._sel_sound.startswith("custom:"):
+            return
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Sound Files", "", "Audio Files (*.wav *.mp3 *.ogg *.flac *.m4a);;All files (*)"
+        )
+        if not files:
+            return
+        matched, unmatched = themes.import_sound_files(self._sel_sound, files)
+        self._reload_sound_list()
+        msg = f"Automatically detected and imported {matched} sound(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Sound Auto-Detection", msg)
 
     def _replace_sound_slot(self, category: str, key: str):
         p, _ = QFileDialog.getOpenFileName(
@@ -1610,6 +1685,12 @@ class ProfileDialog(QDialog):
         self._reload_board_list()
 
     def _delete_board_tpl(self):
+        li = self.board_list.currentItem()
+        b = li.data(Qt.UserRole) if li else None
+        if not b or b.get("locked"):
+            return
+        if not self._confirm_delete("Board Template", b["name"]):
+            return
         if themes.delete_custom_board_template(self._sel_board):
             self._sel_board = "brown_tan"
             self._reload_board_list()
@@ -1896,6 +1977,12 @@ class ProfileDialog(QDialog):
             self._reload_bg_list()
 
     def _delete_custom_bg(self):
+        li = self.bg_list.currentItem()
+        bg = li.data(Qt.UserRole) if li else None
+        if not bg or bg.get("locked"):
+            return
+        if not self._confirm_delete("Background", bg["name"]):
+            return
         if themes.delete_custom_background(self._sel_bg):
             self._sel_bg = "dark"
             self._reload_bg_list()
@@ -1904,6 +1991,8 @@ class ProfileDialog(QDialog):
     def _build_pieces_tab(self):
         page = QWidget()
         lay = QVBoxLayout(page)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(4)
         self.tabs.addTab(page, "Pieces")
 
         top = QHBoxLayout()
@@ -1924,7 +2013,10 @@ class ProfileDialog(QDialog):
         lay.addLayout(top)
 
         self.pieces_list = QListWidget()
-        self.pieces_list.setMaximumHeight(110)
+        self.pieces_list.setObjectName("CompactTemplateList")
+        self.pieces_list.setSpacing(0)
+        self.pieces_list.setUniformItemSizes(True)
+        self.pieces_list.setMaximumHeight(130)
         self.pieces_list.currentItemChanged.connect(self._on_pieces_changed)
         lay.addWidget(self.pieces_list)
 
@@ -1936,12 +2028,17 @@ class ProfileDialog(QDialog):
         sc.setWidgetResizable(True)
         inner = QWidget()
         grid = QGridLayout(inner)
+        grid.setContentsMargins(6, 4, 6, 4)
+        grid.setVerticalSpacing(2)
+        grid.setHorizontalSpacing(8)
         self.piece_slot_widgets = []
         for idx, (pkey, label) in enumerate(themes.PIECE_SLOTS):
             lbl = QLabel(label)
             st = QLabel("Default glyph")
             btn_set = QPushButton("Set PNG…")
             btn_clr = QPushButton("Clear")
+            for b in (btn_set, btn_clr):
+                b.setStyleSheet("padding:2px 8px;")
             btn_set.clicked.connect(lambda _=False, k=pkey: self._set_piece_slot(k))
             btn_clr.clicked.connect(lambda _=False, k=pkey: self._clear_piece_slot(k))
             grid.addWidget(lbl, idx, 0)
@@ -1949,6 +2046,8 @@ class ProfileDialog(QDialog):
             grid.addWidget(btn_set, idx, 2)
             grid.addWidget(btn_clr, idx, 3)
             self.piece_slot_widgets.append((pkey, st, btn_set, btn_clr))
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(len(themes.PIECE_SLOTS), 1)
         sc.setWidget(inner)
         lay.addWidget(sc, 1)
         self._reload_pieces_list()
@@ -1998,6 +2097,12 @@ class ProfileDialog(QDialog):
         self._reload_pieces_list()
 
     def _delete_pieces_tpl(self):
+        li = self.pieces_list.currentItem()
+        tpl = li.data(Qt.UserRole) if li else None
+        if not tpl or tpl.get("locked"):
+            return
+        if not self._confirm_delete("Piece Template", tpl["name"]):
+            return
         if themes.delete_piece_template(self._sel_pieces):
             self._sel_pieces = "default"
             self._reload_pieces_list()
@@ -2052,22 +2157,33 @@ class ProfileDialog(QDialog):
     def _build_annotations_tab(self):
         page = QWidget()
         l2 = QVBoxLayout(page)
+        l2.setContentsMargins(8, 6, 8, 6)
+        l2.setSpacing(4)
         self.tabs.addTab(page, "Annotations")
 
         top = QHBoxLayout()
         top.addWidget(QLabel("<b>Annotation Template Library</b>"))
         top.addStretch(1)
         self.btn_new_anno = QPushButton("New Template…")
+        self.btn_import_anno_folder = QPushButton("Import Folder…")
+        self.btn_import_anno_files = QPushButton("Auto-Detect Files…")
         self.btn_del_anno = QPushButton("Delete")
         self.btn_new_anno.clicked.connect(self._create_anno_tpl)
+        self.btn_import_anno_folder.clicked.connect(self._import_anno_folder)
+        self.btn_import_anno_files.clicked.connect(self._import_anno_files)
         self.btn_del_anno.clicked.connect(self._delete_anno_tpl)
         top.addWidget(self.btn_new_anno)
+        top.addWidget(self.btn_import_anno_folder)
+        top.addWidget(self.btn_import_anno_files)
         top.addWidget(self.btn_del_anno)
         l2.addLayout(top)
 
         self.anno_list = QListWidget()
-        self.anno_list.setMinimumHeight(140)
-        self.anno_list.setMaximumHeight(185)
+        self.anno_list.setObjectName("CompactTemplateList")
+        self.anno_list.setSpacing(0)
+        self.anno_list.setUniformItemSizes(True)
+        self.anno_list.setMinimumHeight(115)
+        self.anno_list.setMaximumHeight(155)
         self.anno_list.currentItemChanged.connect(self._on_anno_changed)
         l2.addWidget(self.anno_list)
 
@@ -2089,19 +2205,26 @@ class ProfileDialog(QDialog):
 
         ip = QWidget()
         il = QVBoxLayout(ip)
-        il.addWidget(QLabel("Edit an icon in Microsoft Paint, save it, then come back here (the preview updates)."))
+        il.setContentsMargins(4, 4, 4, 4)
+        il.setSpacing(4)
+        il.addWidget(QLabel("Edit an icon in Microsoft Paint or use Import Folder / Auto-Detect Files to match filenames."))
         sc = QScrollArea()
         sc.setWidgetResizable(True)
         inner = QWidget()
         grid = QGridLayout(inner)
+        grid.setContentsMargins(6, 4, 6, 4)
+        grid.setVerticalSpacing(2)
+        grid.setHorizontalSpacing(8)
         self.icon_rows = {}
         for row, (stem, label) in enumerate(icons.ICON_LIST):
             pv = QLabel()
-            pv.setFixedSize(34, 34)
+            pv.setFixedSize(24, 24)
             tag = QLabel()
-            tag.setStyleSheet("color:#e8b923;")
+            tag.setStyleSheet("color:#e8b923; font-size:11px;")
             eb = QPushButton("Edit in Paint")
             rb = QPushButton("Reset")
+            for b in (eb, rb):
+                b.setStyleSheet("padding:2px 8px;")
             eb.clicked.connect(lambda _=False, st=stem: self.edit_icon(st))
             rb.clicked.connect(lambda _=False, st=stem: self.reset_icon(st))
             grid.addWidget(pv, row, 0)
@@ -2110,6 +2233,8 @@ class ProfileDialog(QDialog):
             grid.addWidget(eb, row, 3)
             grid.addWidget(rb, row, 4)
             self.icon_rows[stem] = (pv, tag, eb, rb)
+        grid.setColumnStretch(1, 1)
+        grid.setRowStretch(len(icons.ICON_LIST), 1)
         sc.setWidget(inner)
         il.addWidget(sc, 1)
         self.btn_reset_all_icons = QPushButton("Reset ALL icons to default")
@@ -2119,9 +2244,12 @@ class ProfileDialog(QDialog):
 
         lp = QWidget()
         ll = QVBoxLayout(lp)
+        ll.setContentsMargins(4, 4, 4, 4)
+        ll.setSpacing(4)
         ll.addWidget(QLabel("Pick the symbol (text or emoji) and colour for each annotation."))
         self.style_rows = {}
         g2 = QGridLayout()
+        g2.setVerticalSpacing(2)
         for row, (key, (name, _s, _c)) in enumerate(styles.DEFAULTS.items()):
             sym, col = styles.get_all()[key]
             ed = QLineEdit(sym)
@@ -2169,6 +2297,7 @@ class ProfileDialog(QDialog):
         self._sel_annotations = tpl["id"]
         locked = bool(tpl.get("locked"))
         self.btn_del_anno.setEnabled(not locked)
+        self.btn_import_anno_files.setEnabled(not locked)
         self.anno_lock_lbl.setText(
             "Default annotation template (read-only). Create a new template to customize icons or legacy styles."
             if locked else "Custom annotation template: edit icons in Paint or customize legacy symbols & colours."
@@ -2205,9 +2334,52 @@ class ProfileDialog(QDialog):
         self._reload_anno_list()
 
     def _delete_anno_tpl(self):
+        li = self.anno_list.currentItem()
+        tpl = li.data(Qt.UserRole) if li else None
+        if not tpl or tpl.get("locked"):
+            return
+        if not self._confirm_delete("Annotation Template", tpl["name"]):
+            return
         if themes.delete_annotation_template(self._sel_annotations):
             self._sel_annotations = "default"
             self._reload_anno_list()
+
+    def _import_anno_folder(self):
+        folder = QFileDialog.getExistingDirectory(self, "Select Folder Containing Annotation Images")
+        if not folder:
+            return
+        target_id = self._sel_annotations
+        if not target_id.startswith("custom:"):
+            default_name = themes.capitalize_asset_name(os.path.basename(folder.rstrip("\\/"))) or "Custom Annotations"
+            nm, ok = QInputDialog.getText(
+                self, "New Annotation Template", "Annotation template name:", QLineEdit.Normal, default_name
+            )
+            if not ok or not nm.strip():
+                return
+            created = themes.create_annotation_template(nm.strip())
+            target_id = created["id"]
+            self._sel_annotations = target_id
+        matched, unmatched = themes.import_annotations_from_folder(target_id, folder)
+        self._reload_anno_list()
+        msg = f"Automatically detected and imported {matched} annotation icon(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Annotation Auto-Detection", msg)
+
+    def _import_anno_files(self):
+        if not self._sel_annotations.startswith("custom:"):
+            return
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Select Annotation Icon Images", "", "Images (*.png *.webp *.jpg *.jpeg *.bmp);;All files (*)"
+        )
+        if not files:
+            return
+        matched, unmatched = themes.import_annotation_files(self._sel_annotations, files)
+        self._reload_anno_list()
+        msg = f"Automatically detected and imported {matched} annotation icon(s)."
+        if unmatched:
+            msg += f"\n\nUnrecognized files ({len(unmatched)}): " + ", ".join(unmatched[:8])
+        QMessageBox.information(self, "Annotation Auto-Detection", msg)
 
     def refresh_icons(self, tpl=None):
         if tpl is None:

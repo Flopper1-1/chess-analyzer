@@ -490,22 +490,171 @@ def _builtin_sound_templates() -> List[dict]:
     ]
 
 
+SOUND_AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
+
+_SOUND_EVENT_ALIASES = {
+    "move": "Move",
+    "move_self": "Move",
+    "normal_move": "Move",
+    "capture": "Capture",
+    "take": "Capture",
+    "takes": "Capture",
+    "castle": "Castle",
+    "castling": "Castle",
+    "o_o": "Castle",
+    "check": "Check",
+    "move_check": "Check",
+    "checkmate": "Checkmate",
+    "mate": "Checkmate",
+    "draw": "draw",
+    "stalemate": "draw",
+    "game_load": "Game_load",
+    "gameload": "Game_load",
+    "game_start": "Game_load",
+    "start": "Game_load",
+    "notify": "Game_load",
+    "brilliant": "brilliant",
+    "brilliant_event": "brilliant",
+}
+
+_SOUND_ANNO_ALIASES = {
+    "brilliant": "!!",
+    "excl2": "!!",
+    "great": "!",
+    "great_find": "!",
+    "greatfind": "!",
+    "best": "+++",
+    "best_move": "+++",
+    "excellent": "++",
+    "good": "+",
+    "book": "/",
+    "theory": "/",
+    "opening": "/",
+    "miss": "miss",
+    "incorrect": "miss",
+    "missed_win": "miss",
+    "inaccuracy": "?!",
+    "dubious": "?!",
+    "mistake": "?",
+    "blunder": "??",
+    "forced": "forced",
+}
+
+_SOUND_SYMBOL_EXACT = {
+    "!!": ("annotations", "!!"),
+    "!": ("annotations", "!"),
+    "+++": ("annotations", "+++"),
+    "++": ("annotations", "++"),
+    "+": ("annotations", "+"),
+    "?!": ("annotations", "?!"),
+    "?": ("annotations", "?"),
+    "??": ("annotations", "??"),
+}
+
+
+def detect_sound_slot_from_filename(filename: str) -> Optional[Tuple[str, str]]:
+    """Infer (category, slot_key) for a sound file based on its filename."""
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    if not stem:
+        return None
+    stripped = stem.strip()
+    if stripped in _SOUND_SYMBOL_EXACT:
+        return _SOUND_SYMBOL_EXACT[stripped]
+    norm = re.sub(r"[^a-z0-9]+", "_", stripped.lower()).strip("_")
+    if not norm:
+        return None
+    hint = None
+    if norm.startswith("evt_"):
+        hint = "events"
+        norm = norm[4:]
+    elif norm.startswith("ann_"):
+        hint = "annotations"
+        norm = norm[4:]
+
+    if hint == "events":
+        if norm in _SOUND_EVENT_ALIASES:
+            return ("events", _SOUND_EVENT_ALIASES[norm])
+    elif hint == "annotations":
+        if norm in _SOUND_ANNO_ALIASES:
+            return ("annotations", _SOUND_ANNO_ALIASES[norm])
+    else:
+        if norm in _SOUND_EVENT_ALIASES:
+            return ("events", _SOUND_EVENT_ALIASES[norm])
+        if norm in _SOUND_ANNO_ALIASES:
+            return ("annotations", _SOUND_ANNO_ALIASES[norm])
+
+    tokens = [t for t in norm.split("_") if t]
+    for i in range(len(tokens) - 1):
+        pair = f"{tokens[i]}_{tokens[i + 1]}"
+        if hint != "annotations" and pair in _SOUND_EVENT_ALIASES:
+            return ("events", _SOUND_EVENT_ALIASES[pair])
+        if pair in _SOUND_ANNO_ALIASES:
+            return ("annotations", _SOUND_ANNO_ALIASES[pair])
+    for t in tokens:
+        if hint != "annotations" and t in _SOUND_EVENT_ALIASES:
+            return ("events", _SOUND_EVENT_ALIASES[t])
+        if t in _SOUND_ANNO_ALIASES:
+            return ("annotations", _SOUND_ANNO_ALIASES[t])
+    return None
+
+
+def detect_sounds_in_folder(folder_path: str) -> Tuple[Dict[str, str], Dict[str, str]]:
+    """Scan a directory and map detected sound files to (events, annotations) dicts."""
+    events: Dict[str, str] = {}
+    anns: Dict[str, str] = {}
+    if not folder_path or not os.path.isdir(folder_path):
+        return events, anns
+    for fname in sorted(os.listdir(folder_path)):
+        if not fname.lower().endswith(SOUND_AUDIO_EXTS):
+            continue
+        res = detect_sound_slot_from_filename(fname)
+        if not res:
+            continue
+        cat, key = res
+        full = os.path.join(folder_path, fname)
+        if cat == "events" and key not in events:
+            events[key] = full
+        elif cat == "annotations" and key not in anns:
+            anns[key] = full
+    return events, anns
+
+
 def list_sound_templates() -> List[dict]:
     out = _builtin_sound_templates()
     root = sound_templates_dir()
     for folder in sorted(os.listdir(root)):
-        manifest = os.path.join(root, folder, "template.json")
+        fdir = os.path.join(root, folder)
+        if not os.path.isdir(fdir):
+            continue
+        manifest = os.path.join(fdir, "template.json")
         if os.path.isfile(manifest):
             try:
                 with open(manifest, "r", encoding="utf-8") as f:
                     data = json.load(f)
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
-                data.setdefault("events", {})
-                data.setdefault("annotations", {})
+                ev = data.setdefault("events", {})
+                an = data.setdefault("annotations", {})
+                det_ev, det_an = detect_sounds_in_folder(fdir)
+                for k, p in det_ev.items():
+                    if k not in ev or not os.path.exists(ev[k]):
+                        ev[k] = p
+                for k, p in det_an.items():
+                    if k not in an or not os.path.exists(an[k]):
+                        an[k] = p
                 out.append(data)
             except Exception:
                 pass
+        else:
+            det_ev, det_an = detect_sounds_in_folder(fdir)
+            if det_ev or det_an:
+                out.append({
+                    "id": f"custom:{folder}",
+                    "name": capitalize_asset_name(folder),
+                    "locked": False,
+                    "events": det_ev,
+                    "annotations": det_an,
+                })
     return out
 
 
@@ -575,7 +724,15 @@ def set_sound_slot(template_id: str, category: str, slot_key: str, source_path: 
     prefix = "evt" if category == "events" else "ann"
     safe_k = re.sub(r"[^a-zA-Z0-9_]", lambda m: f"_{ord(m.group(0))}_", slot_key)
     dest = os.path.join(tdir, f"{prefix}_{safe_k}{ext}")
-    shutil.copyfile(source_path, dest)
+    old = (tpl.get(category) or {}).get(slot_key, "")
+    if old and os.path.abspath(old) != os.path.abspath(dest) and os.path.exists(old):
+        try:
+            if os.path.dirname(os.path.abspath(old)) == os.path.abspath(tdir):
+                os.remove(old)
+        except OSError:
+            pass
+    if os.path.abspath(source_path) != os.path.abspath(dest):
+        shutil.copyfile(source_path, dest)
     tpl.setdefault(category, {})[slot_key] = dest
     _save_custom_sound_manifest(template_id, tpl)
     return True
@@ -608,6 +765,37 @@ def delete_sound_template(template_id: str) -> bool:
         shutil.rmtree(tdir, ignore_errors=True)
         return True
     return False
+
+
+def import_sound_files(template_id: str, file_paths: List[str]) -> Tuple[int, List[str]]:
+    """Auto-detect and import multiple sound files by filename into a custom sound template."""
+    if not template_id.startswith("custom:"):
+        return 0, [os.path.basename(p) for p in (file_paths or [])]
+    matched = 0
+    unmatched: List[str] = []
+    for p in file_paths or []:
+        if not p or not os.path.isfile(p):
+            continue
+        res = detect_sound_slot_from_filename(p)
+        if res:
+            cat, key = res
+            if set_sound_slot(template_id, cat, key, p):
+                matched += 1
+                continue
+        unmatched.append(os.path.basename(p))
+    return matched, unmatched
+
+
+def import_sounds_from_folder(template_id: str, folder_path: str) -> Tuple[int, List[str]]:
+    """Auto-detect and import all recognized audio files from a folder into a custom sound template."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return 0, []
+    files = [
+        os.path.join(folder_path, fname)
+        for fname in sorted(os.listdir(folder_path))
+        if fname.lower().endswith(SOUND_AUDIO_EXTS)
+    ]
+    return import_sound_files(template_id, files)
 
 
 # ---------------------------------------------------------------- Board Templates
@@ -935,6 +1123,8 @@ def list_piece_templates() -> List[dict]:
     root = piece_templates_dir()
     for folder in sorted(os.listdir(root)):
         fdir = os.path.join(root, folder)
+        if not os.path.isdir(fdir):
+            continue
         manifest = os.path.join(fdir, "template.json")
         if os.path.isfile(manifest):
             try:
@@ -950,6 +1140,15 @@ def list_piece_templates() -> List[dict]:
                 out.append(data)
             except Exception:
                 pass
+        else:
+            det = detect_pieces_in_folder(fdir)
+            if det:
+                out.append({
+                    "id": f"custom:{folder}",
+                    "name": capitalize_asset_name(folder),
+                    "locked": False,
+                    "pieces": det,
+                })
     return out
 
 
@@ -1074,11 +1273,120 @@ def _default_annotation_template() -> dict:
     }
 
 
+ANNOTATION_IMAGE_EXTS = (".png", ".webp", ".jpg", ".jpeg", ".bmp", ".svg")
+
+_ANNO_STEM_ALIASES = {
+    "brilliant": "brilliant",
+    "bril": "brilliant",
+    "excl2": "brilliant",
+    "double_excl": "brilliant",
+    "great_find": "great_find",
+    "greatfind": "great_find",
+    "great": "great_find",
+    "excl": "great_find",
+    "best": "best",
+    "best_move": "best",
+    "star": "best",
+    "excellent": "excellent",
+    "thumbs_up": "excellent",
+    "good": "good",
+    "check": "good",
+    "checkmark": "good",
+    "book": "book",
+    "theory": "book",
+    "opening": "book",
+    "incorrect": "incorrect",
+    "miss": "incorrect",
+    "missed": "incorrect",
+    "missed_win": "incorrect",
+    "cross": "incorrect",
+    "inaccuracy": "inaccuracy",
+    "dubious": "inaccuracy",
+    "mistake": "mistake",
+    "blunder": "blunder",
+    "forced": "forced",
+    "only_move": "forced",
+    "alternative": "alternative",
+    "alt": "alternative",
+    "best_alt": "alternative",
+    "checkmate_white": "checkmate_white",
+    "white_checkmate": "checkmate_white",
+    "mate_white": "checkmate_white",
+    "white_mate": "checkmate_white",
+    "win_white": "checkmate_white",
+    "checkmate_black": "checkmate_black",
+    "black_checkmate": "checkmate_black",
+    "mate_black": "checkmate_black",
+    "black_mate": "checkmate_black",
+    "win_black": "checkmate_black",
+    "draw_white": "draw_white",
+    "white_draw": "draw_white",
+    "draw_black": "draw_black",
+    "black_draw": "draw_black",
+    "resign_white": "resign_white",
+    "white_resign": "resign_white",
+    "resign_black": "resign_black",
+    "black_resign": "resign_black",
+}
+
+_ANNO_SYMBOL_EXACT = {
+    "!!": "brilliant",
+    "!": "great_find",
+    "+++": "best",
+    "++": "excellent",
+    "+": "good",
+    "?!": "inaccuracy",
+    "?": "mistake",
+    "??": "blunder",
+}
+
+
+def detect_annotation_stem_from_filename(filename: str) -> Optional[str]:
+    """Infer an annotation icon stem (e.g. 'brilliant', 'great_find', 'blunder') from a filename."""
+    stem = os.path.splitext(os.path.basename(filename or ""))[0]
+    if not stem:
+        return None
+    stripped = stem.strip()
+    if stripped in _ANNO_SYMBOL_EXACT:
+        return _ANNO_SYMBOL_EXACT[stripped]
+    norm = re.sub(r"[^a-z0-9]+", "_", stripped.lower()).strip("_")
+    if not norm:
+        return None
+    if norm in _ANNO_STEM_ALIASES:
+        return _ANNO_STEM_ALIASES[norm]
+    tokens = [t for t in norm.split("_") if t]
+    for i in range(len(tokens) - 1):
+        pair = f"{tokens[i]}_{tokens[i + 1]}"
+        if pair in _ANNO_STEM_ALIASES:
+            return _ANNO_STEM_ALIASES[pair]
+    for tok in tokens:
+        if tok in _ANNO_STEM_ALIASES:
+            return _ANNO_STEM_ALIASES[tok]
+    return None
+
+
+def detect_annotations_in_folder(folder_path: str) -> Dict[str, str]:
+    """Scan a directory and map detected annotation icon stems to image file paths."""
+    detected: Dict[str, str] = {}
+    if not folder_path or not os.path.isdir(folder_path):
+        return detected
+    for fname in sorted(os.listdir(folder_path)):
+        if not fname.lower().endswith(ANNOTATION_IMAGE_EXTS):
+            continue
+        stem = detect_annotation_stem_from_filename(fname)
+        if stem and stem not in detected:
+            detected[stem] = os.path.join(folder_path, fname)
+    return detected
+
+
 def list_annotation_templates() -> List[dict]:
     out = [_default_annotation_template()]
     root = annotation_templates_dir()
     for folder in sorted(os.listdir(root)):
-        manifest = os.path.join(root, folder, "template.json")
+        fdir = os.path.join(root, folder)
+        if not os.path.isdir(fdir):
+            continue
+        manifest = os.path.join(fdir, "template.json")
         if os.path.isfile(manifest):
             try:
                 with open(manifest, "r", encoding="utf-8") as f:
@@ -1086,11 +1394,25 @@ def list_annotation_templates() -> List[dict]:
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
                 data.setdefault("mode", "icons")
-                data.setdefault("icons", {})
+                ic = data.setdefault("icons", {})
+                for k, p in detect_annotations_in_folder(fdir).items():
+                    if k not in ic or not os.path.exists(ic[k]):
+                        ic[k] = p
                 data.setdefault("styles", {})
                 out.append(data)
             except Exception:
                 pass
+        else:
+            det = detect_annotations_in_folder(fdir)
+            if det:
+                out.append({
+                    "id": f"custom:{folder}",
+                    "name": capitalize_asset_name(folder),
+                    "locked": False,
+                    "mode": "icons",
+                    "icons": det,
+                    "styles": {},
+                })
     return out
 
 
@@ -1146,6 +1468,54 @@ def ensure_annotation_icon_copy(template_id: str, stem: str, default_png_path: s
     tpl.setdefault("icons", {})[stem] = dest
     _save_annotation_manifest(template_id, tpl)
     return dest
+
+
+def set_annotation_icon_slot(template_id: str, stem: str, source_path: str) -> bool:
+    if not template_id.startswith("custom:") or not os.path.exists(source_path):
+        return False
+    tpl = get_annotation_template(template_id)
+    if tpl.get("locked"):
+        return False
+    img = QImage(source_path)
+    if img.isNull():
+        return False
+    folder = template_id.split(":", 1)[1]
+    adir = os.path.join(annotation_templates_dir(), folder)
+    dest = os.path.join(adir, f"{stem}.png")
+    if not img.save(dest, "PNG"):
+        return False
+    tpl.setdefault("icons", {})[stem] = dest
+    _save_annotation_manifest(template_id, tpl)
+    return True
+
+
+def import_annotation_files(template_id: str, file_paths: List[str]) -> Tuple[int, List[str]]:
+    """Auto-detect and import multiple annotation icon images by filename into a custom template."""
+    if not template_id.startswith("custom:"):
+        return 0, [os.path.basename(p) for p in (file_paths or [])]
+    matched = 0
+    unmatched: List[str] = []
+    for p in file_paths or []:
+        if not p or not os.path.isfile(p):
+            continue
+        stem = detect_annotation_stem_from_filename(p)
+        if stem and set_annotation_icon_slot(template_id, stem, p):
+            matched += 1
+        else:
+            unmatched.append(os.path.basename(p))
+    return matched, unmatched
+
+
+def import_annotations_from_folder(template_id: str, folder_path: str) -> Tuple[int, List[str]]:
+    """Auto-detect and import all recognized annotation images from a folder into a custom template."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return 0, []
+    files = [
+        os.path.join(folder_path, fname)
+        for fname in sorted(os.listdir(folder_path))
+        if fname.lower().endswith(ANNOTATION_IMAGE_EXTS)
+    ]
+    return import_annotation_files(template_id, files)
 
 
 def reset_annotation_icon_slot(template_id: str, stem: str) -> bool:
@@ -1630,6 +2000,11 @@ def build_app_stylesheet(
         QListWidget::item {{
             padding: 4px 6px;
             border-radius: 4px;
+            border: 1px solid transparent;
+        }}
+        QListWidget#CompactTemplateList::item {{
+            padding: 1px 6px;
+            border-radius: 3px;
             border: 1px solid transparent;
         }}
         QListWidget::item:hover {{
