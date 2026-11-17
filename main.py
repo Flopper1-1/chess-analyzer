@@ -8,6 +8,7 @@ import random
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 try:
     import winsound
@@ -45,6 +46,112 @@ APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
 ISSUES_URL = "https://github.com/Flopper1-1/chess-analyzer/issues"
 SURVEY_URL = "https://forms.gle/qeVYFdKAeZpdAWW97"
+CRASH_FORM_URL = "https://forms.gle/NyNHs2tAn8jYpRP76"
+
+_CRASH_REPORTED = False
+
+
+def show_crash_dialog(exc_type, exc_value, exc_tb):
+    """Display an emergency crash dialog allowing the user to copy details and report the crash."""
+    global _CRASH_REPORTED
+    if _CRASH_REPORTED:
+        return
+    _CRASH_REPORTED = True
+
+    tb_lines = traceback.format_exception(exc_type, exc_value, exc_tb)
+    tb_text = "".join(tb_lines)
+
+    # Save crash traceback to log file in user data directory
+    try:
+        crash_log_path = os.path.join(themes.data_root(), "crash.log")
+        with open(crash_log_path, "a", encoding="utf-8") as f:
+            f.write(f"\n--- CRASH REPORT {time.strftime('%Y-%m-%d %H:%M:%S')} ({APP_VERSION}) ---\n")
+            f.write(tb_text)
+    except Exception:
+        pass
+
+    try:
+        sys.stderr.write(tb_text)
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+    # Don't block during automated tests or offscreen runs
+    if "--selftest" in sys.argv or os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+        return
+
+    try:
+        app = QApplication.instance()
+        if app is None:
+            app = QApplication(sys.argv)
+
+        box = QMessageBox()
+        box.setWindowTitle(f"{APP_TITLE} - Application Crash")
+        box.setIcon(QMessageBox.Critical)
+        box.setTextFormat(Qt.RichText)
+        box.setText(
+            f"<b>{APP_TITLE} encountered an unexpected error and crashed.</b><br><br>"
+            "We apologize for the inconvenience! Please report this crash using our quick form so we can fix it:<br>"
+            f"<a href='{CRASH_FORM_URL}'>{CRASH_FORM_URL}</a>"
+        )
+        box.setInformativeText("Click <b>Report Crash</b> to open the crash report form in your browser.")
+        box.setDetailedText(f"Version: {APP_VERSION}\n\n{tb_text}")
+
+        btn_report = box.addButton("Report Crash", QMessageBox.AcceptRole)
+        btn_copy = box.addButton("Copy Error Details", QMessageBox.ActionRole)
+        btn_close = box.addButton("Close", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_report)
+
+        while True:
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is btn_copy:
+                cb = app.clipboard()
+                if cb:
+                    cb.setText(f"{APP_TITLE} {APP_VERSION} Crash Report:\n\n{tb_text}")
+                continue
+            if clicked is btn_report:
+                if not QDesktopServices.openUrl(QUrl(CRASH_FORM_URL)):
+                    webbrowser.open(CRASH_FORM_URL)
+            break
+    except Exception:
+        try:
+            if not QDesktopServices.openUrl(QUrl(CRASH_FORM_URL)):
+                webbrowser.open(CRASH_FORM_URL)
+        except Exception:
+            pass
+        try:
+            ctypes.windll.user32.MessageBoxW(
+                0,
+                f"Holly's Chess Analyzer encountered an error:\n\n{exc_value}\n\nPlease report this at:\n{CRASH_FORM_URL}",
+                f"{APP_TITLE} - Crash",
+                0x10,
+            )
+        except Exception:
+            pass
+
+
+def install_crash_handler():
+    """Hook unhandled exceptions in the main thread and background threads to show the crash dialog."""
+    def _sys_excepthook(exc_type, exc_value, exc_tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_tb)
+            return
+        show_crash_dialog(exc_type, exc_value, exc_tb)
+        sys.exit(1)
+
+    sys.excepthook = _sys_excepthook
+
+    if hasattr(threading, "excepthook"):
+        def _threading_excepthook(args):
+            if issubclass(args.exc_type, KeyboardInterrupt):
+                return
+            show_crash_dialog(args.exc_type, args.exc_value, args.exc_traceback)
+
+        threading.excepthook = _threading_excepthook
+
+
+install_crash_handler()
 
 DEFAULT_KEYBINDS = [
     ("prev_move", "Previous move", "Left"),
@@ -4223,7 +4330,23 @@ class MainWindow(QMainWindow):
             webbrowser.open(url)
 
     def report_issue(self):
-        self._open_url(ISSUES_URL)
+        box = QMessageBox(self)
+        box.setWindowTitle("Report an Issue or Crash")
+        box.setIcon(QMessageBox.Question)
+        box.setText("How would you like to report an issue or crash?")
+        box.setInformativeText(
+            "You can fill out our quick Crash / Bug Report Form or open a ticket on GitHub Issues."
+        )
+        btn_form = box.addButton("Crash / Bug Report Form", QMessageBox.AcceptRole)
+        btn_gh = box.addButton("GitHub Issues", QMessageBox.ActionRole)
+        btn_cancel = box.addButton("Cancel", QMessageBox.RejectRole)
+        box.setDefaultButton(btn_form)
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is btn_form:
+            self._open_url(CRASH_FORM_URL)
+        elif clicked is btn_gh:
+            self._open_url(ISSUES_URL)
 
     def maybe_prompt_survey(self):
         if (
@@ -4398,8 +4521,11 @@ def selftest():
 
 
 def main():
+    install_crash_handler()
     if "--selftest" in sys.argv:
         sys.exit(selftest())
+    if "--crash-test" in sys.argv:
+        raise RuntimeError("Intentional test crash to verify crash reporting dialog")
     winutil.disable_throttle()          # stay at full speed when the window is in the background
     app = QApplication(sys.argv)
     icon = QIcon(resource_path("icon.ico"))
