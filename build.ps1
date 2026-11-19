@@ -1,7 +1,10 @@
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 python -m pip install PySide6 chess pyinstaller
-python -m PyInstaller --noconfirm --onefile --windowed --name "Holly's Chess Analyzer" --icon icon.ico --add-data "icon.ico;." `
+if (Test-Path "build") {
+    Remove-Item -Recurse -Force "build"
+}
+python -m PyInstaller --clean --noconfirm --onefile --windowed --name "Holly's Chess Analyzer" --icon icon.ico --add-data "icon.ico;." `
   --add-binary "assets\stockfish.exe;assets" `
   --add-data "assets\openings;assets\openings" `
   --add-data "LICENSES;LICENSES" --add-data "assets\icons;assets\icons" `

@@ -4802,6 +4802,18 @@ class MainWindow(QMainWindow):
                 return
             pre = data.get("prerelease")
             if pre and pre.get("update_available") and pre.get("download_url"):
+                target_tag = (pre.get("latest_version") or "").strip()
+                last_tag = (self.qs.value("last_auto_update_attempt_tag", "") or "").strip()
+                last_from = (self.qs.value("last_auto_update_attempt_from", "") or "").strip()
+                try:
+                    last_ts = float(self.qs.value("last_auto_update_attempt_ts", 0.0) or 0.0)
+                except (TypeError, ValueError):
+                    last_ts = 0.0
+                if target_tag and target_tag == last_tag and APP_VERSION == last_from and (time.time() - last_ts) < 3600:
+                    self.status.setText(
+                        f"Skipped repeat auto-update to {target_tag} to prevent an update loop."
+                    )
+                    return
                 self.install_release(pre, confirm=False)
         self.check_channels(_on_channels)
 
@@ -4860,6 +4872,10 @@ class MainWindow(QMainWindow):
                 self._updating_exit = True
                 winutil.release_single_instance()
                 try:
+                    if not confirm:
+                        self.qs.setValue("last_auto_update_attempt_tag", (info.get("latest_version") or "").strip())
+                        self.qs.setValue("last_auto_update_attempt_from", APP_VERSION)
+                        self.qs.setValue("last_auto_update_attempt_ts", time.time())
                     self.qs.sync()
                 except Exception:
                     pass
