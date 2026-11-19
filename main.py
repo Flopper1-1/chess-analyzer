@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QLabel, QFileDialog, QDialog, QPlainTextEdit, QDialogButtonBox, QFormLayout,
     QComboBox, QLineEdit, QSpinBox, QProgressBar, QListWidget, QListWidgetItem, QHeaderView, QMessageBox,
-    QAbstractItemView, QSizePolicy, QToolBar, QToolTip, QColorDialog, QTabWidget, QGridLayout,
+    QAbstractItemView, QSizePolicy, QToolBar, QToolButton, QToolTip, QColorDialog, QTabWidget, QGridLayout,
     QSlider, QStackedWidget, QScrollArea, QCheckBox, QFrame, QSystemTrayIcon, QInputDialog,
     QKeySequenceEdit, QGroupBox, QLayout, QButtonGroup,
 )
@@ -1109,9 +1109,10 @@ class ProfileButtonWidget(QFrame):
         super().__init__(parent)
         self.setObjectName("ProfileButton")
         self.setCursor(Qt.PointingHandCursor)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setToolTip("Click to edit your profile picture and player name")
         self.setStyleSheet(
-            "QFrame#ProfileButton { background:#232323; border:1px solid #444; border-radius:4px; padding:2px 6px; }"
+            "QFrame#ProfileButton { background:#232323; border:1px solid #444; border-radius:4px; padding:0px; }"
             "QFrame#ProfileButton:hover { background:#303030; border:1px solid #26c6da; }"
         )
         lay = QHBoxLayout(self)
@@ -1126,18 +1127,18 @@ class ProfileButtonWidget(QFrame):
         self._text_fg = "#e6e6e6"
         self._muted_fg = "#aaaaaa"
         self.avatar_label = QLabel()
-        self.avatar_label.setFixedSize(26, 26)
+        self.avatar_label.setFixedSize(20, 20)
         self.avatar_label.setStyleSheet("border:1px solid #555; background:#1f1f1f;")
         lay.addWidget(self.avatar_label)
         self.refresh("")
 
     def set_theme(self, panel_bg: str, text_fg: str, border_fg: str, muted_fg: str = "#aaaaaa",
-                  hover_bg: str = "#303030", accent_fg: str = "#26c6da") -> None:
+                  hover_bg: str = "#303030", accent_fg: str = "#26c6da", border_w: str = "1px") -> None:
         self._text_fg = text_fg
         self._muted_fg = muted_fg
         self.setStyleSheet(
-            f"QFrame#ProfileButton {{ background:{panel_bg}; border:1px solid {border_fg}; border-radius:4px; padding:2px 6px; }}"
-            f"QFrame#ProfileButton:hover {{ background:{hover_bg}; border:1px solid {accent_fg}; }}"
+            f"QFrame#ProfileButton {{ background:{panel_bg}; border:{border_w} solid {border_fg}; border-radius:4px; padding:0px; }}"
+            f"QFrame#ProfileButton:hover {{ background:{hover_bg}; border:{border_w} solid {accent_fg}; }}"
         )
         cur = self.name_label.text()
         if cur and cur != "Profile":
@@ -1155,7 +1156,7 @@ class ProfileButtonWidget(QFrame):
         else:
             self.name_label.setText("Profile")
             self.name_label.setStyleSheet(f"font-size:12px; color:{self._muted_fg}; border:none; background:transparent;")
-        pm = icons.profile_pixmap(26)
+        pm = icons.profile_pixmap(20)
         if pm is not None and not pm.isNull():
             self.avatar_label.setPixmap(pm)
 
@@ -3552,16 +3553,26 @@ class MainWindow(QMainWindow):
         self._survey_prompted = False
         self.channel_worker = None
         self._bg_pixmap = None
+        self._bg_scaled_cache = None
+        self._bg_cache_token = 0
+        self._cached_bg = dict(themes.BUILTIN_BACKGROUNDS[0])
+        self._cached_anim_mode = ""
+        self._cached_ui_color = ""
+        self._cached_accent_color = ""
+        self._cached_anim_bg_hex = "#1e1e1e"
+        self._cached_anim_bg_color = QColor("#1e1e1e")
+        self._last_anim_bg_hex = ""
         self._christmas_phase = 0.0
         self._christmas_timer = QTimer(self)
-        self._christmas_timer.setInterval(140)
+        self._christmas_timer.setInterval(190)
         self._christmas_timer.timeout.connect(self._tick_christmas_theme)
         self._fireworks_active = False
         self._fireworks_rockets = []
         self._fireworks_sparks = []
+        self._firework_spark_sprites = {}
         self._fireworks_last_ts = time.monotonic()
         self._fireworks_timer = QTimer(self)
-        self._fireworks_timer.setInterval(33)
+        self._fireworks_timer.setInterval(45)
         self._fireworks_timer.timeout.connect(self._tick_fireworks)
         styles.load(qs)
         self.sound = SoundPlayer()
@@ -3658,14 +3669,16 @@ class MainWindow(QMainWindow):
             act = tb.addAction(t, fn)
             if t == "Save Game":
                 self.save_act = act
-        self.game_combo = QComboBox(); self.game_combo.setVisible(False)
+        self.game_combo = QComboBox()
         self.game_combo.currentIndexChanged.connect(self.pick_game)
-        tb.addWidget(self.game_combo)
+        self.game_combo_act = tb.addWidget(self.game_combo)
+        self.game_combo_act.setVisible(False)
         tb.addAction("Report an Issue", self.report_issue)
 
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         spacer.setStyleSheet("background:transparent;")
+        self._toolbar_spacer = spacer
         tb.addWidget(spacer)
 
         self.profile_btn = ProfileButtonWidget(self)
@@ -3789,8 +3802,9 @@ class MainWindow(QMainWindow):
         self.game_combo.clear()
         for i in range(len(games)):
             self.game_combo.addItem(self.combo_text(i))
-        self.game_combo.setVisible(len(games) > 1)
+        self.game_combo_act.setVisible(len(games) > 1)
         self.game_combo.blockSignals(False)
+        self._sync_toolbar_elevations()
         self.game_combo.setCurrentIndex(0)
         self.pick_game(0)
         if hasattr(self, "sound"):
@@ -4230,8 +4244,9 @@ class MainWindow(QMainWindow):
         self.game_combo.blockSignals(True)
         self.game_combo.clear()
         self.game_combo.addItem(self.combo_text(0))
-        self.game_combo.setVisible(False)
+        self.game_combo_act.setVisible(False)
         self.game_combo.blockSignals(False)
+        self._sync_toolbar_elevations()
         self.pick_game(0)
         if hasattr(self, "sound"):
             self.sound.play("Game_load")
@@ -4350,18 +4365,37 @@ class MainWindow(QMainWindow):
 
     _FIREWORK_COLORS = ("#fbbf24", "#38bdf8", "#f472b6", "#4ade80", "#fb7185", "#a78bfa", "#ff8a65", "#facc15")
 
+    def _ensure_firework_sprites(self):
+        if self._firework_spark_sprites:
+            return
+        sz = 24
+        half = sz * 0.5
+        for col in self._FIREWORK_COLORS:
+            pm = QPixmap(sz, sz)
+            pm.fill(Qt.transparent)
+            p = QPainter(pm)
+            grad = QRadialGradient(half, half, half)
+            qc = QColor(col)
+            grad.setColorAt(0.0, QColor(255, 255, 255, 245))
+            grad.setColorAt(0.28, QColor(qc.red(), qc.green(), qc.blue(), 195))
+            grad.setColorAt(0.65, QColor(qc.red(), qc.green(), qc.blue(), 60))
+            grad.setColorAt(1.0, QColor(qc.red(), qc.green(), qc.blue(), 0))
+            p.fillRect(0, 0, sz, sz, grad)
+            p.end()
+            self._firework_spark_sprites[col] = pm
+
     def _spawn_firework_burst(self, cx: float, cy: float, color_hex: str = None):
         col = color_hex or random.choice(self._FIREWORK_COLORS)
         col2 = random.choice(self._FIREWORK_COLORS)
-        count = random.randint(42, 58)
+        count = random.randint(28, 38)
         for i in range(count):
             ang = (2.0 * math.pi * i) / count + random.uniform(-0.08, 0.08)
-            spd = random.uniform(95.0, 260.0)
+            spd = random.uniform(95.0, 250.0)
             c = col if (i % 3 != 0) else col2
             self._fireworks_sparks.append([
                 float(cx), float(cy),
                 math.cos(ang) * spd, math.sin(ang) * spd,
-                0.0, random.uniform(1.05, 1.7), c, random.uniform(2.6, 4.4),
+                0.0, random.uniform(1.0, 1.65), c, random.uniform(2.6, 4.2),
             ])
 
     def _launch_firework_rocket(self, w: int, h: int):
@@ -4396,10 +4430,12 @@ class MainWindow(QMainWindow):
                 next_sparks.append(s)
         self._fireworks_sparks = next_sparks
 
-        if len(self._fireworks_rockets) < 2 and (len(self._fireworks_sparks) < 75 or random.random() < 0.10):
-            self._launch_firework_rocket(w, h)
+        if len(self._fireworks_rockets) < 2 and len(self._fireworks_sparks) < 120:
+            if len(self._fireworks_sparks) < 60 or random.random() < 0.09:
+                self._launch_firework_rocket(w, h)
 
     def _seed_fireworks(self):
+        self._ensure_firework_sprites()
         self._fireworks_rockets.clear()
         self._fireworks_sparks.clear()
         self._fireworks_last_ts = time.monotonic()
@@ -4417,81 +4453,109 @@ class MainWindow(QMainWindow):
         if not self._fireworks_active:
             return
         now = time.monotonic()
-        dt = min(0.06, max(0.005, now - self._fireworks_last_ts))
+        if not self.isVisible() or self.isMinimized():
+            self._fireworks_last_ts = now
+            return
+        dt = min(0.07, max(0.005, now - self._fireworks_last_ts))
         self._fireworks_last_ts = now
         w = max(320, self.width())
         h = max(240, self.height())
         self._step_fireworks_dt(dt, w, h)
         self.update()
 
-    def _draw_fireworks(self, p: QPainter, bg_hex: str):
-        p.fillRect(self.rect(), QColor(bg_hex or "#0b0e17"))
-        p.setRenderHint(QPainter.Antialiasing, True)
-        for rx, ry, rvx, rvy, _ty, rcol in self._fireworks_rockets:
-            qc = QColor(rcol)
-            qc.setAlpha(240)
-            p.setPen(QPen(qc, 2.5))
-            p.drawLine(QPointF(rx, ry), QPointF(rx - rvx * 0.055, ry - rvy * 0.055))
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(255, 255, 255, 245))
-            p.drawEllipse(QPointF(rx, ry), 2.8, 2.8)
+    def _draw_fireworks(self, p: QPainter, bg_color: QColor, clip_rect: QRect = None):
+        target = clip_rect if (clip_rect is not None and not clip_rect.isEmpty()) else self.rect()
+        p.fillRect(target, bg_color)
+        self._ensure_firework_sprites()
+        vis = target.adjusted(-32, -32, 32, 32)
+        if self._fireworks_rockets:
+            p.setRenderHint(QPainter.Antialiasing, True)
+            for rx, ry, rvx, rvy, _ty, rcol in self._fireworks_rockets:
+                qc = QColor(rcol)
+                qc.setAlpha(240)
+                p.setPen(QPen(qc, 2.2))
+                p.drawLine(QPointF(rx, ry), QPointF(rx - rvx * 0.055, ry - rvy * 0.055))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(255, 255, 255, 245))
+                p.drawEllipse(QPointF(rx, ry), 2.5, 2.5)
+            p.setRenderHint(QPainter.Antialiasing, False)
+
+        vx0, vy0, vx1, vy1 = vis.left(), vis.top(), vis.right(), vis.bottom()
+        sprites = self._firework_spark_sprites
+        fallback_sprite = next(iter(sprites.values())) if sprites else None
         for sx, sy, svx, svy, age, life, scol, ssz in self._fireworks_sparks:
-            frac = max(0.0, 1.0 - (age / max(0.05, life)))
-            alpha = int(255 * pow(frac, 1.35))
-            if alpha <= 4:
+            if sx < vx0 or sx > vx1 or sy < vy0 or sy > vy1:
                 continue
-            qc = QColor(scol)
-            # Soft outer glow halo
-            qc_glow = QColor(qc)
-            qc_glow.setAlpha(int(alpha * 0.30))
-            p.setPen(Qt.NoPen)
-            p.setBrush(qc_glow)
-            r_glow = ssz * (1.55 + 0.65 * frac)
-            p.drawEllipse(QPointF(sx, sy), r_glow, r_glow)
-            # Comet tail
-            qc_tail = QColor(qc)
-            qc_tail.setAlpha(int(alpha * 0.70))
-            p.setPen(QPen(qc_tail, max(1.4, ssz * 0.65)))
-            p.drawLine(QPointF(sx, sy), QPointF(sx - svx * 0.05, sy - svy * 0.05))
-            # Bright inner star
-            qc.setAlpha(alpha)
-            p.setPen(Qt.NoPen)
-            p.setBrush(qc)
-            r_dot = ssz * (0.62 + 0.48 * frac)
-            p.drawEllipse(QPointF(sx, sy), r_dot, r_dot)
-            if frac > 0.45:
-                p.setBrush(QColor(255, 255, 255, int(alpha * 0.75)))
-                p.drawEllipse(QPointF(sx, sy), r_dot * 0.45, r_dot * 0.45)
+            frac = max(0.0, 1.0 - (age / max(0.05, life)))
+            if frac <= 0.03:
+                continue
+            pm = sprites.get(scol, fallback_sprite)
+            if pm is None:
+                continue
+            p.setOpacity(pow(frac, 1.25))
+            r = int(round(ssz * (2.3 + 1.15 * frac)))
+            p.drawPixmap(int(sx) - r, int(sy) - r, r * 2, r * 2, pm)
+        p.setOpacity(1.0)
 
     def paintEvent(self, e):
+        e_rect = e.rect() if (e is not None and not e.rect().isEmpty()) else self.rect()
         if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
+            key = (self.width(), self.height(), self._bg_cache_token)
+            if self._bg_scaled_cache is None or self._bg_scaled_cache[0] != key:
+                scaled = self._bg_pixmap.scaled(
+                    self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+                )
+                sx = max(0, (scaled.width() - self.width()) // 2)
+                sy = max(0, (scaled.height() - self.height()) // 2)
+                composed = QPixmap(self.size())
+                composed.fill(Qt.black)
+                cp = QPainter(composed)
+                cp.drawPixmap(0, 0, scaled, sx, sy, self.width(), self.height())
+                cp.fillRect(composed.rect(), QColor(0, 0, 0, 85))
+                cp.end()
+                self._bg_scaled_cache = (key, composed)
             p = QPainter(self)
-            scaled = self._bg_pixmap.scaled(
-                self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
-            )
-            x = (scaled.width() - self.width()) // 2
-            y = (scaled.height() - self.height()) // 2
-            p.drawPixmap(0, 0, scaled, x, y, self.width(), self.height())
-            p.fillRect(self.rect(), QColor(0, 0, 0, 85))
+            p.drawPixmap(e_rect, self._bg_scaled_cache[1], e_rect)
             return
         if self._fireworks_active:
             p = QPainter(self)
-            bg = themes.get_background_template(
-                getattr(self.settings, "background_template", "new_year"),
-                disable_holidays=bool(getattr(self.settings, "disable_holiday_events", False)),
-            )
-            pal = themes.get_theme_palette(
-                bg,
-                ui_color=getattr(self.settings, "ui_color", ""),
-                accent_color=getattr(self.settings, "accent_color", ""),
-            )
-            self._draw_fireworks(p, pal["bg"])
+            self._draw_fireworks(p, self._cached_anim_bg_color, e_rect)
+            return
+        if self._cached_anim_mode in ("christmas_shift", "halloween_shift") and not self._cached_ui_color:
+            p = QPainter(self)
+            p.fillRect(e_rect, self._cached_anim_bg_color)
             return
         super().paintEvent(e)
+
+    def _sync_toolbar_elevations(self):
+        """Ensure toolbar action tabs, game_combo, and ProfileButtonWidget share identical height/elevation."""
+        if not hasattr(self, "tb") or not hasattr(self, "profile_btn"):
+            return
+        widgets = []
+        for act in self.tb.actions():
+            w = self.tb.widgetForAction(act)
+            if isinstance(w, QToolButton):
+                widgets.append(w)
+        if hasattr(self, "game_combo"):
+            widgets.append(self.game_combo)
+        widgets.append(self.profile_btn)
+        for w in widgets:
+            w.setMinimumHeight(0)
+            w.setMaximumHeight(16777215)
+        hints = [w.sizeHint().height() for w in widgets if w.sizeHint().isValid()]
+        row_h = max(28, max(hints) if hints else 29)
+        for w in widgets:
+            w.setFixedHeight(row_h)
+        if hasattr(self, "_toolbar_spacer") and self._toolbar_spacer is not None:
+            self._toolbar_spacer.setFixedHeight(row_h)
+        self.tb.updateGeometry()
 
     def _apply_theme_only(self, bg: dict, is_custom_image: bool, phase: float = 0.0):
         ui_col = getattr(self.settings, "ui_color", "")
         acc_col = getattr(self.settings, "accent_color", "")
+        eff_ui = themes.normalize_hex(ui_col) or themes.normalize_hex(bg.get("ui_color", ""))
+        eff_acc = themes.normalize_hex(acc_col) or themes.normalize_hex(bg.get("accent_color", ""))
+        anim_mode = bg.get("animated") or ""
         qss = themes.build_app_stylesheet(
             bg, is_custom_image=is_custom_image, ui_color=ui_col, accent_color=acc_col, phase=phase
         )
@@ -4502,27 +4566,55 @@ class MainWindow(QMainWindow):
         else:
             self.setStyleSheet(qss)
         pal = themes.get_theme_palette(bg, ui_color=ui_col, accent_color=acc_col, phase=phase)
-        self.top_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
-        self.bottom_player_bar.set_theme(pal["bar_bg"], pal["bar_fg"], pal["bar_border"])
+        is_color_shift = anim_mode in ("christmas_shift", "halloween_shift") and not is_custom_image and not eff_ui
+        is_fireworks = anim_mode == "fireworks" and not is_custom_image
+        border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
+        if is_color_shift:
+            bar_bg = "rgba(12, 10, 12, 110)"
+            bar_border = "rgba(255, 163, 71, 155)" if anim_mode == "halloween_shift" else "rgba(253, 230, 138, 145)"
+            hover_bg = "rgba(255, 255, 255, 52)"
+            accent_use = eff_acc or ("#eab308" if anim_mode == "christmas_shift" else pal["accent"])
+            graph_bg = "#7d0a0a0c"
+        elif is_fireworks:
+            bar_bg = themes.rgba_css(pal["bar_bg"], 165)
+            bar_border = pal["bar_border"]
+            hover_bg = pal["btn_hover"]
+            accent_use = pal["accent"]
+            graph_bg = pal["graph_bg"]
+        else:
+            bar_bg = pal["bar_bg"]
+            bar_border = pal["bar_border"]
+            hover_bg = pal["btn_hover"]
+            accent_use = pal["accent"]
+            graph_bg = pal["graph_bg"]
+
+        self.top_player_bar.set_theme(bar_bg, pal["bar_fg"], bar_border)
+        self.bottom_player_bar.set_theme(bar_bg, pal["bar_fg"], bar_border)
         self.profile_btn.set_theme(
-            pal["bar_bg"], pal["bar_fg"], pal["bar_border"], pal["muted"], pal["btn_hover"], pal["accent"]
+            bar_bg, pal["bar_fg"], bar_border, pal["muted"], hover_bg, accent_use, border_w=border_w
         )
-        self.graph.set_theme(pal["graph_bg"], pal["graph_fill"], pal["graph_mid"], pal["border"])
+        self.graph.set_theme(graph_bg, pal["graph_fill"], pal["graph_mid"], pal["border"])
+        self._cached_anim_bg_hex = pal["bg"]
+        self._cached_anim_bg_color = QColor(pal["bg"])
+        self._last_anim_bg_hex = pal["bg"]
+        self._sync_toolbar_elevations()
 
     def _tick_christmas_theme(self):
-        dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
-        bg = themes.get_background_template(
-            getattr(self.settings, "background_template", "dark"),
-            disable_holidays=dis_hol,
-        )
-        if bg.get("animated") not in ("christmas_shift", "halloween_shift"):
+        if self._cached_anim_mode not in ("christmas_shift", "halloween_shift") or self._cached_ui_color:
             self._christmas_timer.stop()
             return
-        self._christmas_phase = (self._christmas_phase + 0.006) % 1.0
-        if QApplication.activePopupWidget() is not None:
+        if self._bg_pixmap is not None and not self._bg_pixmap.isNull():
+            self._christmas_timer.stop()
             return
-        has_img = self._bg_pixmap is not None and not self._bg_pixmap.isNull()
-        self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
+        if not self.isVisible() or self.isMinimized():
+            return
+        self._christmas_phase = (self._christmas_phase + 0.0085) % 1.0
+        hex_col = themes.animated_bg_color(self._cached_anim_mode, self._christmas_phase)
+        if hex_col != self._last_anim_bg_hex:
+            self._last_anim_bg_hex = hex_col
+            self._cached_anim_bg_hex = hex_col
+            self._cached_anim_bg_color = QColor(hex_col)
+            self.update()
 
     def apply_customizations(self):
         """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
@@ -4599,9 +4691,19 @@ class MainWindow(QMainWindow):
         img_path = bg.get("image_path") or ""
         has_img = bool(img_path and os.path.exists(img_path))
         self._bg_pixmap = QPixmap(img_path) if has_img else None
+        self._bg_scaled_cache = None
+        self._bg_cache_token += 1
 
+        ui_col = getattr(self.settings, "ui_color", "")
+        acc_col = getattr(self.settings, "accent_color", "")
+        eff_ui = themes.normalize_hex(ui_col) or themes.normalize_hex(bg.get("ui_color", ""))
         anim_mode = bg.get("animated") or ""
-        if anim_mode in ("christmas_shift", "halloween_shift"):
+        self._cached_bg = dict(bg)
+        self._cached_anim_mode = anim_mode
+        self._cached_ui_color = eff_ui
+        self._cached_accent_color = themes.normalize_hex(acc_col) or themes.normalize_hex(bg.get("accent_color", ""))
+
+        if anim_mode in ("christmas_shift", "halloween_shift") and not eff_ui and not has_img:
             if not self._christmas_timer.isActive():
                 self._christmas_timer.start()
         else:

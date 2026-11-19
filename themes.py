@@ -1637,10 +1637,27 @@ def rgba_css(hex_color: str, alpha: int = 215) -> str:
     return f"rgba({r}, {g}, {b}, {a})"
 
 
+def _holiday_wave(phase: float) -> float:
+    """Return a smooth C1 cosine-eased weight in [0, 1] for cyclic holiday themes."""
+    w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
+    return w * w * (3.0 - 2.0 * w)
+
+
+def animated_bg_color(anim_mode: str, phase: float = 0.0) -> str:
+    """Return only the animated window background hex color at `phase` without full palette work."""
+    w = _holiday_wave(phase)
+    if anim_mode == "halloween_shift":
+        return blend_hex("#b54500", "#0c0a0e", w)
+    if anim_mode == "christmas_shift":
+        if w <= 0.5:
+            return blend_hex("#7c1414", "#6e4e10", w * 2.0)
+        return blend_hex("#6e4e10", "#115928", (w - 0.5) * 2.0)
+    return "#1e1e1e"
+
+
 def halloween_palette(phase: float = 0.0) -> dict:
     """Return a Halloween UI palette slowly shifting between pumpkin orange and spooky black."""
-    w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
-    w = w * w * (3.0 - 2.0 * w)
+    w = _holiday_wave(phase)
     bg = blend_hex("#b54500", "#0c0a0e", w)
     panel = blend_hex("#963800", "#161219", w)
     surface = blend_hex("#853000", "#131016", w)
@@ -1675,8 +1692,7 @@ def halloween_palette(phase: float = 0.0) -> dict:
 
 def christmas_palette(phase: float = 0.0) -> dict:
     """Return a Christmas UI palette slowly shifting between crimson red and pine green."""
-    w = 0.5 - 0.5 * math.cos(2.0 * math.pi * (phase % 1.0))
-    w = w * w * (3.0 - 2.0 * w)
+    w = _holiday_wave(phase)
     if w <= 0.5:
         u = w * 2.0
         bg = blend_hex("#7c1414", "#6e4e10", u)
@@ -1882,11 +1898,55 @@ def build_app_stylesheet(
 ) -> str:
     """Build a complete Qt stylesheet covering MainWindow, Dialogs, Tabs, and Inputs."""
     p = get_theme_palette(bg, ui_color=ui_color, accent_color=accent_color, phase=phase)
+    eff_ui = normalize_hex(ui_color) or normalize_hex(bg.get("ui_color", ""))
+    eff_acc = normalize_hex(accent_color) or normalize_hex(bg.get("accent_color", ""))
     animated_bg = bg.get("animated") or ""
-    is_fireworks = animated_bg == "fireworks"
-    main_bg = "transparent" if (is_custom_image or is_fireworks) else p["bg"]
-    toolbar_bg = rgba_css(p["panel"], 165) if is_fireworks else p["panel"]
-    pane_bg = rgba_css(p["surface"], 145) if is_fireworks else p["surface"]
+    is_fireworks = animated_bg == "fireworks" and not is_custom_image
+    is_color_shift = (
+        animated_bg in ("christmas_shift", "halloween_shift")
+        and not is_custom_image
+        and not eff_ui
+    )
+    if is_color_shift and animated_bg == "christmas_shift" and not eff_acc:
+        # Gold accent contrasts cleanly across both crimson red and pine green phases without QSS reloads
+        p["accent"] = "#eab308"
+        p["accent_hover"] = "#facc15"
+        p["accent_fg"] = "#111827"
+    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift) else p["bg"]
+    if is_color_shift:
+        toolbar_bg = "rgba(12, 10, 12, 92)"
+        pane_bg = "rgba(10, 10, 12, 112)"
+        alt_pane_bg = "rgba(255, 255, 255, 16)"
+        ctrl_bg = "rgba(12, 10, 12, 120)"
+        header_bg = "rgba(12, 10, 12, 128)"
+        btn_bg = "rgba(255, 255, 255, 24)"
+        btn_hover = "rgba(255, 255, 255, 52)"
+        btn_hover_fg = "#ffffff"
+        border_css = (
+            "rgba(255, 163, 71, 155)"
+            if animated_bg == "halloween_shift"
+            else "rgba(253, 230, 138, 145)"
+        )
+    elif is_fireworks:
+        toolbar_bg = rgba_css(p["panel"], 165)
+        pane_bg = rgba_css(p["surface"], 145)
+        alt_pane_bg = p["surface_alt"]
+        ctrl_bg = p["surface"]
+        header_bg = p["panel"]
+        btn_bg = p["btn_bg"]
+        btn_hover = p["btn_hover"]
+        btn_hover_fg = p["btn_hover_fg"]
+        border_css = p["border"]
+    else:
+        toolbar_bg = p["panel"]
+        pane_bg = p["surface"]
+        alt_pane_bg = p["surface_alt"]
+        ctrl_bg = p["surface"]
+        header_bg = p["panel"]
+        btn_bg = p["btn_bg"]
+        btn_hover = p["btn_hover"]
+        btn_hover_fg = p["btn_hover_fg"]
+        border_css = p["border"]
     border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
     return f"""
         QMainWindow {{
@@ -1902,20 +1962,20 @@ def build_app_stylesheet(
         }}
         QToolBar {{
             background-color: {toolbar_bg};
-            border-bottom: {border_w} solid {p['border']};
+            border-bottom: {border_w} solid {border_css};
             spacing: 4px;
             padding: 2px 4px;
         }}
         QToolButton, QPushButton {{
-            background-color: {p['btn_bg']};
+            background-color: {btn_bg};
             color: {p['fg']};
-            border: {border_w} solid {p['border']};
+            border: {border_w} solid {border_css};
             border-radius: 4px;
             padding: 4px 10px;
         }}
         QToolButton:hover, QPushButton:hover {{
-            background-color: {p['btn_hover']};
-            color: {p['btn_hover_fg']};
+            background-color: {btn_hover};
+            color: {btn_hover_fg};
             border-color: {p['accent']};
         }}
         QToolButton:pressed, QPushButton:pressed {{
@@ -1977,9 +2037,9 @@ def build_app_stylesheet(
             spacing: 6px;
         }}
         QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox, QPlainTextEdit, QTextEdit {{
-            background-color: {p['surface']};
+            background-color: {ctrl_bg};
             color: {p['fg']};
-            border: {border_w} solid {p['border']};
+            border: {border_w} solid {border_css};
             border-radius: 4px;
             padding: 4px 6px;
         }}
@@ -1992,9 +2052,9 @@ def build_app_stylesheet(
         QTableWidget, QListWidget, QTreeWidget {{
             background-color: {pane_bg};
             color: {p['fg']};
-            border: {border_w} solid {p['border']};
-            gridline-color: {p['border']};
-            alternate-background-color: {p['surface_alt']};
+            border: {border_w} solid {border_css};
+            gridline-color: {border_css};
+            alternate-background-color: {alt_pane_bg};
             outline: 0;
         }}
         QListWidget::item {{
@@ -2050,9 +2110,9 @@ def build_app_stylesheet(
             border: 1px solid {p['accent']};
         }}
         QHeaderView::section {{
-            background-color: {p['panel']};
+            background-color: {header_bg};
             color: {p['fg']};
-            border: {border_w} solid {p['border']};
+            border: {border_w} solid {border_css};
             padding: 4px 6px;
         }}
         QScrollArea {{
