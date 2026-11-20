@@ -242,6 +242,9 @@ class Settings:
     prerelease_holiday_override: str = ""
     ui_color: str = ""
     accent_color: str = ""
+    text_color: str = ""
+    ui_opacity: int = 100
+    smart_text_invert: str = ""  # "" (theme default) | "off" | "invert" | "bw"
 
     def matched_color(self, headers):
         """Colour matching the configured player name in the PGN headers, else None."""

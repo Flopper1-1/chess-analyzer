@@ -577,6 +577,8 @@ class BoardWidget(QWidget):
 
         is_ny = bool(self.board_template.get("random_light"))
         is_aero_board = bool(self.board_template.get("aero_glass"))
+        board_op = max(20, min(100, int(self.board_template.get("opacity", 68 if is_aero_board else 100))))
+        op_frac = board_op / 100.0
         light_hex = self.board_template.get("light_hex") or "#f0d9b5"
         dark_hex = self.board_template.get("dark_hex") or "#b58863"
         light_img_path = self.board_template.get("light_img") or ""
@@ -589,7 +591,10 @@ class BoardWidget(QWidget):
             light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
             sq_rect = rect(sq)
             if is_aero_board:
-                base_col = QColor(242, 248, 255, 168) if light else QColor(18, 26, 36, 178)
+                base_col = QColor(light_hex) if light else QColor(dark_hex)
+                if not base_col.isValid():
+                    base_col = QColor(242, 248, 255) if light else QColor(18, 26, 36)
+                base_col.setAlpha(max(35, min(255, int(round(255 * op_frac)))))
                 p.fillRect(sq_rect, base_col)
                 # Subtle Windows 7 Aero glossy upper half reflection per square
                 top_half = QRectF(sq_rect.x(), sq_rect.y(), sq_rect.width(), sq_rect.height() * 0.48)
@@ -606,13 +611,24 @@ class BoardWidget(QWidget):
             elif light and is_ny:
                 c_hex = self.new_years_colors[ny_idx % len(self.new_years_colors)] if self.new_years_colors else "#ffd54f"
                 ny_idx += 1
-                p.fillRect(sq_rect, QColor(c_hex))
+                col = QColor(c_hex)
+                if board_op < 100:
+                    col.setAlpha(int(round(255 * op_frac)))
+                p.fillRect(sq_rect, col)
             elif light and light_pm is not None:
-                p.drawPixmap(sq_rect.toRect(), light_pm)
+                if board_op < 100:
+                    p.save(); p.setOpacity(op_frac); p.drawPixmap(sq_rect.toRect(), light_pm); p.restore()
+                else:
+                    p.drawPixmap(sq_rect.toRect(), light_pm)
             elif (not light) and dark_pm is not None:
-                p.drawPixmap(sq_rect.toRect(), dark_pm)
+                if board_op < 100:
+                    p.save(); p.setOpacity(op_frac); p.drawPixmap(sq_rect.toRect(), dark_pm); p.restore()
+                else:
+                    p.drawPixmap(sq_rect.toRect(), dark_pm)
             else:
                 col = QColor(light_hex) if light else QColor(dark_hex)
+                if board_op < 100:
+                    col.setAlpha(int(round(255 * op_frac)))
                 p.fillRect(sq_rect, col)
 
             if self.last_move and sq in (self.last_move.from_square, self.last_move.to_square):
@@ -792,6 +808,7 @@ class GraphWidget(QWidget):
         super().__init__()
         self.values = []
         self.labels = []
+        self.tags = []
         self.formula = "improved"
         self.hover = -1
         self.bg_color = "#262626"
@@ -809,9 +826,10 @@ class GraphWidget(QWidget):
         self.border_color = border_hex
         self.update()
 
-    def set_values(self, v, labels=None):
+    def set_values(self, v, labels=None, tags=None):
         self.values = v
         self.labels = labels or [""] * len(v)
+        self.tags = tags or [""] * len(v)
         self.update()
 
     def _index(self, x):
@@ -829,7 +847,9 @@ class GraphWidget(QWidget):
         cp = self.values[i]
         txt = ("%+.2f" % (cp / 100.0)) if abs(cp) < 9000 else ("Mate" if cp > 0 else "-Mate")
         lab = self.labels[i] if i < len(self.labels) else ""
-        QToolTip.showText(e.globalPosition().toPoint(), "%s\nEval: %s" % (lab, txt), self)
+        tag = self.tags[i] if i < len(self.tags) else ""
+        suffix = f"  [{tag}]" if tag in ("!!", "??") else ""
+        QToolTip.showText(e.globalPosition().toPoint(), "%s%s\nEval: %s" % (lab, suffix, txt), self)
         self.update()
 
     def leaveEvent(self, _):
@@ -838,6 +858,7 @@ class GraphWidget(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
         p.fillRect(self.rect(), QColor(self.bg_color))
         if len(self.values) >= 2:
             w, h = self.width(), self.height()
@@ -849,12 +870,22 @@ class GraphWidget(QWidget):
                 for i, v in enumerate(self.values)
             ]
             poly = [QPointF(0, h)] + pts + [QPointF(w, h)]
-            from PySide6.QtGui import QPolygonF
             p.setPen(Qt.NoPen)
             p.setBrush(QColor(self.white_fill))
             p.drawPolygon(QPolygonF(poly))
             p.setPen(QPen(QColor(self.mid_color), 1))
             p.drawLine(0, h // 2, w, h // 2)
+            # Small marker circles on Blunder (??) and Brilliant (!!) moves
+            for i, pt in enumerate(pts):
+                tag = self.tags[i] if i < len(self.tags) else ""
+                if tag == "!!":
+                    p.setPen(QPen(QColor("#ffffff"), 1.2))
+                    p.setBrush(QColor("#26c6da"))
+                    p.drawEllipse(pt, 4.0, 4.0)
+                elif tag == "??":
+                    p.setPen(QPen(QColor("#ffffff"), 1.2))
+                    p.setBrush(QColor("#e53935"))
+                    p.drawEllipse(pt, 4.0, 4.0)
             if self.hover >= 0:
                 x = int(pts[self.hover].x())
                 p.setPen(QPen(QColor("#e8b923"), 1))
@@ -1213,6 +1244,67 @@ class ProfileButtonWidget(QFrame):
         super().mousePressEvent(e)
 
 
+def _make_nav_icon(kind: str, fg_hex: str = "#e6e6e6", size: int = 18) -> QIcon:
+    """Render crisp antialiased vector icons for the bottom board navigation buttons."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    col = QColor(fg_hex) if QColor(fg_hex).isValid() else QColor("#e6e6e6")
+    p.setPen(Qt.NoPen)
+    p.setBrush(col)
+    s = float(size)
+    if kind == "first":
+        p.drawRoundedRect(QRectF(s * 0.16, s * 0.22, s * 0.13, s * 0.56), 1.0, 1.0)
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.80, s * 0.20),
+            QPointF(s * 0.34, s * 0.50),
+            QPointF(s * 0.80, s * 0.80),
+        ]))
+    elif kind == "prev":
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.72, s * 0.18),
+            QPointF(s * 0.24, s * 0.50),
+            QPointF(s * 0.72, s * 0.82),
+        ]))
+    elif kind == "next":
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.28, s * 0.18),
+            QPointF(s * 0.76, s * 0.50),
+            QPointF(s * 0.28, s * 0.82),
+        ]))
+    elif kind == "last":
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.20, s * 0.20),
+            QPointF(s * 0.66, s * 0.50),
+            QPointF(s * 0.20, s * 0.80),
+        ]))
+        p.drawRoundedRect(QRectF(s * 0.71, s * 0.22, s * 0.13, s * 0.56), 1.0, 1.0)
+    elif kind == "flip":
+        pen = QPen(col, max(1.6, s * 0.11), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        arc_r = QRectF(s * 0.20, s * 0.20, s * 0.60, s * 0.60)
+        p.drawArc(arc_r, 35 * 16, 130 * 16)
+        p.drawArc(arc_r, 215 * 16, 130 * 16)
+        p.setPen(Qt.NoPen)
+        p.setBrush(col)
+        # Top-right arrowhead
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.84, s * 0.42),
+            QPointF(s * 0.62, s * 0.34),
+            QPointF(s * 0.78, s * 0.18),
+        ]))
+        # Bottom-left arrowhead
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.16, s * 0.58),
+            QPointF(s * 0.38, s * 0.66),
+            QPointF(s * 0.22, s * 0.82),
+        ]))
+    p.end()
+    return QIcon(pm)
+
+
 def _board_swatch_icon(b: dict, size: int = 36) -> QIcon:
     """Create a 2x2 mini-board swatch icon for the board template library."""
     pm = QPixmap(size, size)
@@ -1455,6 +1547,9 @@ class ProfileDialog(QDialog):
         self._sel_bg = getattr(settings, "background_template", "dark")
         self._ui_color = themes.normalize_hex(getattr(settings, "ui_color", ""))
         self._accent_color = themes.normalize_hex(getattr(settings, "accent_color", ""))
+        self._text_color = themes.normalize_hex(getattr(settings, "text_color", ""))
+        self._ui_opacity = max(20, min(100, int(getattr(settings, "ui_opacity", 100))))
+        self._smart_text_invert = getattr(settings, "smart_text_invert", "") or ""
         self._reloading_bg = False
         self._sel_pieces = getattr(settings, "piece_template", "inkwell")
         if self._sel_pieces == "default":
@@ -1469,6 +1564,7 @@ class ProfileDialog(QDialog):
         lay.addWidget(self.tabs, 1)
 
         self._build_profile_tab()
+        self._build_templates_tab()
         self._build_icon_tab()
         self._build_sound_tab()
         self._build_board_tab()
@@ -1527,6 +1623,112 @@ class ProfileDialog(QDialog):
         lay.addWidget(info)
         lay.addStretch(1)
         self._refresh_preview()
+
+    # ---- Tab 1b: Master Theme Templates ("Template Templates")
+    def _build_templates_tab(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        self.tabs.addTab(page, "Templates")
+
+        top = QHBoxLayout()
+        top.addWidget(QLabel("<b>Theme Templates (Full Bundles)</b>"))
+        top.addStretch(1)
+        self.btn_save_preset = QPushButton("Save Current as Template…")
+        self.btn_del_preset = QPushButton("Delete")
+        self.btn_save_preset.clicked.connect(self._save_theme_preset)
+        self.btn_del_preset.clicked.connect(self._delete_theme_preset)
+        for b in (self.btn_save_preset, self.btn_del_preset):
+            b.setProperty("compactBtn", True)
+            top.addWidget(b)
+        lay.addLayout(top)
+
+        self.preset_list = QListWidget()
+        self.preset_list.setSpacing(3)
+        self.preset_list.currentItemChanged.connect(self._on_preset_selected)
+        self.preset_list.itemDoubleClicked.connect(lambda _it: self._apply_selected_preset())
+        lay.addWidget(self.preset_list, 1)
+
+        self.preset_info = QLabel("")
+        self.preset_info.setWordWrap(True)
+        lay.addWidget(self.preset_info)
+
+        act_row = QHBoxLayout()
+        act_row.addStretch(1)
+        self.btn_apply_preset = QPushButton("Apply Selected Template Bundle")
+        self.btn_apply_preset.clicked.connect(self._apply_selected_preset)
+        act_row.addWidget(self.btn_apply_preset)
+        lay.addLayout(act_row)
+        self._reload_preset_list()
+
+    def _reload_preset_list(self):
+        self.preset_list.blockSignals(True)
+        self.preset_list.clear()
+        for pr in themes.list_theme_presets():
+            tag = " [Built-in]" if pr.get("locked") else " [Custom]"
+            li = QListWidgetItem(pr["name"] + tag)
+            li.setData(Qt.UserRole, pr)
+            self.preset_list.addItem(li)
+        if self.preset_list.count() > 0:
+            self.preset_list.setCurrentRow(0)
+        self.preset_list.blockSignals(False)
+        self._on_preset_selected()
+
+    def _on_preset_selected(self):
+        li = self.preset_list.currentItem()
+        pr = li.data(Qt.UserRole) if li else None
+        if not pr:
+            return
+        self.btn_del_preset.setEnabled(not pr.get("locked"))
+        self.preset_info.setText(
+            f"<b>{pr['name']}</b><br>{pr.get('description', '')}<br>"
+            f"<span style='font-size:11px;'>Icon: {pr.get('app_icon')} • Board: {pr.get('board_template')} • "
+            f"Background: {pr.get('background_template')} • Pieces: {pr.get('piece_template')} • "
+            f"Annotations: {pr.get('annotation_template')} • Sounds: {pr.get('sound_template')}</span>"
+        )
+
+    def _apply_selected_preset(self):
+        li = self.preset_list.currentItem()
+        pr = li.data(Qt.UserRole) if li else None
+        if not pr:
+            return
+        self._sel_app_icon = pr.get("app_icon", "fluent")
+        self._sel_board = pr.get("board_template", "brown_tan")
+        self._sel_bg = pr.get("background_template", "dark")
+        self._sel_pieces = pr.get("piece_template", "inkwell")
+        self._sel_annotations = pr.get("annotation_template", "inkwell")
+        self._sel_sound = pr.get("sound_template", "original")
+        self._ui_color = ""
+        self._accent_color = ""
+        self._text_color = ""
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        self._ui_opacity = int(bg.get("ui_opacity", 100))
+        self._smart_text_invert = bg.get("smart_text_invert", "") or ""
+        self._reload_icon_list()
+        self._reload_sound_list()
+        self._reload_board_list()
+        self._reload_bg_list()
+        self._reload_pieces_list()
+        self._reload_anno_list()
+        self._on_apply()
+
+    def _save_theme_preset(self):
+        nm, ok = QInputDialog.getText(
+            self, "Save Theme Template", "Template bundle name:", QLineEdit.Normal, "My Theme Bundle"
+        )
+        if not ok or not nm.strip():
+            return
+        themes.save_custom_theme_preset(nm.strip(), self.result_customizations())
+        self._reload_preset_list()
+
+    def _delete_theme_preset(self):
+        li = self.preset_list.currentItem()
+        pr = li.data(Qt.UserRole) if li else None
+        if not pr or pr.get("locked"):
+            return
+        if not self._confirm_delete("Theme Template", pr["name"]):
+            return
+        if themes.delete_custom_theme_preset(pr["id"]):
+            self._reload_preset_list()
 
     # ---- Tab 2: App Icon (Library)
     def _build_icon_tab(self):
@@ -1940,6 +2142,20 @@ class ProfileDialog(QDialog):
         r2.addWidget(self.lbl_png_dark, 1)
         form.addRow("Black Tiles:", r2)
 
+        op_row = QHBoxLayout()
+        self.board_opacity_slider = QSlider(Qt.Horizontal)
+        self.board_opacity_slider.setRange(20, 100)
+        self.board_opacity_slider.setValue(100)
+        self.board_opacity_lbl = QLabel("100%")
+        self.board_opacity_lbl.setMinimumWidth(38)
+        self.board_opacity_slider.valueChanged.connect(lambda v: self.board_opacity_lbl.setText(f"{v}%"))
+        self.board_aero_chk = QCheckBox("Aero glass texture")
+        op_row.addWidget(self.board_opacity_slider, 1)
+        op_row.addWidget(self.board_opacity_lbl)
+        op_row.addSpacing(10)
+        op_row.addWidget(self.board_aero_chk)
+        form.addRow("Board Opacity:", op_row)
+
         self.btn_save_board = QPushButton("Save Custom Board Changes")
         self.btn_save_board.clicked.connect(self._save_board_edits)
         form.addRow("", self.btn_save_board)
@@ -1974,8 +2190,11 @@ class ProfileDialog(QDialog):
         self.board_dark_hex.setText(b.get("dark_hex", "#b58863"))
         self.lbl_png_light.setText(os.path.basename(b["light_img"]) if b.get("light_img") else "Hex color")
         self.lbl_png_dark.setText(os.path.basename(b["dark_img"]) if b.get("dark_img") else "Hex color")
+        self.board_opacity_slider.setValue(max(20, min(100, int(b.get("opacity", 68 if b.get("aero_glass") else 100)))))
+        self.board_aero_chk.setChecked(bool(b.get("aero_glass")))
         for w in (self.board_light_hex, self.board_dark_hex, self.btn_pick_light, self.btn_pick_dark,
-                  self.btn_png_light, self.btn_png_dark, self.btn_save_board, self.btn_del_board):
+                  self.btn_png_light, self.btn_png_dark, self.board_opacity_slider, self.board_aero_chk,
+                  self.btn_save_board, self.btn_del_board):
             w.setEnabled(not locked)
 
     def _create_board_tpl(self):
@@ -2025,6 +2244,8 @@ class ProfileDialog(QDialog):
             light_png=l_png,
             dark_png=d_png,
             template_id=b["id"],
+            opacity=self.board_opacity_slider.value(),
+            aero_glass=self.board_aero_chk.isChecked(),
         )
         self._reload_board_list()
 
@@ -2040,6 +2261,8 @@ class ProfileDialog(QDialog):
             light_png=b.get("light_img", ""),
             dark_png=b.get("dark_img", ""),
             template_id=b["id"],
+            opacity=self.board_opacity_slider.value(),
+            aero_glass=self.board_aero_chk.isChecked(),
         )
         self._reload_board_list()
 
@@ -2115,11 +2338,49 @@ class ProfileDialog(QDialog):
         acc_row.addWidget(self.btn_accent_color_reset)
         col_form.addRow("Accent color:", acc_row)
 
+        txt_row = QHBoxLayout()
+        self.text_color_swatch = QLabel()
+        self.text_color_swatch.setFixedSize(26, 20)
+        self.lbl_text_color = QLabel("Theme default")
+        self.btn_text_color = QPushButton("Choose…")
+        self.btn_text_color_reset = QPushButton("Reset")
+        self.btn_text_color.clicked.connect(self._pick_text_color)
+        self.btn_text_color_reset.clicked.connect(self._reset_text_color)
+        txt_row.addWidget(self.text_color_swatch)
+        txt_row.addWidget(self.lbl_text_color, 1)
+        txt_row.addWidget(self.btn_text_color)
+        txt_row.addWidget(self.btn_text_color_reset)
+        col_form.addRow("Text color:", txt_row)
+
+        ui_op_row = QHBoxLayout()
+        self.bg_opacity_slider = QSlider(Qt.Horizontal)
+        self.bg_opacity_slider.setRange(20, 100)
+        self.bg_opacity_slider.setValue(self._ui_opacity)
+        self.bg_opacity_lbl = QLabel(f"{self._ui_opacity}%")
+        self.bg_opacity_lbl.setMinimumWidth(38)
+        self.bg_opacity_slider.valueChanged.connect(self._on_bg_opacity_changed)
+        ui_op_row.addWidget(self.bg_opacity_slider, 1)
+        ui_op_row.addWidget(self.bg_opacity_lbl)
+        col_form.addRow("UI opacity:", ui_op_row)
+
+        self.smart_invert_combo = QComboBox()
+        self.smart_invert_combo.addItem("Theme Default", "")
+        self.smart_invert_combo.addItem("Off", "off")
+        self.smart_invert_combo.addItem("Smart Invert Color", "invert")
+        self.smart_invert_combo.addItem("Smart Auto Black / White", "bw")
+        idx_si = self.smart_invert_combo.findData(self._smart_text_invert)
+        self.smart_invert_combo.setCurrentIndex(idx_si if idx_si >= 0 else 0)
+        self.smart_invert_combo.currentIndexChanged.connect(self._on_smart_invert_changed)
+        col_form.addRow("Smart contrast:", self.smart_invert_combo)
+
         act_row = QHBoxLayout()
+        self.btn_save_bg_opts = QPushButton("Save to Custom BG")
+        self.btn_save_bg_opts.clicked.connect(self._save_custom_bg_options)
         self.btn_save_color_preset = QPushButton("Save Colors as Preset…")
-        self.btn_reset_all_colors = QPushButton("Reset Both to Default")
+        self.btn_reset_all_colors = QPushButton("Reset Colors")
         self.btn_save_color_preset.clicked.connect(self._save_colors_as_preset)
         self.btn_reset_all_colors.clicked.connect(self._reset_all_colors)
+        act_row.addWidget(self.btn_save_bg_opts)
         act_row.addStretch(1)
         act_row.addWidget(self.btn_save_color_preset)
         act_row.addWidget(self.btn_reset_all_colors)
@@ -2160,10 +2421,23 @@ class ProfileDialog(QDialog):
             return
         prev_id = self._sel_bg
         self._sel_bg = bg["id"]
-        if not self._reloading_bg and prev_id != self._sel_bg and not bg.get("image_path"):
-            self._ui_color = ""
-            self._accent_color = ""
+        if not self._reloading_bg and prev_id != self._sel_bg:
+            if not bg.get("image_path"):
+                self._ui_color = ""
+                self._accent_color = ""
+            self._text_color = themes.normalize_hex(bg.get("text_color", ""))
+            self._ui_opacity = max(20, min(100, int(bg.get("ui_opacity", 100))))
+            self._smart_text_invert = bg.get("smart_text_invert", "") or ""
+            self.bg_opacity_slider.blockSignals(True)
+            self.bg_opacity_slider.setValue(self._ui_opacity)
+            self.bg_opacity_lbl.setText(f"{self._ui_opacity}%")
+            self.bg_opacity_slider.blockSignals(False)
+            self.smart_invert_combo.blockSignals(True)
+            idx_si = self.smart_invert_combo.findData(self._smart_text_invert)
+            self.smart_invert_combo.setCurrentIndex(idx_si if idx_si >= 0 else 0)
+            self.smart_invert_combo.blockSignals(False)
         self.btn_del_bg.setEnabled(not bg.get("locked"))
+        self.btn_save_bg_opts.setEnabled(not bg.get("locked"))
         bg_id = bg.get("id", "")
         if bg_id == "halloween":
             desc = "Halloween theme that slowly shifts between pumpkin orange and spooky black."
@@ -2182,16 +2456,55 @@ class ProfileDialog(QDialog):
 
     def _refresh_color_controls(self):
         bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
-        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        pal = themes.get_theme_palette(
+            bg, ui_color=self._ui_color, accent_color=self._accent_color, text_color=self._text_color
+        )
         ui_show = self._ui_color or pal["bg"]
         acc_show = self._accent_color or pal["accent"]
+        txt_show = self._text_color or pal["fg"]
         self.ui_color_swatch.setStyleSheet(f"background:{ui_show}; border:1px solid #888; border-radius:3px;")
         self.accent_color_swatch.setStyleSheet(f"background:{acc_show}; border:1px solid #888; border-radius:3px;")
+        self.text_color_swatch.setStyleSheet(f"background:{txt_show}; border:1px solid #888; border-radius:3px;")
         self.lbl_ui_color.setText(f"{self._ui_color} (Custom)" if self._ui_color else f"{pal['bg']} (Theme default)")
         self.lbl_accent_color.setText(f"{self._accent_color} (Custom)" if self._accent_color else f"{pal['accent']} (Theme default)")
+        self.lbl_text_color.setText(f"{self._text_color} (Custom)" if self._text_color else f"{pal['fg']} (Theme default)")
         self.btn_ui_color_reset.setEnabled(bool(self._ui_color))
         self.btn_accent_color_reset.setEnabled(bool(self._accent_color))
-        self.btn_reset_all_colors.setEnabled(bool(self._ui_color or self._accent_color))
+        self.btn_text_color_reset.setEnabled(bool(self._text_color))
+        self.btn_reset_all_colors.setEnabled(bool(self._ui_color or self._accent_color or self._text_color))
+
+    def _on_bg_opacity_changed(self, val: int):
+        self._ui_opacity = max(20, min(100, int(val)))
+        self.bg_opacity_lbl.setText(f"{self._ui_opacity}%")
+
+    def _on_smart_invert_changed(self):
+        self._smart_text_invert = self.smart_invert_combo.currentData() or ""
+
+    def _pick_text_color(self):
+        bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
+        pal = themes.get_theme_palette(
+            bg, ui_color=self._ui_color, accent_color=self._accent_color, text_color=self._text_color
+        )
+        col = QColorDialog.getColor(QColor(self._text_color or pal["fg"]), self, "Choose Text Color")
+        if col.isValid():
+            self._text_color = col.name(QColor.HexRgb).lower()
+            self._refresh_color_controls()
+
+    def _reset_text_color(self):
+        self._text_color = ""
+        self._refresh_color_controls()
+
+    def _save_custom_bg_options(self):
+        if not self._sel_bg.startswith("custom:"):
+            return
+        mode = self._smart_text_invert or "off"
+        if themes.update_custom_background_options(
+            self._sel_bg,
+            ui_opacity=self._ui_opacity,
+            text_color=self._text_color,
+            smart_text_invert=mode,
+        ):
+            self._reload_bg_list()
 
     def _pick_ui_color(self):
         bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
@@ -2220,11 +2533,14 @@ class ProfileDialog(QDialog):
     def _reset_all_colors(self):
         self._ui_color = ""
         self._accent_color = ""
+        self._text_color = ""
         self._refresh_color_controls()
 
     def _save_colors_as_preset(self):
         bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
-        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        pal = themes.get_theme_palette(
+            bg, ui_color=self._ui_color, accent_color=self._accent_color, text_color=self._text_color
+        )
         ui_val = self._ui_color or pal["bg"]
         acc_val = self._accent_color or pal["accent"]
         nm, ok = QInputDialog.getText(
@@ -2232,7 +2548,14 @@ class ProfileDialog(QDialog):
         )
         if not ok or not nm.strip():
             return
-        created = themes.create_custom_color_background(nm.strip(), ui_val, acc_val)
+        created = themes.create_custom_color_background(
+            nm.strip(),
+            ui_val,
+            acc_val,
+            ui_opacity=self._ui_opacity,
+            text_color=self._text_color,
+            smart_text_invert=self._smart_text_invert or "off",
+        )
         if created:
             self._sel_bg = created["id"]
             self._ui_color = ""
@@ -2241,7 +2564,9 @@ class ProfileDialog(QDialog):
 
     def _add_custom_color_bg(self):
         bg = themes.get_background_template(self._sel_bg, disable_holidays=self._disable_holidays)
-        pal = themes.get_theme_palette(bg, ui_color=self._ui_color, accent_color=self._accent_color)
+        pal = themes.get_theme_palette(
+            bg, ui_color=self._ui_color, accent_color=self._accent_color, text_color=self._text_color
+        )
         ui_col = QColorDialog.getColor(QColor(self._ui_color or pal["bg"]), self, "Choose UI Color for Preset")
         if not ui_col.isValid():
             return
@@ -2255,7 +2580,14 @@ class ProfileDialog(QDialog):
         )
         if not ok or not nm.strip():
             return
-        created = themes.create_custom_color_background(nm.strip(), ui_hex, acc_hex)
+        created = themes.create_custom_color_background(
+            nm.strip(),
+            ui_hex,
+            acc_hex,
+            ui_opacity=self._ui_opacity,
+            text_color=self._text_color,
+            smart_text_invert=self._smart_text_invert or "off",
+        )
         if created:
             self._sel_bg = created["id"]
             self._ui_color = ""
@@ -2273,7 +2605,13 @@ class ProfileDialog(QDialog):
         )
         if not ok or not nm.strip():
             return
-        created = themes.create_custom_background(nm.strip(), p)
+        created = themes.create_custom_background(
+            nm.strip(),
+            p,
+            ui_opacity=self._ui_opacity if self._ui_opacity < 100 else 75,
+            text_color=self._text_color,
+            smart_text_invert=self._smart_text_invert or "bw",
+        )
         if created:
             self._sel_bg = created["id"]
             self._reload_bg_list()
@@ -2846,6 +3184,9 @@ class ProfileDialog(QDialog):
             "background_template": self._sel_bg,
             "ui_color": self._ui_color,
             "accent_color": self._accent_color,
+            "text_color": self._text_color,
+            "ui_opacity": self._ui_opacity,
+            "smart_text_invert": self._smart_text_invert,
             "piece_template": self._sel_pieces,
             "annotation_template": self._sel_annotations,
         }
@@ -3249,29 +3590,72 @@ class SettingsDialog(QDialog):
             ),
             ui_color=getattr(cur_s, "ui_color", ""),
             accent_color=getattr(cur_s, "accent_color", ""),
+            text_color=getattr(cur_s, "text_color", ""),
+            ui_opacity=getattr(cur_s, "ui_opacity", 100),
+            smart_text_invert=getattr(cur_s, "smart_text_invert", ""),
         )
 
 
 class OpenOrPasteDialog(QDialog):
-    """Unified dialog to open a PGN file from disk or paste PGN/FEN text."""
+    """Unified single-screen File dialog: Open PGN, Paste PGN/FEN, and Copy/Extract PGN & FEN."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Open or Paste PGN / FEN")
-        self.resize(540, 410)
+        self.main_win = parent
+        self.setWindowTitle("File — Open, Paste, Copy & Export PGN / FEN")
+        self.resize(580, 470)
         self.file_path = ""
         l = QVBoxLayout(self)
+
+        # Section 1: Open / Paste
+        open_box = QGroupBox("Open or Paste Game")
+        ol = QVBoxLayout(open_box)
         top = QHBoxLayout()
-        top.addWidget(QLabel("Open a .pgn file or paste PGN / FEN below:"), 1)
+        top.addWidget(QLabel("Open a .pgn file from disk or paste PGN / FEN text below:"), 1)
         self.btn_browse = QPushButton("Open PGN File…")
         self.btn_browse.clicked.connect(self._browse_file)
         top.addWidget(self.btn_browse)
-        l.addLayout(top)
+        ol.addLayout(top)
         self.text = QPlainTextEdit()
         self.text.setPlaceholderText("Paste PGN moves or a FEN position here…")
-        l.addWidget(self.text, 1)
-        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        bb.accepted.connect(self.accept); bb.rejected.connect(self.reject)
+        ol.addWidget(self.text, 1)
+        load_row = QHBoxLayout()
+        load_row.addStretch(1)
+        self.btn_load = QPushButton("Load Pasted PGN / FEN")
+        self.btn_load.clicked.connect(self.accept)
+        load_row.addWidget(self.btn_load)
+        ol.addLayout(load_row)
+        l.addWidget(open_box, 1)
+
+        # Section 2: Current Game Copy / Export
+        exp_box = QGroupBox("Current Game — Copy or Extract PGN / FEN")
+        el = QVBoxLayout(exp_box)
+        grid = QGridLayout()
+        has_game = bool(parent and getattr(parent, "game", None))
+        self.btn_copy_pgn = QPushButton("Copy Game as PGN")
+        self.btn_copy_fen = QPushButton("Copy Position as FEN")
+        self.btn_export_pgn = QPushButton("Extract / Export PGN…")
+        self.btn_export_fen = QPushButton("Extract / Export FEN…")
+        self.btn_copy_pgn.clicked.connect(self._do_copy_pgn)
+        self.btn_copy_fen.clicked.connect(self._do_copy_fen)
+        self.btn_export_pgn.clicked.connect(self._do_export_pgn)
+        self.btn_export_fen.clicked.connect(self._do_export_fen)
+        for b in (self.btn_copy_pgn, self.btn_copy_fen, self.btn_export_pgn, self.btn_export_fen):
+            b.setEnabled(has_game)
+        grid.addWidget(self.btn_copy_pgn, 0, 0)
+        grid.addWidget(self.btn_copy_fen, 0, 1)
+        grid.addWidget(self.btn_export_pgn, 1, 0)
+        grid.addWidget(self.btn_export_fen, 1, 1)
+        el.addLayout(grid)
+        self.file_feedback = QLabel(
+            "" if has_game else "Load a game to enable copying or extracting PGN / FEN."
+        )
+        self.file_feedback.setStyleSheet("font-size:11px;")
+        el.addWidget(self.file_feedback)
+        l.addWidget(exp_box)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
         l.addWidget(bb)
 
     def _browse_file(self):
@@ -3279,6 +3663,26 @@ class OpenOrPasteDialog(QDialog):
         if p:
             self.file_path = p
             self.accept()
+
+    def _do_copy_pgn(self):
+        if self.main_win and hasattr(self.main_win, "copy_current_pgn"):
+            self.main_win.copy_current_pgn()
+            self.file_feedback.setText("✓ Copied current game PGN to clipboard.")
+
+    def _do_copy_fen(self):
+        if self.main_win and hasattr(self.main_win, "copy_current_fen"):
+            self.main_win.copy_current_fen()
+            self.file_feedback.setText("✓ Copied current position FEN to clipboard.")
+
+    def _do_export_pgn(self):
+        if self.main_win and hasattr(self.main_win, "export_current_pgn"):
+            self.main_win.export_current_pgn()
+            self.file_feedback.setText("✓ PGN export complete.")
+
+    def _do_export_fen(self):
+        if self.main_win and hasattr(self.main_win, "export_current_fen"):
+            self.main_win.export_current_fen()
+            self.file_feedback.setText("✓ FEN export complete.")
 
 
 PasteDialog = OpenOrPasteDialog
@@ -3711,6 +4115,9 @@ class MainWindow(QMainWindow):
             prerelease_holiday_override=qs.value("prerelease_holiday_override", ""),
             ui_color=qs.value("ui_color", ""),
             accent_color=qs.value("accent_color", ""),
+            text_color=qs.value("text_color", ""),
+            ui_opacity=int(qs.value("ui_opacity", 100)),
+            smart_text_invert=qs.value("smart_text_invert", ""),
         )
         self._last_exe_icon_id = None
         self._updating_exit = False
@@ -3779,10 +4186,22 @@ class MainWindow(QMainWindow):
 
         left.addWidget(self.opening_label)
         nav = QHBoxLayout()
-        for t, fn in (("|◂", lambda: self.goto(0)), ("◂", lambda: self.goto(self.cur - 1)),
-                      ("▸", lambda: self.goto(self.cur + 1)), ("▸|", lambda: self.goto(len(self.results))),
-                      ("Flip", self.flip)):
-            b = QPushButton(t); b.clicked.connect(fn); nav.addWidget(b)
+        self._nav_buttons = []
+        for kind, tip, fn in (
+            ("first", "First move (Home)", lambda: self.goto(0)),
+            ("prev", "Previous move (Left)", lambda: self.goto(self.cur - 1)),
+            ("next", "Next move (Right)", lambda: self.goto(self.cur + 1)),
+            ("last", "Last move (End)", lambda: self.goto(len(self.results))),
+            ("flip", "Flip board (F)", self.flip),
+        ):
+            b = QPushButton()
+            b.setIcon(_make_nav_icon(kind, "#e6e6e6", 18))
+            b.setIconSize(QSize(18, 18))
+            b.setToolTip(tip)
+            b.setMinimumHeight(28)
+            b.clicked.connect(fn)
+            nav.addWidget(b)
+            self._nav_buttons.append((kind, b))
         left.addLayout(nav)
         self.graph = GraphWidget()
         self.graph.formula = self.settings.eval_formula
@@ -3826,23 +4245,9 @@ class MainWindow(QMainWindow):
         tb.setContextMenuPolicy(Qt.PreventContextMenu)
         self.addToolBar(tb)
         self.tb = tb
-        self.file_btn = QToolButton()
-        self.file_btn.setText("File")
-        self.file_btn.setPopupMode(QToolButton.InstantPopup)
-        self.file_menu = QMenu(self.file_btn)
-        self.file_menu.addAction("Open / Paste PGN / FEN…", self.open_or_paste)
-        self.file_menu.addAction("Open PGN File…", self.open_file)
-        self.file_menu.addSeparator()
-        self.file_menu.addAction("Copy Game as PGN", self.copy_current_pgn)
-        self.file_menu.addAction("Copy Position as FEN", self.copy_current_fen)
-        self.file_menu.addSeparator()
-        self.file_menu.addAction("Extract / Export PGN…", self.export_current_pgn)
-        self.file_menu.addAction("Extract / Export FEN…", self.export_current_fen)
-        self.file_btn.setMenu(self.file_menu)
-        tb.addWidget(self.file_btn)
-
         self.save_act = None
-        for t, fn in (("Re-analyze", self.restart_all), ("Stop", self.stop),
+        for t, fn in (("File", self.open_or_paste),
+                      ("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
                       ("Library…", self.open_library), ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
@@ -4271,10 +4676,12 @@ class MainWindow(QMainWindow):
         start_val = 0 if is_std else (results[0].eval_before if results[0].eval_before is not None else 0)
         vals = [start_val]
         labels = ["Start position"]
+        tags = [""]
         for r in results:
             vals.append(r.eval_after if r.eval_after is not None else vals[-1])
             labels.append("%d%s %s" % ((r.ply + 1) // 2, "." if r.color else "…", r.san))
-        self.graph.set_values(vals, labels)
+            tags.append(r.symbol or "")
+        self.graph.set_values(vals, labels, tags)
 
     def update_accuracy(self, final):
         if not self.results:
@@ -4829,11 +5236,20 @@ class MainWindow(QMainWindow):
     def _apply_theme_only(self, bg: dict, is_custom_image: bool, phase: float = 0.0):
         ui_col = getattr(self.settings, "ui_color", "")
         acc_col = getattr(self.settings, "accent_color", "")
+        txt_col = getattr(self.settings, "text_color", "")
+        ui_op = getattr(self.settings, "ui_opacity", 100)
+        eff_op = ui_op if (ui_op is not None and 20 <= int(ui_op) <= 100 and (int(ui_op) != 100 or "ui_opacity" not in bg)) else int(bg.get("ui_opacity", 100))
         eff_ui = themes.normalize_hex(ui_col) or themes.normalize_hex(bg.get("ui_color", ""))
         eff_acc = themes.normalize_hex(acc_col) or themes.normalize_hex(bg.get("accent_color", ""))
         anim_mode = bg.get("animated") or ""
         qss = themes.build_app_stylesheet(
-            bg, is_custom_image=is_custom_image, ui_color=ui_col, accent_color=acc_col, phase=phase
+            bg,
+            is_custom_image=is_custom_image,
+            ui_color=ui_col,
+            accent_color=acc_col,
+            text_color=txt_col,
+            ui_opacity=eff_op,
+            phase=phase,
         )
         app_inst = QApplication.instance()
         if app_inst is not None:
@@ -4841,13 +5257,15 @@ class MainWindow(QMainWindow):
             self.setStyleSheet("")
         else:
             self.setStyleSheet(qss)
-        pal = themes.get_theme_palette(bg, ui_color=ui_col, accent_color=acc_col, phase=phase)
+        pal = themes.get_theme_palette(bg, ui_color=ui_col, accent_color=acc_col, text_color=txt_col, phase=phase)
+        self._cached_base_fg = pal["fg"]
         is_color_shift = anim_mode in ("christmas_shift", "halloween_shift") and not is_custom_image and not eff_ui
         is_fireworks = anim_mode == "fireworks" and not is_custom_image
         is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
         border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
         if is_aero_glass:
-            bar_bg = "rgba(12, 52, 88, 138)"
+            a_bar = max(40, min(245, int(round(138 * eff_op / 55.0))))
+            bar_bg = f"rgba(12, 52, 88, {a_bar})"
             bar_border = "rgba(196, 242, 255, 178)"
             hover_bg = "rgba(175, 232, 255, 110)"
             accent_use = eff_acc or "#38bdf8"
@@ -4860,6 +5278,13 @@ class MainWindow(QMainWindow):
             graph_bg = "#7d0a0a0c"
         elif is_fireworks:
             bar_bg = themes.rgba_css(pal["bar_bg"], 165)
+            bar_border = pal["bar_border"]
+            hover_bg = pal["btn_hover"]
+            accent_use = pal["accent"]
+            graph_bg = pal["graph_bg"]
+        elif eff_op < 100:
+            a_bar = max(45, min(255, int(round(255 * eff_op / 100.0))))
+            bar_bg = themes.rgba_css(pal["bar_bg"], a_bar)
             bar_border = pal["bar_border"]
             hover_bg = pal["btn_hover"]
             accent_use = pal["accent"]
@@ -4877,10 +5302,91 @@ class MainWindow(QMainWindow):
             bar_bg, pal["bar_fg"], bar_border, pal["muted"], hover_bg, accent_use, border_w=border_w
         )
         self.graph.set_theme(graph_bg, pal["graph_fill"], pal["graph_mid"], pal["border"])
+        for kind, btn in getattr(self, "_nav_buttons", []):
+            btn.setIcon(_make_nav_icon(kind, pal["fg"], 18))
         self._cached_anim_bg_hex = pal["bg"]
         self._cached_anim_bg_color = QColor(pal["bg"])
         self._last_anim_bg_hex = pal["bg"]
         self._sync_toolbar_elevations()
+        QTimer.singleShot(0, self._apply_smart_text_contrast)
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        if getattr(self, "_cached_bg", None):
+            QTimer.singleShot(0, self._apply_smart_text_contrast)
+
+    def _effective_smart_invert_mode(self) -> str:
+        override = (getattr(self.settings, "smart_text_invert", "") or "").strip().lower()
+        if override in ("off", "invert", "bw"):
+            return override
+        return (self._cached_bg.get("smart_text_invert", "") or "off").strip().lower()
+
+    def _ensure_bg_cache_for_sampling(self):
+        if self._bg_pixmap is None or self._bg_pixmap.isNull() or self.width() <= 0 or self.height() <= 0:
+            return None
+        key = (self.width(), self.height(), self._bg_cache_token)
+        if self._bg_scaled_cache is None or self._bg_scaled_cache[0] != key:
+            scaled = self._bg_pixmap.scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+            sx = max(0, (scaled.width() - self.width()) // 2)
+            sy = max(0, (scaled.height() - self.height()) // 2)
+            composed = QPixmap(self.size())
+            composed.fill(Qt.black)
+            cp = QPainter(composed)
+            cp.setRenderHint(QPainter.Antialiasing)
+            cp.drawPixmap(0, 0, scaled, sx, sy, self.width(), self.height())
+            if self._cached_bg.get("aero_glass"):
+                w, h = float(self.width()), float(self.height())
+                wash = QLinearGradient(0, 0, 0, h)
+                wash.setColorAt(0.0, QColor(180, 232, 255, 42))
+                wash.setColorAt(0.45, QColor(24, 92, 148, 52))
+                wash.setColorAt(1.0, QColor(8, 34, 68, 86))
+                cp.fillRect(composed.rect(), wash)
+            else:
+                cp.fillRect(composed.rect(), QColor(0, 0, 0, 85))
+            cp.end()
+            self._bg_scaled_cache = (key, composed)
+        return self._bg_scaled_cache[1]
+
+    def _apply_smart_text_contrast(self):
+        """Sample local background color behind transparent labels and auto-invert or switch to black/white."""
+        mode = self._effective_smart_invert_mode()
+        base_fg = getattr(self, "_cached_base_fg", "#e6e6e6") or "#e6e6e6"
+        labels = [
+            (self.players, ""),
+            (self.opening_label, "font-size:15px;font-weight:bold;"),
+            (self.line_title, ""),
+            (self.acc_label, ""),
+            (self.status, ""),
+        ]
+        if mode not in ("invert", "bw"):
+            for lbl, extra in labels:
+                lbl.setStyleSheet(extra)
+            return
+        pm = self._ensure_bg_cache_for_sampling()
+        img = pm.toImage() if (pm is not None and not pm.isNull()) else None
+        fallback_col = QColor(self._cached_anim_bg_hex or "#1e1e1e")
+        for lbl, extra in labels:
+            if not lbl.isVisible() and img is None:
+                continue
+            r_sum = g_sum = b_sum = cnt = 0
+            if img is not None and img.width() > 0 and img.height() > 0:
+                tl = lbl.mapTo(self, QPoint(0, 0))
+                w_l = max(1, lbl.width())
+                h_l = max(1, lbl.height())
+                for fx in (0.15, 0.38, 0.62, 0.85):
+                    for fy in (0.3, 0.7):
+                        px = max(0, min(img.width() - 1, int(tl.x() + w_l * fx)))
+                        py = max(0, min(img.height() - 1, int(tl.y() + h_l * fy)))
+                        c = img.pixelColor(px, py)
+                        r_sum += c.red(); g_sum += c.green(); b_sum += c.blue(); cnt += 1
+            if cnt > 0:
+                bg_rgb = (r_sum // cnt, g_sum // cnt, b_sum // cnt)
+            else:
+                bg_rgb = (fallback_col.red(), fallback_col.green(), fallback_col.blue())
+            chosen = themes.compute_smart_text_color(base_fg, bg_rgb, mode)
+            lbl.setStyleSheet(f"{extra} color:{chosen}; background:transparent;")
 
     def _tick_christmas_theme(self):
         if self._cached_anim_mode not in ("christmas_shift", "halloween_shift") or self._cached_ui_color:
@@ -5092,6 +5598,66 @@ class MainWindow(QMainWindow):
         w.failed.connect(lambda err: callback({}, err))
         w.start()
 
+    def _record_update_attempt(self, target_tag: str) -> None:
+        now = time.time()
+        try:
+            raw = self.qs.value("update_loop_history", "[]") or "[]"
+            hist = json.loads(raw) if isinstance(raw, str) else []
+            if not isinstance(hist, list):
+                hist = []
+        except Exception:
+            hist = []
+        hist = [h for h in hist if isinstance(h, dict) and (now - float(h.get("ts", 0))) < 86400]
+        hist.append({"from_ver": APP_VERSION, "to_ver": target_tag, "ts": now})
+        self.qs.setValue("update_loop_history", json.dumps(hist[-10:]))
+        self.qs.setValue("last_auto_update_attempt_tag", target_tag)
+        self.qs.setValue("last_auto_update_attempt_from", APP_VERSION)
+        self.qs.setValue("last_auto_update_attempt_ts", now)
+        self.qs.sync()
+
+    def _detect_and_break_update_loop(self, target_tag: str) -> bool:
+        """Detect repeat failed auto-updates (update loop) and break free automatically."""
+        now = time.time()
+        try:
+            raw = self.qs.value("update_loop_history", "[]") or "[]"
+            hist = json.loads(raw) if isinstance(raw, str) else []
+            if not isinstance(hist, list):
+                hist = []
+        except Exception:
+            hist = []
+        same_target = [
+            h for h in hist
+            if isinstance(h, dict)
+            and h.get("from_ver") == APP_VERSION
+            and h.get("to_ver") == target_tag
+            and (now - float(h.get("ts", 0))) < 86400
+        ]
+        rapid_same_ver = [
+            h for h in hist
+            if isinstance(h, dict)
+            and h.get("from_ver") == APP_VERSION
+            and (now - float(h.get("ts", 0))) < 900
+        ]
+        last_tag = (self.qs.value("last_auto_update_attempt_tag", "") or "").strip()
+        last_from = (self.qs.value("last_auto_update_attempt_from", "") or "").strip()
+        try:
+            last_ts = float(self.qs.value("last_auto_update_attempt_ts", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            last_ts = 0.0
+        legacy_loop = bool(target_tag and target_tag == last_tag and APP_VERSION == last_from and (now - last_ts) < 86400)
+
+        if same_target or len(rapid_same_ver) >= 2 or legacy_loop:
+            # Break free from the update loop automatically
+            self.settings.auto_install_prereleases = False
+            self.qs.setValue("auto_install_prereleases", False)
+            self.qs.setValue("update_loop_blocked_tag", target_tag)
+            self.qs.sync()
+            self.status.setText(
+                f"Update loop detected for {target_tag} — auto-install paused to break free."
+            )
+            return True
+        return False
+
     def check_prerelease_auto_update(self):
         """When running a pre-release build, automatically install any newer pre-release."""
         def _on_channels(data, err):
@@ -5100,16 +5666,7 @@ class MainWindow(QMainWindow):
             pre = data.get("prerelease")
             if pre and pre.get("update_available") and pre.get("download_url"):
                 target_tag = (pre.get("latest_version") or "").strip()
-                last_tag = (self.qs.value("last_auto_update_attempt_tag", "") or "").strip()
-                last_from = (self.qs.value("last_auto_update_attempt_from", "") or "").strip()
-                try:
-                    last_ts = float(self.qs.value("last_auto_update_attempt_ts", 0.0) or 0.0)
-                except (TypeError, ValueError):
-                    last_ts = 0.0
-                if target_tag and target_tag == last_tag and APP_VERSION == last_from and (time.time() - last_ts) < 3600:
-                    self.status.setText(
-                        f"Skipped repeat auto-update to {target_tag} to prevent an update loop."
-                    )
+                if self._detect_and_break_update_loop(target_tag):
                     return
                 self.install_release(pre, confirm=False)
         self.check_channels(_on_channels)
@@ -5170,9 +5727,11 @@ class MainWindow(QMainWindow):
                 winutil.release_single_instance()
                 try:
                     if not confirm:
-                        self.qs.setValue("last_auto_update_attempt_tag", (info.get("latest_version") or "").strip())
-                        self.qs.setValue("last_auto_update_attempt_from", APP_VERSION)
-                        self.qs.setValue("last_auto_update_attempt_ts", time.time())
+                        self._record_update_attempt((info.get("latest_version") or "").strip())
+                    else:
+                        # Manual install clears any prior loop block
+                        self.qs.setValue("update_loop_blocked_tag", "")
+                        self.qs.setValue("update_loop_history", "[]")
                     self.qs.sync()
                 except Exception:
                     pass
@@ -5295,6 +5854,15 @@ class MainWindow(QMainWindow):
         self.line_title.setText("Best lines (click a move to preview it on the board)")
         self.line_list.clear()
         self.current_lines, self.current_fen = lines, fen
+        if lines and lines[0][2]:
+            try:
+                best_mv = chess.Move.from_uci(lines[0][2][0])
+                b_cur = chess.Board(fen)
+                if best_mv in b_cur.legal_moves:
+                    self.board.alt_move = best_mv
+                    self.board.update()
+            except Exception:
+                pass
         from PySide6.QtWidgets import QListWidgetItem
         b = chess.Board(fen)
         for li, (ev, san, ucis) in enumerate(lines):
@@ -5349,13 +5917,12 @@ class MainWindow(QMainWindow):
             self.evalbar.formula = s.eval_formula
             self.graph.formula = s.eval_formula
 
-            # Only re-analyze with Stockfish if engine or search-depth parameters changed.
+            # Changing depth applies to future analyses / manual Re-analyze without forcing re-analysis.
             engine_changed = (
                 old.threads != s.threads
                 or old.hash_mb != s.hash_mb
                 or old.engine_path != s.engine_path
             )
-            analysis_changed = engine_changed or old.depth != s.depth
             reclassify_needed = (
                 old.scope != s.scope
                 or old.side != s.side
@@ -5363,28 +5930,25 @@ class MainWindow(QMainWindow):
                 or old.annotation_system != s.annotation_system
                 or old.lenient_brilliant != s.lenient_brilliant
             )
-            if analysis_changed:
+            if engine_changed:
                 self.stop()
-                if engine_changed:
-                    self.holder.close()
-                if self.game:
-                    self.orient()
-                    self.restart_all()
+                self.holder.close()
+            if reclassify_needed:
+                for j in self.jobs:
+                    if j.results:
+                        A.reclassify_results(j.game, j.results, s)
+            if self.game:
+                self.orient()
+                for k in range(len(self.basic)):
+                    self.set_row(k)
+                self.refresh_graph()
+                self.update_accuracy(final=bool(self.job and self.job.done))
+                self.goto(self.cur, animate=False, play_sound=False)
+                if old.depth != s.depth:
+                    self.status.setText(f"Depth updated to {s.depth} (press Re-analyze to apply to current game).")
             else:
-                if reclassify_needed:
-                    for j in self.jobs:
-                        if j.results:
-                            A.reclassify_results(j.game, j.results, s)
-                if self.game:
-                    self.orient()
-                    for k in range(len(self.basic)):
-                        self.set_row(k)
-                    self.refresh_graph()
-                    self.update_accuracy(final=bool(self.job and self.job.done))
-                    self.goto(self.cur, animate=False, play_sound=False)
-                else:
-                    self.evalbar.update()
-                    self.graph.update()
+                self.evalbar.update()
+                self.graph.update()
 
     def restart_app(self):
         """Cleanly save state, release the single-instance lock, spawn a fresh instance, and exit."""

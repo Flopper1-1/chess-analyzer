@@ -87,6 +87,7 @@ BUILTIN_BOARDS = [
         "dark_img": "",
         "locked": True,
         "aero_glass": True,
+        "opacity": 68,
     },
     {
         "id": "red_white",
@@ -209,6 +210,35 @@ BUILTIN_BACKGROUNDS = [
         "image_path": resource_path(os.path.join("assets", "backgrounds", "aero_aurora.jpg")),
         "locked": True,
         "aero_glass": True,
+        "ui_opacity": 55,
+        "smart_text_invert": "bw",
+    },
+]
+
+BUILTIN_THEME_PRESETS = [
+    {
+        "id": "inkwell",
+        "name": "Inkwell (Default)",
+        "description": "Default Inkwell pieces & annotations, Fluent icon, Brown & Tan board, Dark theme, Original sounds.",
+        "locked": True,
+        "app_icon": "fluent",
+        "board_template": "brown_tan",
+        "background_template": "dark",
+        "piece_template": "inkwell",
+        "annotation_template": "inkwell",
+        "sound_template": "original",
+    },
+    {
+        "id": "aero",
+        "name": "Aero",
+        "description": "Windows 7 Aero glass background & transparent board, Aero icon, Aero pieces, and Aero annotations.",
+        "locked": True,
+        "app_icon": "aero",
+        "board_template": "aero_glass",
+        "background_template": "aero_glass",
+        "piece_template": "aero",
+        "annotation_template": "aero",
+        "sound_template": "original",
     },
 ]
 
@@ -916,6 +946,8 @@ def save_custom_board_template(
     light_png: str = "",
     dark_png: str = "",
     template_id: str = "",
+    opacity: int = 100,
+    aero_glass: bool = False,
 ) -> dict:
     clean = (name or "").strip() or "Custom Board"
     root = board_templates_dir()
@@ -954,6 +986,8 @@ def save_custom_board_template(
         "dark_hex": dark_hex if QColor(dark_hex).isValid() else "#b58863",
         "light_img": l_img,
         "dark_img": d_img,
+        "opacity": max(20, min(100, int(opacity))),
+        "aero_glass": bool(aero_glass),
         "locked": False,
     }
     with open(os.path.join(tdir, "template.json"), "w", encoding="utf-8") as f:
@@ -1017,11 +1051,20 @@ def get_background_template(
     return dict(BUILTIN_BACKGROUNDS[0])
 
 
-def create_custom_color_background(name: str, ui_color: str, accent_color: str = "") -> Optional[dict]:
+def create_custom_color_background(
+    name: str,
+    ui_color: str,
+    accent_color: str = "",
+    ui_opacity: int = 100,
+    text_color: str = "",
+    smart_text_invert: str = "off",
+    aero_glass: bool = False,
+) -> Optional[dict]:
     ui_hex = normalize_hex(ui_color)
     if not ui_hex:
         return None
     acc_hex = normalize_hex(accent_color)
+    txt_hex = normalize_hex(text_color)
     clean = (name or "").strip() or f"Custom {ui_hex}"
     slug = _slugify(clean, "bg_color")
     root = backgrounds_dir()
@@ -1032,7 +1075,7 @@ def create_custom_color_background(name: str, ui_color: str, accent_color: str =
         idx += 1
     bdir = os.path.join(root, folder)
     os.makedirs(bdir, exist_ok=True)
-    pal = get_theme_palette({"id": "dark"}, ui_color=ui_hex, accent_color=acc_hex)
+    pal = get_theme_palette({"id": "dark"}, ui_color=ui_hex, accent_color=acc_hex, text_color=txt_hex)
     data = {
         "id": f"custom:{folder}",
         "name": clean,
@@ -1041,10 +1084,14 @@ def create_custom_color_background(name: str, ui_color: str, accent_color: str =
         "button_bg": pal["btn_bg"],
         "button_border": pal["border"],
         "header_bg": pal["panel"],
-        "text_fg": pal["fg"],
+        "text_fg": txt_hex or pal["fg"],
         "grid_fg": pal["border"],
         "ui_color": ui_hex,
         "accent_color": acc_hex or pal["accent"],
+        "text_color": txt_hex,
+        "ui_opacity": max(20, min(100, int(ui_opacity))),
+        "smart_text_invert": smart_text_invert if smart_text_invert in ("off", "invert", "bw") else "off",
+        "aero_glass": bool(aero_glass),
         "image_path": "",
         "locked": False,
     }
@@ -1053,7 +1100,14 @@ def create_custom_color_background(name: str, ui_color: str, accent_color: str =
     return data
 
 
-def create_custom_background(name: str, image_path: str) -> Optional[dict]:
+def create_custom_background(
+    name: str,
+    image_path: str,
+    ui_opacity: int = 75,
+    text_color: str = "",
+    smart_text_invert: str = "bw",
+    aero_glass: bool = False,
+) -> Optional[dict]:
     if not image_path or not os.path.exists(image_path):
         return None
     clean = (name or "").strip() or os.path.splitext(os.path.basename(image_path))[0]
@@ -1069,6 +1123,7 @@ def create_custom_background(name: str, image_path: str) -> Optional[dict]:
     ext = os.path.splitext(image_path)[1].lower() or ".png"
     dest = os.path.join(bdir, f"background{ext}")
     shutil.copyfile(image_path, dest)
+    txt_hex = normalize_hex(text_color)
     data = {
         "id": f"custom:{folder}",
         "name": clean,
@@ -1077,14 +1132,50 @@ def create_custom_background(name: str, image_path: str) -> Optional[dict]:
         "button_bg": "#3c3c3c",
         "button_border": "#555555",
         "header_bg": "#2b2b2b",
-        "text_fg": "#eeeeee",
+        "text_fg": txt_hex or "#eeeeee",
         "grid_fg": "#383838",
+        "text_color": txt_hex,
+        "ui_opacity": max(20, min(100, int(ui_opacity))),
+        "smart_text_invert": smart_text_invert if smart_text_invert in ("off", "invert", "bw") else "bw",
+        "aero_glass": bool(aero_glass),
         "image_path": dest,
         "locked": False,
     }
     with open(os.path.join(bdir, "template.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return data
+
+
+def update_custom_background_options(
+    bg_id: str,
+    ui_opacity: int = 100,
+    text_color: str = "",
+    smart_text_invert: str = "off",
+    aero_glass: Optional[bool] = None,
+) -> bool:
+    """Update UI opacity, text color, and smart invert settings on a custom background template."""
+    if not bg_id or not bg_id.startswith("custom:"):
+        return False
+    folder = bg_id.split(":", 1)[1]
+    manifest = os.path.join(backgrounds_dir(), folder, "template.json")
+    if not os.path.isfile(manifest):
+        return False
+    try:
+        with open(manifest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        txt_hex = normalize_hex(text_color)
+        data["ui_opacity"] = max(20, min(100, int(ui_opacity)))
+        data["text_color"] = txt_hex
+        if txt_hex:
+            data["text_fg"] = txt_hex
+        data["smart_text_invert"] = smart_text_invert if smart_text_invert in ("off", "invert", "bw") else "off"
+        if aero_glass is not None:
+            data["aero_glass"] = bool(aero_glass)
+        with open(manifest, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception:
+        return False
 
 
 def delete_custom_background(bg_id: str) -> bool:
@@ -1095,6 +1186,73 @@ def delete_custom_background(bg_id: str) -> bool:
     if os.path.isdir(bdir):
         shutil.rmtree(bdir, ignore_errors=True)
         return True
+    return False
+
+
+# ---------------------------------------------------------------- Master Theme Presets (Template Templates)
+def theme_presets_dir() -> str:
+    d = os.path.join(data_root(), "theme_presets")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def list_theme_presets() -> List[dict]:
+    """Return built-in master theme templates (Inkwell, Aero) plus user-saved preset bundles."""
+    out = [dict(p) for p in BUILTIN_THEME_PRESETS]
+    root = theme_presets_dir()
+    for fname in sorted(os.listdir(root)):
+        if not fname.endswith(".json"):
+            continue
+        fpath = os.path.join(root, fname)
+        try:
+            with open(fpath, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            slug = os.path.splitext(fname)[0]
+            data["id"] = f"custom:{slug}"
+            data["locked"] = False
+            out.append(data)
+        except Exception:
+            pass
+    return out
+
+
+def save_custom_theme_preset(name: str, bundle: dict) -> dict:
+    clean = (name or "").strip() or "Custom Preset"
+    slug = _slugify(clean, "preset")
+    root = theme_presets_dir()
+    base_slug = slug
+    idx = 2
+    while os.path.exists(os.path.join(root, f"{slug}.json")):
+        slug = f"{base_slug}_{idx}"
+        idx += 1
+    data = {
+        "id": f"custom:{slug}",
+        "name": clean,
+        "description": "Custom saved template bundle.",
+        "locked": False,
+        "app_icon": bundle.get("app_icon", "fluent"),
+        "board_template": bundle.get("board_template", "brown_tan"),
+        "background_template": bundle.get("background_template", "dark"),
+        "piece_template": bundle.get("piece_template", "inkwell"),
+        "annotation_template": bundle.get("annotation_template", "inkwell"),
+        "sound_template": bundle.get("sound_template", "original"),
+    }
+    with open(os.path.join(root, f"{slug}.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return data
+
+
+def delete_custom_theme_preset(preset_id: str) -> bool:
+    if not preset_id or not preset_id.startswith("custom:"):
+        return False
+    slug = preset_id.split(":", 1)[1]
+    fpath = os.path.join(theme_presets_dir(), f"{slug}.json")
+    if os.path.isfile(fpath):
+        try:
+            os.remove(fpath)
+            return True
+        except OSError:
+            return False
     return False
 
 
@@ -1965,7 +2123,45 @@ def apply_color_overrides(pal: dict, ui_color: str = "", accent_color: str = "")
     return p
 
 
-def get_theme_palette(bg: dict, ui_color: str = "", accent_color: str = "", phase: float = 0.0) -> dict:
+def _rel_luminance(r: int, g: int, b: int) -> float:
+    def _lin(c: int) -> float:
+        v = c / 255.0
+        return v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4
+    return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b)
+
+
+def compute_smart_text_color(base_hex: str, bg_rgb: Tuple[int, int, int], mode: str = "off") -> str:
+    """Adjust text color when it blends into the local background behind a widget.
+    mode: 'off' | 'invert' | 'bw' (auto black or white)."""
+    fg_c = QColor(base_hex)
+    if not fg_c.isValid():
+        fg_c = QColor("#f4fbff")
+    m = (mode or "off").strip().lower()
+    if m not in ("invert", "bw"):
+        return fg_c.name(QColor.HexRgb)
+    br, bg_g, bb = int(bg_rgb[0]), int(bg_rgb[1]), int(bg_rgb[2])
+    l_bg = _rel_luminance(br, bg_g, bb)
+    l_fg = _rel_luminance(fg_c.red(), fg_c.green(), fg_c.blue())
+    contrast = (max(l_fg, l_bg) + 0.05) / (min(l_fg, l_bg) + 0.05)
+    if contrast >= 4.2:
+        return fg_c.name(QColor.HexRgb)
+    if m == "bw":
+        return "#0f172a" if l_bg > 0.36 else "#f8fafc"
+    inv = QColor(255 - fg_c.red(), 255 - fg_c.green(), 255 - fg_c.blue())
+    l_inv = _rel_luminance(inv.red(), inv.green(), inv.blue())
+    c_inv = (max(l_inv, l_bg) + 0.05) / (min(l_inv, l_bg) + 0.05)
+    if c_inv < 3.0:
+        return "#0f172a" if l_bg > 0.36 else "#f8fafc"
+    return inv.name(QColor.HexRgb)
+
+
+def get_theme_palette(
+    bg: dict,
+    ui_color: str = "",
+    accent_color: str = "",
+    text_color: str = "",
+    phase: float = 0.0,
+) -> dict:
     """Return UI palette tokens derived from a background template and optional color overrides."""
     bg_id = bg.get("id", "dark")
     if bg_id == "light":
@@ -2079,7 +2275,12 @@ def get_theme_palette(bg: dict, ui_color: str = "", accent_color: str = "", phas
         }
     eff_ui = normalize_hex(ui_color) or normalize_hex(bg.get("ui_color", ""))
     eff_acc = normalize_hex(accent_color) or normalize_hex(bg.get("accent_color", ""))
-    return apply_color_overrides(base, ui_color=eff_ui, accent_color=eff_acc)
+    eff_txt = normalize_hex(text_color) or normalize_hex(bg.get("text_color", ""))
+    pal = apply_color_overrides(base, ui_color=eff_ui, accent_color=eff_acc)
+    if eff_txt:
+        pal["fg"] = eff_txt
+        pal["bar_fg"] = eff_txt
+    return pal
 
 
 def build_app_stylesheet(
@@ -2087,15 +2288,20 @@ def build_app_stylesheet(
     is_custom_image: bool = False,
     ui_color: str = "",
     accent_color: str = "",
+    text_color: str = "",
+    ui_opacity: Optional[int] = None,
     phase: float = 0.0,
 ) -> str:
     """Build a complete Qt stylesheet covering MainWindow, Dialogs, Tabs, and Inputs."""
-    p = get_theme_palette(bg, ui_color=ui_color, accent_color=accent_color, phase=phase)
+    p = get_theme_palette(bg, ui_color=ui_color, accent_color=accent_color, text_color=text_color, phase=phase)
     eff_ui = normalize_hex(ui_color) or normalize_hex(bg.get("ui_color", ""))
     eff_acc = normalize_hex(accent_color) or normalize_hex(bg.get("accent_color", ""))
     animated_bg = bg.get("animated") or ""
     is_fireworks = animated_bg == "fireworks" and not is_custom_image
     is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
+    raw_op = ui_opacity if (ui_opacity is not None and 20 <= int(ui_opacity) <= 100) else int(bg.get("ui_opacity", 100))
+    eff_op = max(20, min(100, raw_op))
+    is_translucent = eff_op < 100
     is_color_shift = (
         animated_bg in ("christmas_shift", "halloween_shift")
         and not is_custom_image
@@ -2108,31 +2314,47 @@ def build_app_stylesheet(
         p["accent_fg"] = "#111827"
     main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass) else p["bg"]
     if is_aero_glass:
+        op_scale = eff_op / 55.0
+        def _sa(a: int) -> int:
+            return max(24, min(250, int(round(a * op_scale))))
         toolbar_bg = (
-            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            "stop:0 rgba(215, 244, 255, 108), stop:0.48 rgba(118, 198, 240, 74), "
-            "stop:0.52 rgba(38, 118, 172, 92), stop:1 rgba(18, 66, 110, 122))"
+            f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 rgba(215, 244, 255, {_sa(108)}), stop:0.48 rgba(118, 198, 240, {_sa(74)}), "
+            f"stop:0.52 rgba(38, 118, 172, {_sa(92)}), stop:1 rgba(18, 66, 110, {_sa(122)}))"
         )
-        pane_bg = "rgba(10, 38, 66, 134)"
-        alt_pane_bg = "rgba(175, 232, 255, 26)"
-        ctrl_bg = "rgba(12, 46, 76, 152)"
+        pane_bg = f"rgba(10, 38, 66, {_sa(134)})"
+        alt_pane_bg = f"rgba(175, 232, 255, {_sa(26)})"
+        ctrl_bg = f"rgba(12, 46, 76, {_sa(152)})"
         header_bg = (
-            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            "stop:0 rgba(195, 236, 255, 92), stop:0.5 rgba(64, 142, 194, 96), "
-            "stop:1 rgba(22, 82, 128, 120))"
+            f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 rgba(195, 236, 255, {_sa(92)}), stop:0.5 rgba(64, 142, 194, {_sa(96)}), "
+            f"stop:1 rgba(22, 82, 128, {_sa(120)}))"
         )
         btn_bg = (
-            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            "stop:0 rgba(235, 249, 255, 120), stop:0.48 rgba(145, 214, 248, 76), "
-            "stop:0.52 rgba(52, 136, 188, 92), stop:1 rgba(28, 92, 146, 115))"
+            f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 rgba(235, 249, 255, {_sa(120)}), stop:0.48 rgba(145, 214, 248, {_sa(76)}), "
+            f"stop:0.52 rgba(52, 136, 188, {_sa(92)}), stop:1 rgba(28, 92, 146, {_sa(115)}))"
         )
         btn_hover = (
-            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
-            "stop:0 rgba(255, 255, 255, 172), stop:0.48 rgba(182, 236, 255, 126), "
-            "stop:0.52 rgba(78, 182, 238, 134), stop:1 rgba(42, 134, 198, 152))"
+            f"qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            f"stop:0 rgba(255, 255, 255, {_sa(172)}), stop:0.48 rgba(182, 236, 255, {_sa(126)}), "
+            f"stop:0.52 rgba(78, 182, 238, {_sa(134)}), stop:1 rgba(42, 134, 198, {_sa(152)}))"
         )
         btn_hover_fg = "#ffffff"
         border_css = "rgba(196, 242, 255, 178)"
+    elif is_translucent and not is_color_shift and not is_fireworks:
+        a_main = max(45, min(255, int(round(255 * eff_op / 100.0))))
+        a_btn = max(55, min(255, int(round(255 * min(100, eff_op + 10) / 100.0))))
+        a_hov = max(85, min(255, int(round(255 * min(100, eff_op + 22) / 100.0))))
+        toolbar_bg = rgba_css(p["panel"], a_main)
+        pane_bg = rgba_css(p["surface"], a_main)
+        alt_pane_bg = rgba_css(p["surface_alt"], max(30, a_main // 2))
+        ctrl_bg = rgba_css(p["surface"], a_btn)
+        header_bg = rgba_css(p["panel"], a_btn)
+        btn_bg = rgba_css(p["btn_bg"], a_btn)
+        btn_hover = rgba_css(p["btn_hover"], a_hov)
+        btn_hover_fg = p["btn_hover_fg"]
+        border_css = rgba_css(p["border"], max(120, a_hov))
     elif is_color_shift:
         toolbar_bg = "rgba(12, 10, 12, 92)"
         pane_bg = "rgba(10, 10, 12, 112)"
