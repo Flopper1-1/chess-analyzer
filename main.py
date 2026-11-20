@@ -22,7 +22,7 @@ import chess.pgn
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRect, QRectF, QPoint, QPointF, QSize, QEvent, QTimer, QUrl
 from PySide6.QtGui import (
     QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
-    QDesktopServices, QRadialGradient,
+    QDesktopServices, QRadialGradient, QLinearGradient, QPolygonF,
 )
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem,
@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
     QComboBox, QLineEdit, QSpinBox, QProgressBar, QListWidget, QListWidgetItem, QHeaderView, QMessageBox,
     QAbstractItemView, QSizePolicy, QToolBar, QToolButton, QToolTip, QColorDialog, QTabWidget, QGridLayout,
     QSlider, QStackedWidget, QScrollArea, QCheckBox, QFrame, QSystemTrayIcon, QInputDialog,
-    QKeySequenceEdit, QGroupBox, QLayout, QButtonGroup,
+    QKeySequenceEdit, QGroupBox, QLayout, QButtonGroup, QMenu,
 )
 
 import analysis as A
@@ -576,6 +576,7 @@ class BoardWidget(QWidget):
             flight_ease = 1.0
 
         is_ny = bool(self.board_template.get("random_light"))
+        is_aero_board = bool(self.board_template.get("aero_glass"))
         light_hex = self.board_template.get("light_hex") or "#f0d9b5"
         dark_hex = self.board_template.get("dark_hex") or "#b58863"
         light_img_path = self.board_template.get("light_img") or ""
@@ -587,7 +588,22 @@ class BoardWidget(QWidget):
         for sq in chess.SQUARES:
             light = (chess.square_file(sq) + chess.square_rank(sq)) % 2 == 1
             sq_rect = rect(sq)
-            if light and is_ny:
+            if is_aero_board:
+                base_col = QColor(242, 248, 255, 168) if light else QColor(18, 26, 36, 178)
+                p.fillRect(sq_rect, base_col)
+                # Subtle Windows 7 Aero glossy upper half reflection per square
+                top_half = QRectF(sq_rect.x(), sq_rect.y(), sq_rect.width(), sq_rect.height() * 0.48)
+                sheen = QLinearGradient(top_half.topLeft(), top_half.bottomLeft())
+                if light:
+                    sheen.setColorAt(0.0, QColor(255, 255, 255, 92))
+                    sheen.setColorAt(1.0, QColor(255, 255, 255, 14))
+                else:
+                    sheen.setColorAt(0.0, QColor(185, 232, 255, 42))
+                    sheen.setColorAt(1.0, QColor(185, 232, 255, 6))
+                p.fillRect(top_half, sheen)
+                p.setPen(QPen(QColor(255, 255, 255, 36 if light else 22), 1))
+                p.drawRect(sq_rect.adjusted(0.5, 0.5, -0.5, -0.5))
+            elif light and is_ny:
                 c_hex = self.new_years_colors[ny_idx % len(self.new_years_colors)] if self.new_years_colors else "#ffd54f"
                 ny_idx += 1
                 p.fillRect(sq_rect, QColor(c_hex))
@@ -605,6 +621,31 @@ class BoardWidget(QWidget):
                 else:
                     hl = QColor(205, 210, 106, 145) if light else QColor(170, 162, 58, 145)
                 p.fillRect(sq_rect, hl)
+
+        if is_aero_board and s > 0:
+            # Diagonal Windows 7 Aero glass sheen streaks across the board (behind pieces)
+            board_rect = QRectF(ox, oy, 8 * s, 8 * s)
+            p.save()
+            p.setClipRect(board_rect)
+            bw, bh = board_rect.width(), board_rect.height()
+            for x_frac, w_frac, alpha in ((0.06, 0.16, 44), (0.28, 0.08, 30), (0.62, 0.14, 34)):
+                poly = QPolygonF([
+                    QPointF(ox + bw * x_frac, oy),
+                    QPointF(ox + bw * (x_frac + w_frac), oy),
+                    QPointF(ox + bw * (x_frac + w_frac - 0.34), oy + bh),
+                    QPointF(ox + bw * (x_frac - 0.34), oy + bh),
+                ])
+                grad = QLinearGradient(ox, oy, ox, oy + bh)
+                grad.setColorAt(0.0, QColor(240, 252, 255, alpha))
+                grad.setColorAt(0.65, QColor(210, 242, 255, int(alpha * 0.45)))
+                grad.setColorAt(1.0, QColor(210, 242, 255, 0))
+                p.setPen(Qt.NoPen)
+                p.setBrush(grad)
+                p.drawPolygon(poly)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(QColor(210, 245, 255, 165), 1.5))
+            p.drawRect(board_rect.adjusted(0.75, 0.75, -0.75, -0.75))
+            p.restore()
 
         # Flashy Brilliant (!!) trail, impact flash, dual shockwave rings & starburst sparks
         if self.badge == "!!" and self.last_move:
@@ -1178,16 +1219,32 @@ def _board_swatch_icon(b: dict, size: int = 36) -> QIcon:
     pm.fill(Qt.transparent)
     p = QPainter(pm)
     half = size // 2
-    light_c = QColor(b.get("light_hex", "#f0d9b5"))
-    dark_c = QColor(b.get("dark_hex", "#b58863"))
-    if b.get("id") == "new_year":
-        light_c = QColor("#ffd54f")
-        dark_c = QColor("#181818")
+    if b.get("aero_glass"):
+        # Blue Aero backdrop behind translucent Black & White glass tiles
+        grad = QLinearGradient(0, 0, size, size)
+        grad.setColorAt(0.0, QColor("#38bdf8"))
+        grad.setColorAt(1.0, QColor("#0c4a6e"))
+        p.fillRect(0, 0, size, size, grad)
+        light_c = QColor(242, 248, 255, 175)
+        dark_c = QColor(18, 26, 36, 185)
+    else:
+        light_c = QColor(b.get("light_hex", "#f0d9b5"))
+        dark_c = QColor(b.get("dark_hex", "#b58863"))
+        if b.get("id") == "new_year":
+            light_c = QColor("#ffd54f")
+            dark_c = QColor("#181818")
     p.fillRect(0, 0, half, half, light_c)
     p.fillRect(half, 0, half, half, dark_c)
     p.fillRect(0, half, half, half, dark_c)
     p.fillRect(half, half, half, half, light_c)
-    p.setPen(QColor("#666666"))
+    if b.get("aero_glass"):
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(255, 255, 255, 70))
+        p.drawPolygon(QPolygonF([QPointF(4, 0), QPointF(16, 0), QPointF(6, size), QPointF(0, size)]))
+        p.setBrush(Qt.NoBrush)
+        p.setPen(QColor("#bae6fd"))
+    else:
+        p.setPen(QColor("#666666"))
     p.drawRect(0, 0, size - 1, size - 1)
     p.end()
     return QIcon(pm)
@@ -1350,6 +1407,13 @@ class TemplateChipBar(QFrame):
             btn.setProperty("templateChip", True)
             btn.setToolTip(tip)
             btn.setCursor(Qt.PointingHandCursor)
+            # Reserve full bold text width so narrow leading letters (e.g. 'Inkwell') never clip
+            bold_font = QFont(btn.font())
+            bold_font.setBold(True)
+            bold_font.setPixelSize(12)
+            fm = QFontMetrics(bold_font)
+            btn.setMinimumWidth(fm.horizontalAdvance(label) + 34)
+            btn.setMinimumHeight(26)
             self._group.addButton(btn)
             self._flow.addWidget(btn)
             self._buttons.append((btn, tpl))
@@ -1398,7 +1462,7 @@ class ProfileDialog(QDialog):
         self._sel_annotations = getattr(settings, "annotation_template", "inkwell")
         if self._sel_annotations == "default":
             self._sel_annotations = "inkwell"
-        self._disable_holidays = bool(getattr(settings, "disable_holiday_events", False))
+        self._disable_holidays = False
 
         lay = QVBoxLayout(self)
         self.tabs = QTabWidget()
@@ -1630,7 +1694,7 @@ class ProfileDialog(QDialog):
         self.btn_import_sound_files.clicked.connect(self._import_sound_files)
         self.btn_del_sound.clicked.connect(self._delete_sound_tpl)
         for b in (self.btn_new_sound, self.btn_import_sound_folder, self.btn_import_sound_files, self.btn_del_sound):
-            b.setStyleSheet("padding:3px 8px;")
+            b.setProperty("compactBtn", True)
             top.addWidget(b)
         lay.addLayout(top)
 
@@ -2245,7 +2309,7 @@ class ProfileDialog(QDialog):
         self.btn_import_pieces_files.clicked.connect(self._import_piece_files)
         self.btn_del_pieces.clicked.connect(self._delete_pieces_tpl)
         for b in (self.btn_new_pieces, self.btn_import_pieces_folder, self.btn_import_pieces_files, self.btn_del_pieces):
-            b.setStyleSheet("padding:3px 8px;")
+            b.setProperty("compactBtn", True)
             top.addWidget(b)
         lay.addLayout(top)
 
@@ -2431,7 +2495,7 @@ class ProfileDialog(QDialog):
         self.btn_import_anno_files.clicked.connect(self._import_anno_files)
         self.btn_del_anno.clicked.connect(self._delete_anno_tpl)
         for b in (self.btn_new_anno, self.btn_import_anno_folder, self.btn_import_anno_files, self.btn_del_anno):
-            b.setStyleSheet("padding:3px 8px;")
+            b.setProperty("compactBtn", True)
             top.addWidget(b)
         l2.addLayout(top)
 
@@ -2855,25 +2919,6 @@ class SettingsDialog(QDialog):
         hint.setWordWrap(True)
         f.addRow(hint)
 
-        # ---- events tab
-        page_ev = QWidget(); lev = QVBoxLayout(page_ev)
-        tabs.addTab(page_ev, "Events")
-        self.disable_holidays = QCheckBox("Disable limited-time holiday events (Halloween, Christmas, New Year)")
-        self.disable_holidays.setChecked(bool(getattr(s, "disable_holiday_events", False)))
-        lev.addWidget(self.disable_holidays)
-        ev_note = QLabel(
-            "Holiday event icons and board templates appear in your Profile customization libraries only "
-            "during their local OS clock timeframes (you can choose whether to equip them):\n"
-            "• Halloween: October 1 – October 31\n"
-            "• Christmas: December 1 – December 30\n"
-            "• New Year: December 31 – January 1\n\n"
-            "When an event ends (or if events are disabled), any equipped event theme automatically reverts to default."
-        )
-        ev_note.setWordWrap(True)
-        ev_note.setStyleSheet("font-size:11px;")
-        lev.addWidget(ev_note)
-        lev.addStretch(1)
-
         # ---- audio tab
         page_audio = QWidget(); la = QVBoxLayout(page_audio)
         tabs.addTab(page_audio, "Audio")
@@ -2998,8 +3043,25 @@ class SettingsDialog(QDialog):
         self.update_status_lbl.setStyleSheet("font-size:12px;")
         l3.addWidget(self.update_status_lbl)
 
-        self.prerelease_event_box = QGroupBox("Pre-release Limited-Time Event Override")
-        ev_lay = QFormLayout(self.prerelease_event_box)
+        self.events_box = QGroupBox("Limited-Time Holiday Events")
+        ev_lay = QVBoxLayout(self.events_box)
+        self.disable_holidays = QCheckBox(
+            "Disable automatic switching to limited-time holiday events (Halloween, Christmas, New Year's)"
+        )
+        self.disable_holidays.setChecked(bool(getattr(s, "disable_holiday_events", False)))
+        ev_lay.addWidget(self.disable_holidays)
+        ev_note = QLabel(
+            "When checked, your customizations stay as-is when an event begins, but event themes still "
+            "appear in Profile & Customizations during their dates (Halloween: Oct 1–31, Christmas: Dec 1–30, "
+            "New Year's: Dec 31–Jan 1) so you can equip them manually."
+        )
+        ev_note.setWordWrap(True)
+        ev_note.setStyleSheet("font-size:11px;")
+        ev_lay.addWidget(ev_note)
+
+        self.prerelease_event_row = QWidget()
+        ov_form = QFormLayout(self.prerelease_event_row)
+        ov_form.setContentsMargins(0, 4, 0, 0)
         self.prerelease_event_combo = QComboBox()
         self.prerelease_event_combo.addItem("Auto (System Date)", "")
         self.prerelease_event_combo.addItem("Halloween", "halloween")
@@ -3008,15 +3070,17 @@ class SettingsDialog(QDialog):
         cur_ov = getattr(s, "prerelease_holiday_override", "") or ""
         idx_ov = self.prerelease_event_combo.findData(cur_ov)
         self.prerelease_event_combo.setCurrentIndex(idx_ov if idx_ov >= 0 else 0)
-        ev_lay.addRow("Active event:", self.prerelease_event_combo)
+        ov_form.addRow("Pre-release active event:", self.prerelease_event_combo)
         ev_hint = QLabel(
             "Pre-release only: activate any limited-time holiday event immediately without changing your clock."
         )
         ev_hint.setWordWrap(True)
         ev_hint.setStyleSheet("font-size:11px;")
-        ev_lay.addRow("", ev_hint)
-        self.prerelease_event_box.setVisible(self._is_prerelease)
-        l3.addWidget(self.prerelease_event_box)
+        ov_form.addRow("", ev_hint)
+        self.prerelease_event_row.setVisible(self._is_prerelease)
+        self.prerelease_event_box = self.prerelease_event_row
+        ev_lay.addWidget(self.prerelease_event_row)
+        l3.addWidget(self.events_box)
         l3.addStretch(1)
 
         self._restart_requested = False
@@ -3228,12 +3292,18 @@ class LibraryDialog(QDialog):
     ]
     BRIL_COLOR = "#26c6da"
     BRIL_SPECS = [
-        ("queen", "♛ Queen Sacrifices"),
-        ("rook", "♜ Rook Sacrifices"),
-        ("bishop", "♝ Bishop Sacrifices"),
-        ("knight", "♞ Knight Sacrifices"),
-        ("underpromotion", "⇧ Underpromotions"),
+        ("queen", "Queen Sacrifices"),
+        ("rook", "Rook Sacrifices"),
+        ("bishop", "Bishop Sacrifices"),
+        ("knight", "Knight Sacrifices"),
+        ("underpromotion", "Underpromotions"),
     ]
+    _SAC_PIECE_KEYS = {
+        "queen": "wQ",
+        "rook": "wR",
+        "bishop": "wB",
+        "knight": "wN",
+    }
 
     def __init__(self, lib: LIB.GameLibrary, parent=None):
         super().__init__(parent)
@@ -3295,19 +3365,43 @@ class LibraryDialog(QDialog):
         cards_row = QHBoxLayout()
         cards_row.setSpacing(8)
         self.cat_labels = {}
+        inkwell_pieces = themes.detect_pieces_in_folder(
+            themes.resource_path(os.path.join("assets", "pieces", "inkwell"))
+        )
         for key, title in self.BRIL_SPECS:
             card = QFrame()
+            card.setObjectName("BrilCard")
             card.setStyleSheet(
-                f"QFrame {{ background:#262626; border:1px solid #444; border-left:3px solid {self.BRIL_COLOR}; border-radius:4px; padding:4px 8px; }}"
+                f"QFrame#BrilCard {{ background:#262626; border:1px solid #444; border-left:3px solid {self.BRIL_COLOR}; border-radius:4px; padding:4px 8px; }}"
             )
             cl = QVBoxLayout(card)
             cl.setContentsMargins(6, 4, 6, 4)
             cl.setSpacing(2)
+            hdr = QHBoxLayout()
+            hdr.setContentsMargins(0, 0, 0, 0)
+            hdr.setSpacing(6)
+            ic_lbl = QLabel()
+            ic_lbl.setStyleSheet("border:none; background:transparent; padding:0px;")
+            ic_lbl.setFixedSize(22, 22)
+            ic_lbl.setAlignment(Qt.AlignCenter)
+            ic_pm = None
+            if key == "underpromotion":
+                ic_pm = icons.pixmap_for_key("!!", 20)
+            else:
+                p_path = inkwell_pieces.get(self._SAC_PIECE_KEYS.get(key, ""), "")
+                if p_path and os.path.exists(p_path):
+                    raw_pm = QPixmap(p_path)
+                    if not raw_pm.isNull():
+                        ic_pm = raw_pm.scaled(22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            if ic_pm is not None:
+                ic_lbl.setPixmap(ic_pm)
+                hdr.addWidget(ic_lbl)
             t_lbl = QLabel(title)
-            t_lbl.setStyleSheet("font-size:11px; color:#ccc; border:none;")
+            t_lbl.setStyleSheet("font-size:11px; color:#ccc; border:none; padding:0px;")
+            hdr.addWidget(t_lbl, 1)
             v_lbl = QLabel("0")
-            v_lbl.setStyleSheet(f"font-size:15px; font-weight:bold; color:{self.BRIL_COLOR}; border:none;")
-            cl.addWidget(t_lbl)
+            v_lbl.setStyleSheet(f"font-size:15px; font-weight:bold; color:{self.BRIL_COLOR}; border:none; padding:0px;")
+            cl.addLayout(hdr)
             cl.addWidget(v_lbl)
             cards_row.addWidget(card, 1)
             self.cat_labels[key] = v_lbl
@@ -3732,9 +3826,23 @@ class MainWindow(QMainWindow):
         tb.setContextMenuPolicy(Qt.PreventContextMenu)
         self.addToolBar(tb)
         self.tb = tb
+        self.file_btn = QToolButton()
+        self.file_btn.setText("File")
+        self.file_btn.setPopupMode(QToolButton.InstantPopup)
+        self.file_menu = QMenu(self.file_btn)
+        self.file_menu.addAction("Open / Paste PGN / FEN…", self.open_or_paste)
+        self.file_menu.addAction("Open PGN File…", self.open_file)
+        self.file_menu.addSeparator()
+        self.file_menu.addAction("Copy Game as PGN", self.copy_current_pgn)
+        self.file_menu.addAction("Copy Position as FEN", self.copy_current_fen)
+        self.file_menu.addSeparator()
+        self.file_menu.addAction("Extract / Export PGN…", self.export_current_pgn)
+        self.file_menu.addAction("Extract / Export FEN…", self.export_current_fen)
+        self.file_btn.setMenu(self.file_menu)
+        tb.addWidget(self.file_btn)
+
         self.save_act = None
-        for t, fn in (("Open / Paste PGN…", self.open_or_paste),
-                      ("Re-analyze", self.restart_all), ("Stop", self.stop),
+        for t, fn in (("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
                       ("Library…", self.open_library), ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
@@ -3860,6 +3968,75 @@ class MainWindow(QMainWindow):
 
     def paste(self):
         self.open_or_paste()
+
+    def _current_game_pgn_text(self) -> str:
+        if not self.game:
+            return ""
+        exporter = chess.pgn.StringExporter(headers=True, variations=True, comments=True)
+        return self.game.accept(exporter).strip()
+
+    def _current_position_fen_text(self) -> str:
+        if hasattr(self, "board") and self.board and self.board.board is not None:
+            return self.board.board.fen()
+        if self.game:
+            return self.game.board().fen()
+        return ""
+
+    def copy_current_pgn(self):
+        pgn_txt = self._current_game_pgn_text()
+        if not pgn_txt:
+            QMessageBox.information(self, APP_TITLE, "No game is currently loaded to copy as PGN.")
+            return
+        QApplication.clipboard().setText(pgn_txt)
+        self.status.setText("Copied current game PGN to clipboard.")
+
+    def copy_current_fen(self):
+        fen_txt = self._current_position_fen_text()
+        if not fen_txt:
+            QMessageBox.information(self, APP_TITLE, "No position is currently loaded to copy as FEN.")
+            return
+        QApplication.clipboard().setText(fen_txt)
+        self.status.setText("Copied current position FEN to clipboard.")
+
+    def export_current_pgn(self):
+        pgn_txt = self._current_game_pgn_text()
+        if not pgn_txt:
+            QMessageBox.information(self, APP_TITLE, "No game is currently loaded to export as PGN.")
+            return
+        default_name = "game.pgn"
+        if self.job and (self.job.title or "").strip():
+            safe = re.sub(r'[<>:"/\\|?*]+', "_", self.job.title.strip())
+            if safe:
+                default_name = f"{safe}.pgn"
+        p, _ = QFileDialog.getSaveFileName(self, "Export Game as PGN", default_name, "PGN files (*.pgn);;All files (*)")
+        if p:
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(pgn_txt + "\n")
+                self.status.setText(f"Exported PGN to {os.path.basename(p)}.")
+            except OSError as exc:
+                QMessageBox.warning(self, APP_TITLE, f"Could not save PGN file:\n{exc}")
+
+    def export_current_fen(self):
+        fen_txt = self._current_position_fen_text()
+        if not fen_txt:
+            QMessageBox.information(self, APP_TITLE, "No position is currently loaded to export as FEN.")
+            return
+        default_name = "position.fen"
+        if self.job and (self.job.title or "").strip():
+            safe = re.sub(r'[<>:"/\\|?*]+', "_", self.job.title.strip())
+            if safe:
+                default_name = f"{safe}.fen"
+        p, _ = QFileDialog.getSaveFileName(
+            self, "Export Position as FEN", default_name, "FEN files (*.fen);;Text files (*.txt);;All files (*)"
+        )
+        if p:
+            try:
+                with open(p, "w", encoding="utf-8") as f:
+                    f.write(fen_txt + "\n")
+                self.status.setText(f"Exported FEN to {os.path.basename(p)}.")
+            except OSError as exc:
+                QMessageBox.warning(self, APP_TITLE, f"Could not save FEN file:\n{exc}")
 
     def load_text(self, text):
         games = parse_input(text)
@@ -4585,8 +4762,32 @@ class MainWindow(QMainWindow):
                 composed = QPixmap(self.size())
                 composed.fill(Qt.black)
                 cp = QPainter(composed)
+                cp.setRenderHint(QPainter.Antialiasing)
                 cp.drawPixmap(0, 0, scaled, sx, sy, self.width(), self.height())
-                cp.fillRect(composed.rect(), QColor(0, 0, 0, 85))
+                if self._cached_bg.get("aero_glass"):
+                    # Windows 7 Aero translucent glass wash + diagonal reflection sheen over wallpaper
+                    w, h = float(self.width()), float(self.height())
+                    wash = QLinearGradient(0, 0, 0, h)
+                    wash.setColorAt(0.0, QColor(180, 232, 255, 42))
+                    wash.setColorAt(0.45, QColor(24, 92, 148, 52))
+                    wash.setColorAt(1.0, QColor(8, 34, 68, 86))
+                    cp.fillRect(composed.rect(), wash)
+                    for x_frac, w_frac, alpha in ((0.08, 0.14, 34), (0.28, 0.07, 24), (0.64, 0.12, 26)):
+                        poly = QPolygonF([
+                            QPointF(w * x_frac, 0),
+                            QPointF(w * (x_frac + w_frac), 0),
+                            QPointF(w * (x_frac + w_frac - 0.30), h),
+                            QPointF(w * (x_frac - 0.30), h),
+                        ])
+                        sg = QLinearGradient(0, 0, 0, h)
+                        sg.setColorAt(0.0, QColor(245, 252, 255, alpha))
+                        sg.setColorAt(0.65, QColor(200, 238, 255, int(alpha * 0.45)))
+                        sg.setColorAt(1.0, QColor(200, 238, 255, 0))
+                        cp.setPen(Qt.NoPen)
+                        cp.setBrush(sg)
+                        cp.drawPolygon(poly)
+                else:
+                    cp.fillRect(composed.rect(), QColor(0, 0, 0, 85))
                 cp.end()
                 self._bg_scaled_cache = (key, composed)
             p = QPainter(self)
@@ -4643,8 +4844,15 @@ class MainWindow(QMainWindow):
         pal = themes.get_theme_palette(bg, ui_color=ui_col, accent_color=acc_col, phase=phase)
         is_color_shift = anim_mode in ("christmas_shift", "halloween_shift") and not is_custom_image and not eff_ui
         is_fireworks = anim_mode == "fireworks" and not is_custom_image
+        is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
         border_w = "2px" if bg.get("id") == "high_contrast" else "1px"
-        if is_color_shift:
+        if is_aero_glass:
+            bar_bg = "rgba(12, 52, 88, 138)"
+            bar_border = "rgba(196, 242, 255, 178)"
+            hover_bg = "rgba(175, 232, 255, 110)"
+            accent_use = eff_acc or "#38bdf8"
+            graph_bg = "#8a0a2642"
+        elif is_color_shift:
             bar_bg = "rgba(12, 10, 12, 110)"
             bar_border = "rgba(255, 163, 71, 155)" if anim_mode == "halloween_shift" else "rgba(253, 230, 138, 145)"
             hover_bg = "rgba(255, 255, 255, 52)"
@@ -4703,7 +4911,8 @@ class MainWindow(QMainWindow):
                 "pre_event_piece_template", "pre_event_annotation_template", "pre_event_sound_template",
             ):
                 self.qs.setValue(k, getattr(self.settings, k))
-        dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
+        # disable_holiday_events only disables automatic switching; manual holiday selection remains allowed
+        dis_hol = False
         # 1. App Icon
         icon_info = themes.resolve_active_app_icon(
             getattr(self.settings, "app_icon", "fluent"),

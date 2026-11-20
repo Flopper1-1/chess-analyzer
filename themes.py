@@ -79,6 +79,16 @@ BUILTIN_BOARDS = [
         "locked": True,
     },
     {
+        "id": "aero_glass",
+        "name": "Aero Glass (Transparent)",
+        "light_hex": "#f0f0f0",
+        "dark_hex": "#262626",
+        "light_img": "",
+        "dark_img": "",
+        "locked": True,
+        "aero_glass": True,
+    },
+    {
         "id": "red_white",
         "name": "Red & White",
         "light_hex": "#f4f4f4",
@@ -184,6 +194,21 @@ BUILTIN_BACKGROUNDS = [
         "grid_fg": "#21536b",
         "image_path": "",
         "locked": True,
+    },
+    {
+        "id": "aero_glass",
+        "name": "Windows 7 Aero",
+        "window_bg": "#0f3a5d",
+        "panel_bg": "#124268",
+        "button_bg": "#1a5680",
+        "button_border": "#8fe3ff",
+        "header_bg": "#113e62",
+        "text_fg": "#f4fbff",
+        "grid_fg": "#5cc4e8",
+        "accent_bg": "#38bdf8",
+        "image_path": resource_path(os.path.join("assets", "backgrounds", "aero_aurora.jpg")),
+        "locked": True,
+        "aero_glass": True,
     },
 ]
 
@@ -2070,6 +2095,7 @@ def build_app_stylesheet(
     eff_acc = normalize_hex(accent_color) or normalize_hex(bg.get("accent_color", ""))
     animated_bg = bg.get("animated") or ""
     is_fireworks = animated_bg == "fireworks" and not is_custom_image
+    is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
     is_color_shift = (
         animated_bg in ("christmas_shift", "halloween_shift")
         and not is_custom_image
@@ -2080,8 +2106,34 @@ def build_app_stylesheet(
         p["accent"] = "#eab308"
         p["accent_hover"] = "#facc15"
         p["accent_fg"] = "#111827"
-    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift) else p["bg"]
-    if is_color_shift:
+    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass) else p["bg"]
+    if is_aero_glass:
+        toolbar_bg = (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 rgba(215, 244, 255, 108), stop:0.48 rgba(118, 198, 240, 74), "
+            "stop:0.52 rgba(38, 118, 172, 92), stop:1 rgba(18, 66, 110, 122))"
+        )
+        pane_bg = "rgba(10, 38, 66, 134)"
+        alt_pane_bg = "rgba(175, 232, 255, 26)"
+        ctrl_bg = "rgba(12, 46, 76, 152)"
+        header_bg = (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 rgba(195, 236, 255, 92), stop:0.5 rgba(64, 142, 194, 96), "
+            "stop:1 rgba(22, 82, 128, 120))"
+        )
+        btn_bg = (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 rgba(235, 249, 255, 120), stop:0.48 rgba(145, 214, 248, 76), "
+            "stop:0.52 rgba(52, 136, 188, 92), stop:1 rgba(28, 92, 146, 115))"
+        )
+        btn_hover = (
+            "qlineargradient(x1:0, y1:0, x2:0, y2:1, "
+            "stop:0 rgba(255, 255, 255, 172), stop:0.48 rgba(182, 236, 255, 126), "
+            "stop:0.52 rgba(78, 182, 238, 134), stop:1 rgba(42, 134, 198, 152))"
+        )
+        btn_hover_fg = "#ffffff"
+        border_css = "rgba(196, 242, 255, 178)"
+    elif is_color_shift:
         toolbar_bg = "rgba(12, 10, 12, 92)"
         pane_bg = "rgba(10, 10, 12, 112)"
         alt_pane_bg = "rgba(255, 255, 255, 16)"
@@ -2149,6 +2201,33 @@ def build_app_stylesheet(
         QToolButton:pressed, QPushButton:pressed {{
             background-color: {p['accent']};
             color: {p['accent_fg']};
+        }}
+        QToolButton:disabled, QPushButton:disabled {{
+            background-color: {p['surface']};
+            color: {rgba_css(p['fg'], 105)};
+            border-color: {rgba_css(p['border'], 110)};
+        }}
+        QPushButton[compactBtn="true"] {{
+            padding: 3px 8px;
+        }}
+        QMenu {{
+            background-color: {p['surface']};
+            color: {p['fg']};
+            border: {border_w} solid {border_css};
+            padding: 4px;
+        }}
+        QMenu::item {{
+            padding: 5px 18px 5px 12px;
+            border-radius: 3px;
+        }}
+        QMenu::item:selected {{
+            background-color: {p['accent']};
+            color: {p['accent_fg']};
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {border_css};
+            margin: 4px 6px;
         }}
         QTabWidget::pane {{
             background-color: {p['surface']};
@@ -2235,8 +2314,9 @@ def build_app_stylesheet(
             color: {p['fg']};
             border: {border_w} solid {p['border']};
             border-radius: 12px;
-            padding: 3px 10px;
+            padding: 4px 14px;
             font-size: 12px;
+            font-weight: bold;
         }}
         QPushButton[templateChip="true"]:hover {{
             background-color: {p['btn_hover']};
@@ -2328,13 +2408,18 @@ def image_to_ico_bytes(path: str) -> bytes:
 
 
 def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
-    """Auto-select event templates when a holiday starts and restore prior templates when it ends."""
-    disabled = bool(getattr(settings, "disable_holiday_events", False))
-    cur = active_holiday_event(now=now, disabled=disabled)
+    """Auto-select event templates when a holiday starts (unless auto-switch is disabled)
+    and restore prior templates when the event ends."""
+    disable_auto = bool(getattr(settings, "disable_holiday_events", False))
+    cur = active_holiday_event(now=now, disabled=False)
     last = getattr(settings, "last_holiday_event", "") or ""
     changed = False
 
     if cur:
+        if disable_auto:
+            # Auto-switching is disabled: keep the user's chosen customizations untouched
+            # while still letting them manually pick active event items in Customization.
+            return False
         if last != cur:
             cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
             cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
@@ -2385,7 +2470,7 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
             cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS or cur_bg in HOLIDAY_IDS
             or cur_piece in HOLIDAY_IDS or cur_anno in HOLIDAY_IDS or cur_sound in HOLIDAY_IDS
         )
-        if last or disabled or any_holiday:
+        if last or any_holiday:
             pre_icon = getattr(settings, "pre_event_app_icon", "fluent") or "fluent"
             pre_board = getattr(settings, "pre_event_board_template", "brown_tan") or "brown_tan"
             pre_bg = getattr(settings, "pre_event_background_template", "dark") or "dark"

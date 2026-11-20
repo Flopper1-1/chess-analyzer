@@ -10,6 +10,7 @@ python -m PyInstaller --clean --noconfirm --onefile --windowed --name "Holly's C
   --add-data "LICENSES;LICENSES" --add-data "assets\icons;assets\icons" --add-data "assets\annotations;assets\annotations" `
   --add-data "assets\app_icons;assets\app_icons" --add-data "assets\fluent.png;assets" `
   --add-data "assets\pieces;assets\pieces" `
+  --add-data "assets\backgrounds;assets\backgrounds" `
   --add-data "assets\sounds;assets\sounds" `
   --exclude-module PySide6.QtWebEngineCore --exclude-module PySide6.QtWebEngineWidgets `
   --exclude-module PySide6.QtQml --exclude-module PySide6.QtQuick --exclude-module PySide6.QtPdf `
