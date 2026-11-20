@@ -663,6 +663,42 @@ class BoardWidget(QWidget):
             p.drawRect(board_rect.adjusted(0.75, 0.75, -0.75, -0.75))
             p.restore()
 
+        # Algebraic coordinates (ranks 1-8 on left edge, files a-h on bottom edge)
+        if s >= 24:
+            p.save()
+            coord_font = QFont("Segoe UI", max(8, int(s * 0.16)), QFont.Bold)
+            p.setFont(coord_font)
+            pad = max(2.0, s * 0.05)
+            for idx in range(8):
+                # Leftmost file (visual column 0) -> rank label at top-left of square
+                rank_idx = idx if self.flipped else (7 - idx)
+                file_idx_left = 7 if self.flipped else 0
+                light_sq = (file_idx_left + rank_idx) % 2 == 1
+                r_box = QRectF(ox + pad, oy + idx * s + pad, s * 0.45, s * 0.36)
+                rank_txt = str(rank_idx + 1)
+                fg_c = QColor("#1e293b") if light_sq else QColor("#f1f5f9")
+                if is_aero_board or light_pm is not None or dark_pm is not None:
+                    sh_c = QColor(255, 255, 255, 140) if light_sq else QColor(0, 0, 0, 165)
+                    p.setPen(sh_c)
+                    p.drawText(r_box.translated(1, 1), Qt.AlignLeft | Qt.AlignTop, rank_txt)
+                p.setPen(fg_c)
+                p.drawText(r_box, Qt.AlignLeft | Qt.AlignTop, rank_txt)
+
+                # Bottom rank (visual row 7) -> file label at bottom-right of square
+                file_idx = (7 - idx) if self.flipped else idx
+                rank_idx_bot = 7 if self.flipped else 0
+                light_sq_b = (file_idx + rank_idx_bot) % 2 == 1
+                f_box = QRectF(ox + idx * s, oy + 7 * s + s * 0.62, s - pad, s * 0.36)
+                file_txt = chess.FILE_NAMES[file_idx]
+                fg_cb = QColor("#1e293b") if light_sq_b else QColor("#f1f5f9")
+                if is_aero_board or light_pm is not None or dark_pm is not None:
+                    sh_cb = QColor(255, 255, 255, 140) if light_sq_b else QColor(0, 0, 0, 165)
+                    p.setPen(sh_cb)
+                    p.drawText(f_box.translated(1, 1), Qt.AlignRight | Qt.AlignBottom, file_txt)
+                p.setPen(fg_cb)
+                p.drawText(f_box, Qt.AlignRight | Qt.AlignBottom, file_txt)
+            p.restore()
+
         # Flashy Brilliant (!!) trail, impact flash, dual shockwave rings & starburst sparks
         if self.badge == "!!" and self.last_move:
             r_from = rect(self.last_move.from_square)
@@ -848,7 +884,7 @@ class GraphWidget(QWidget):
         txt = ("%+.2f" % (cp / 100.0)) if abs(cp) < 9000 else ("Mate" if cp > 0 else "-Mate")
         lab = self.labels[i] if i < len(self.labels) else ""
         tag = self.tags[i] if i < len(self.tags) else ""
-        suffix = f"  [{tag}]" if tag in ("!!", "??") else ""
+        suffix = f"  [{tag}]" if tag in ("!!", "!", "??") else ""
         QToolTip.showText(e.globalPosition().toPoint(), "%s%s\nEval: %s" % (lab, suffix, txt), self)
         self.update()
 
@@ -875,13 +911,17 @@ class GraphWidget(QWidget):
             p.drawPolygon(QPolygonF(poly))
             p.setPen(QPen(QColor(self.mid_color), 1))
             p.drawLine(0, h // 2, w, h // 2)
-            # Small marker circles on Blunder (??) and Brilliant (!!) moves
+            # Small marker circles on Brilliant (!!), Great (!), and Blunder (??) moves
             for i, pt in enumerate(pts):
                 tag = self.tags[i] if i < len(self.tags) else ""
                 if tag == "!!":
                     p.setPen(QPen(QColor("#ffffff"), 1.2))
                     p.setBrush(QColor("#26c6da"))
                     p.drawEllipse(pt, 4.0, 4.0)
+                elif tag == "!":
+                    p.setPen(QPen(QColor("#ffffff"), 1.2))
+                    p.setBrush(QColor("#3b82f6"))
+                    p.drawEllipse(pt, 3.8, 3.8)
                 elif tag == "??":
                     p.setPen(QPen(QColor("#ffffff"), 1.2))
                     p.setBrush(QColor("#e53935"))
@@ -4543,8 +4583,15 @@ class MainWindow(QMainWindow):
         self.clock_data = A.extract_game_clocks(self.game)
         rows = []
         for i, m in enumerate(self.game.mainline_moves()):
-            rows.append((i + 1, b.turn, b.san(m), m, b.fen()))
-            b.push(m)
+            try:
+                if m not in b.legal_moves:
+                    break
+                san_str = b.san(m)
+                fen_before = b.fen()
+                b.push(m)
+                rows.append((i + 1, not b.turn, san_str, m, fen_before))
+            except Exception:
+                break
         self.basic = rows
         self.fill_table()
         self.goto(0)
@@ -4714,7 +4761,10 @@ class MainWindow(QMainWindow):
     def alt_for(self, r):
         """Best alternative move (from the position before r) when r was an inaccuracy/mistake/blunder."""
         if r and r.symbol in ("?!", "?", "??", "miss") and r.pv_uci and r.pv_uci[0] != r.uci:
-            return chess.Move.from_uci(r.pv_uci[0])
+            try:
+                return chess.Move.from_uci(r.pv_uci[0])
+            except Exception:
+                return None
         return None
 
     def set_row(self, k):
@@ -4915,8 +4965,12 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ navigation
     def board_at(self, idx):
         b = self.start_board.copy()
-        for k in range(idx):
-            b.push(self.basic[k][3])
+        for k in range(min(idx, len(self.basic))):
+            mv = self.basic[k][3]
+            if mv in b.legal_moves:
+                b.push(mv)
+            else:
+                break
         return b
 
     def goto(self, idx, animate=True, play_sound=True):
@@ -5836,12 +5890,23 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------ best lines
     def show_best(self, row):
         self.goto(row)
-        fen = self.board_at(row).fen()
+        b_cur = self.board_at(row)
+        fen = b_cur.fen()
         self.line_title.setText("Best line from this position (analyzing…)")
         self.line_list.clear()
-        if 0 < row <= len(self.results) and self.results[row - 1].pv and self.results[row - 1].analysed:
-            r = self.results[row - 1]
-            self.fill_lines([(("%+.2f" % (r.eval_before / 100.0)) if r.eval_before is not None else "", r.pv, r.pv_uci)], fen)
+        # results[row] holds the PV starting FROM board_at(row) (before move row was played)
+        if 0 <= row < len(self.results) and self.results[row].pv and self.results[row].analysed:
+            r = self.results[row]
+            if r.pv_uci:
+                try:
+                    first_mv = chess.Move.from_uci(r.pv_uci[0])
+                    if first_mv in b_cur.legal_moves:
+                        self.fill_lines(
+                            [(("%+.2f" % (r.eval_before / 100.0)) if r.eval_before is not None else "", r.pv, r.pv_uci)],
+                            fen,
+                        )
+                except Exception:
+                    pass
         w = LineWorker(self.holder, fen, self.settings)
         w.done.connect(self.fill_lines)
         w.failed.connect(lambda m: self.line_title.setText("Error: " + m))
@@ -5853,40 +5918,84 @@ class MainWindow(QMainWindow):
             return
         self.line_title.setText("Best lines (click a move to preview it on the board)")
         self.line_list.clear()
-        self.current_lines, self.current_fen = lines, fen
-        if lines and lines[0][2]:
+        self.current_lines, self.current_fen = [], fen
+        try:
+            b = chess.Board(fen)
+        except Exception:
+            return
+        valid_lines = []
+        for ev, san, ucis in lines:
+            bb = b.copy()
+            parts = []
+            safe_ucis = []
+            if ucis:
+                for u in ucis:
+                    try:
+                        mv = chess.Move.from_uci(u)
+                        if mv not in bb.legal_moves:
+                            break
+                        num = ""
+                        if bb.turn:
+                            num = "%d. " % bb.fullmove_number
+                        elif not parts:
+                            num = "%d… " % bb.fullmove_number
+                        parts.append(num + bb.san(mv))
+                        bb.push(mv)
+                        safe_ucis.append(u)
+                    except Exception:
+                        break
+            else:
+                for s in san:
+                    try:
+                        mv = bb.parse_san(s)
+                        if mv not in bb.legal_moves:
+                            break
+                        num = ""
+                        if bb.turn:
+                            num = "%d. " % bb.fullmove_number
+                        elif not parts:
+                            num = "%d… " % bb.fullmove_number
+                        parts.append(num + bb.san(mv))
+                        bb.push(mv)
+                        safe_ucis.append(mv.uci())
+                    except Exception:
+                        break
+            if parts and safe_ucis:
+                li = len(valid_lines)
+                valid_lines.append((ev, san, safe_ucis))
+                it = QListWidgetItem("[%s]  %s" % (ev, " ".join(parts)))
+                it.setData(Qt.UserRole, li)
+                self.line_list.addItem(it)
+        self.current_lines = valid_lines
+        if valid_lines and valid_lines[0][2]:
             try:
-                best_mv = chess.Move.from_uci(lines[0][2][0])
-                b_cur = chess.Board(fen)
-                if best_mv in b_cur.legal_moves:
+                best_mv = chess.Move.from_uci(valid_lines[0][2][0])
+                if best_mv in b.legal_moves:
                     self.board.alt_move = best_mv
                     self.board.update()
             except Exception:
                 pass
-        from PySide6.QtWidgets import QListWidgetItem
-        b = chess.Board(fen)
-        for li, (ev, san, ucis) in enumerate(lines):
-            bb = b.copy(); parts = []
-            for s in san:
-                num = ""
-                if bb.turn:
-                    num = "%d. " % bb.fullmove_number
-                elif not parts:
-                    num = "%d… " % bb.fullmove_number
-                parts.append(num + s)
-                bb.push_san(s)
-            it = QListWidgetItem("[%s]  %s" % (ev, " ".join(parts)))
-            it.setData(Qt.UserRole, li)
-            self.line_list.addItem(it)
 
     def on_line_clicked(self, item):
-        # preview: show position after full best line
+        # preview: show position after full best line (safely guarded against illegal moves)
         li = item.data(Qt.UserRole)
+        if li is None or not (0 <= li < len(self.current_lines)):
+            return
         ev, san, ucis = self.current_lines[li]
-        b = chess.Board(self.current_fen)
+        try:
+            b = chess.Board(self.current_fen)
+        except Exception:
+            return
         last = None
         for u in ucis:
-            last = chess.Move.from_uci(u); b.push(last)
+            try:
+                mv = chess.Move.from_uci(u)
+                if mv not in b.legal_moves:
+                    break
+                b.push(mv)
+                last = mv
+            except Exception:
+                break
         self.board.set_position(b, last, "")
 
     def open_settings(self):
