@@ -1,7 +1,9 @@
 Holiday Sound Packs (Christmas, Halloween, New Year's)
 Created by mixing Holly's Chess Analyzer base chess sound effects with
-watermark-free CC0 1.0 Universal (Public Domain) open-source sound effects from:
-  - Reodelbasalan/adbertiser-sfx (License: CC0-1.0)
-    https://github.com/Reodelbasalan/adbertiser-sfx
-  - lavenderdotpet/CC0-Public-Domain-Sounds (Kenney RPG Audio & 100 CC0 SFX, License: CC0-1.0)
+watermark-free open-source / CC0 sound effects from:
+  - rse/soundfx (Freesound & SoundBible CC0 / CC-BY-3.0 curated collection)
+    https://github.com/rse/soundfx
+  - lavenderdotpet/CC0-Public-Domain-Sounds (100 CC0 SFX, Kenney RPG Audio & Music Jingles, CC0-1.0)
     https://github.com/lavenderdotpet/CC0-Public-Domain-Sounds
+  - Reodelbasalan/adbertiser-sfx (CC0-1.0: fireworks, confetti_popper, pop_cork, glass_clink, applause_short)
+    https://github.com/Reodelbasalan/adbertiser-sfx

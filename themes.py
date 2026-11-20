@@ -263,10 +263,22 @@ def capitalize_asset_name(filename: str) -> str:
     return " ".join(w.capitalize() for w in words) if words else stem.capitalize()
 
 
+_prerelease_holiday_override: str = ""
+
+
+def set_prerelease_holiday_override(event_id: str) -> None:
+    """Set an active holiday override for pre-release builds (empty string = system clock)."""
+    global _prerelease_holiday_override
+    clean = (event_id or "").strip().lower()
+    _prerelease_holiday_override = clean if clean in HOLIDAY_IDS else ""
+
+
 def active_holiday_event(now: Optional[datetime] = None, disabled: bool = False) -> Optional[str]:
-    """Determine active holiday event using ONLY the local operating system clock."""
+    """Determine active holiday event using the local OS clock (or pre-release override when now is None)."""
     if disabled:
         return None
+    if now is None and _prerelease_holiday_override in HOLIDAY_IDS:
+        return _prerelease_holiday_override
     dt = now or datetime.now()
     if dt.month == 10:
         return "halloween"

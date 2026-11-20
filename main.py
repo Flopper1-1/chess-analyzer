@@ -306,16 +306,6 @@ class SoundPlayer:
     def _play_file(self, path: str) -> None:
         if not path or not os.path.exists(path) or self.volume <= 0:
             return
-        low = path.lower()
-        if self.volume >= 100 and low.endswith(".wav") and winsound is not None:
-            try:
-                winsound.PlaySound(
-                    path,
-                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
-                )
-                return
-            except Exception:
-                pass
         if sys.platform == "win32":
             try:
                 winmm = ctypes.windll.winmm
@@ -323,9 +313,19 @@ class SoundPlayer:
                 alias = f"hca_snd_{self._mci_seq}"
                 vol_1000 = max(0, min(1000, int(self.volume) * 10))
                 winmm.mciSendStringW(f"close {alias}", None, 0, None)
-                winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
-                winmm.mciSendStringW(f"setaudio {alias} volume to {vol_1000}", None, 0, None)
-                winmm.mciSendStringW(f"play {alias}", None, 0, None)
+                rc = winmm.mciSendStringW(f'open "{path}" type mpegvideo alias {alias}', None, 0, None)
+                if rc == 0:
+                    winmm.mciSendStringW(f"setaudio {alias} volume to {vol_1000}", None, 0, None)
+                    winmm.mciSendStringW(f"play {alias}", None, 0, None)
+                    return
+            except Exception:
+                pass
+        if path.lower().endswith(".wav") and winsound is not None:
+            try:
+                winsound.PlaySound(
+                    path,
+                    winsound.SND_FILENAME | winsound.SND_ASYNC | winsound.SND_NODEFAULT,
+                )
             except Exception:
                 pass
 
@@ -2997,6 +2997,26 @@ class SettingsDialog(QDialog):
         self.update_status_lbl.setWordWrap(True)
         self.update_status_lbl.setStyleSheet("font-size:12px;")
         l3.addWidget(self.update_status_lbl)
+
+        self.prerelease_event_box = QGroupBox("Pre-release Limited-Time Event Override")
+        ev_lay = QFormLayout(self.prerelease_event_box)
+        self.prerelease_event_combo = QComboBox()
+        self.prerelease_event_combo.addItem("Auto (System Date)", "")
+        self.prerelease_event_combo.addItem("Halloween", "halloween")
+        self.prerelease_event_combo.addItem("Christmas", "christmas")
+        self.prerelease_event_combo.addItem("New Year's", "new_year")
+        cur_ov = getattr(s, "prerelease_holiday_override", "") or ""
+        idx_ov = self.prerelease_event_combo.findData(cur_ov)
+        self.prerelease_event_combo.setCurrentIndex(idx_ov if idx_ov >= 0 else 0)
+        ev_lay.addRow("Active event:", self.prerelease_event_combo)
+        ev_hint = QLabel(
+            "Pre-release only: activate any limited-time holiday event immediately without changing your clock."
+        )
+        ev_hint.setWordWrap(True)
+        ev_hint.setStyleSheet("font-size:11px;")
+        ev_lay.addRow("", ev_hint)
+        self.prerelease_event_box.setVisible(self._is_prerelease)
+        l3.addWidget(self.prerelease_event_box)
         l3.addStretch(1)
 
         self._restart_requested = False
@@ -3160,6 +3180,9 @@ class SettingsDialog(QDialog):
             pre_event_piece_template=getattr(cur_s, "pre_event_piece_template", "inkwell"),
             pre_event_annotation_template=getattr(cur_s, "pre_event_annotation_template", "inkwell"),
             pre_event_sound_template=getattr(cur_s, "pre_event_sound_template", "original"),
+            prerelease_holiday_override=(
+                self.prerelease_event_combo.currentData() if self._is_prerelease else ""
+            ),
             ui_color=getattr(cur_s, "ui_color", ""),
             accent_color=getattr(cur_s, "accent_color", ""),
         )
@@ -3591,6 +3614,7 @@ class MainWindow(QMainWindow):
             pre_event_piece_template=qs.value("pre_event_piece_template", "inkwell"),
             pre_event_annotation_template=qs.value("pre_event_annotation_template", "inkwell"),
             pre_event_sound_template=qs.value("pre_event_sound_template", "original"),
+            prerelease_holiday_override=qs.value("prerelease_holiday_override", ""),
             ui_color=qs.value("ui_color", ""),
             accent_color=qs.value("accent_color", ""),
         )
@@ -4669,6 +4693,8 @@ class MainWindow(QMainWindow):
 
     def apply_customizations(self):
         """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
+        ov = getattr(self.settings, "prerelease_holiday_override", "") if updater.is_prerelease_version(APP_VERSION) else ""
+        themes.set_prerelease_holiday_override(ov)
         if themes.sync_holiday_event_state(self.settings):
             for k in (
                 "app_icon", "board_template", "background_template",
@@ -5098,6 +5124,7 @@ class MainWindow(QMainWindow):
                          ("annotation_system", s.annotation_system), ("auto_update", s.auto_update),
                          ("auto_install_prereleases", s.auto_install_prereleases),
                          ("disable_holiday_events", s.disable_holiday_events),
+                         ("prerelease_holiday_override", s.prerelease_holiday_override),
                          ("sound_volume", s.sound_volume),
                          ("mute_when_unfocused", s.mute_when_unfocused),
                          ("mute_brilliants_when_unfocused", s.mute_brilliants_when_unfocused)):

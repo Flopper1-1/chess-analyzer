@@ -239,6 +239,7 @@ class Settings:
     pre_event_piece_template: str = "inkwell"
     pre_event_annotation_template: str = "inkwell"
     pre_event_sound_template: str = "original"
+    prerelease_holiday_override: str = ""
     ui_color: str = ""
     accent_color: str = ""
 
