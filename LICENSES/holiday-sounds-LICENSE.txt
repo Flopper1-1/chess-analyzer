@@ -1,9 +1,15 @@
 Holiday Sound Packs (Christmas, Halloween, New Year's)
 Created by mixing Holly's Chess Analyzer base chess sound effects with
-watermark-free open-source / CC0 sound effects from:
-  - rse/soundfx (Freesound & SoundBible CC0 / CC-BY-3.0 curated collection)
+watermark-free open-source / CC0 sound effects and studio recordings from:
+  - sgossner/VCSL (Versilian Community Sample Library, CC0-1.0: sleigh bells, glockenspiel, tubular bells, bell tree)
+    https://github.com/sgossner/VCSL
+  - sgossner/VSCO-2-CE (Versilian Studios Chamber Orchestra 2 CE, CC0-1.0: sleigh bells, glockenspiel glisses, concert harp)
+    https://github.com/sgossner/VSCO-2-CE
+  - wyzowl/sfx-kit (CC0-1.0: celebration fireworks, confetti, party popper)
+    https://github.com/wyzowl/sfx-kit
+  - rse/soundfx (Freesound & SoundBible CC0 / CC-BY-3.0: fanfare, spooky laugh, resonance)
     https://github.com/rse/soundfx
-  - lavenderdotpet/CC0-Public-Domain-Sounds (100 CC0 SFX, Kenney RPG Audio & Music Jingles, CC0-1.0)
+  - lavenderdotpet/CC0-Public-Domain-Sounds (100 CC0 SFX, Kenney RPG Audio & Music Jingles, CC0-1.0: Halloween creaks, gongs, thunder, pizzicato)
     https://github.com/lavenderdotpet/CC0-Public-Domain-Sounds
-  - Reodelbasalan/adbertiser-sfx (CC0-1.0: fireworks, confetti_popper, pop_cork, glass_clink, applause_short)
+  - Reodelbasalan/adbertiser-sfx (CC0-1.0: fireworks, pop_cork, glass_clink, applause_short)
     https://github.com/Reodelbasalan/adbertiser-sfx
