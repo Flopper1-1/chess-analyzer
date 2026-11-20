@@ -7,7 +7,7 @@ if (Test-Path "build") {
 python -m PyInstaller --clean --noconfirm --onefile --windowed --name "Holly's Chess Analyzer" --icon icon.ico --add-data "icon.ico;." `
   --add-binary "assets\stockfish.exe;assets" `
   --add-data "assets\openings;assets\openings" `
-  --add-data "LICENSES;LICENSES" --add-data "assets\icons;assets\icons" `
+  --add-data "LICENSES;LICENSES" --add-data "assets\icons;assets\icons" --add-data "assets\annotations;assets\annotations" `
   --add-data "assets\app_icons;assets\app_icons" --add-data "assets\fluent.png;assets" `
   --add-data "assets\pieces;assets\pieces" `
   --add-data "assets\sounds;assets\sounds" `

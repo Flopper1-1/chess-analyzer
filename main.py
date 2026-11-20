@@ -280,9 +280,9 @@ class SoundPlayer:
         self._mci_seq = 0
         self.set_template("original")
 
-    def set_template(self, template_id: str) -> None:
+    def set_template(self, template_id: str, disable_holidays: bool = False) -> None:
         self.template_id = template_id or "original"
-        tpl = themes.get_sound_template(self.template_id)
+        tpl = themes.get_sound_template(self.template_id, disable_holidays=disable_holidays)
         self._events = dict(tpl.get("events") or {})
         self._annotations = dict(tpl.get("annotations") or {})
 
@@ -1331,11 +1331,20 @@ class TemplateChipBar(QFrame):
         target_btn = None
         for tpl in templates:
             is_locked = bool(tpl.get("locked"))
-            label = tpl["name"] if is_locked else f"{tpl['name']} [Custom]"
+            is_holiday = bool(tpl.get("holiday"))
+            if is_holiday:
+                label = f"{tpl['name']} [Event]"
+                tip = f"{tpl['name']} (Limited-time holiday template)"
+            elif is_locked:
+                label = tpl["name"]
+                tip = f"{tpl['name']} (Built-in template)"
+            else:
+                label = f"{tpl['name']} [Custom]"
+                tip = f"{tpl['name']} (Custom template)"
             btn = QPushButton(label, self)
             btn.setCheckable(True)
             btn.setProperty("templateChip", True)
-            btn.setToolTip(f"{tpl['name']} ({'Built-in template' if is_locked else 'Custom template'})")
+            btn.setToolTip(tip)
             btn.setCursor(Qt.PointingHandCursor)
             self._group.addButton(btn)
             self._flow.addWidget(btn)
@@ -1379,8 +1388,12 @@ class ProfileDialog(QDialog):
         self._ui_color = themes.normalize_hex(getattr(settings, "ui_color", ""))
         self._accent_color = themes.normalize_hex(getattr(settings, "accent_color", ""))
         self._reloading_bg = False
-        self._sel_pieces = getattr(settings, "piece_template", "default")
-        self._sel_annotations = getattr(settings, "annotation_template", "default")
+        self._sel_pieces = getattr(settings, "piece_template", "inkwell")
+        if self._sel_pieces == "default":
+            self._sel_pieces = "inkwell"
+        self._sel_annotations = getattr(settings, "annotation_template", "inkwell")
+        if self._sel_annotations == "default":
+            self._sel_annotations = "inkwell"
         self._disable_holidays = bool(getattr(settings, "disable_holiday_events", False))
 
         lay = QVBoxLayout(self)
@@ -1698,7 +1711,7 @@ class ProfileDialog(QDialog):
         self.sound_slot_widgets.append((category, key, st, btn_play, btn_set, btn_clr))
 
     def _reload_sound_list(self):
-        tpls = themes.list_sound_templates()
+        tpls = themes.list_sound_templates(disable_holidays=self._disable_holidays)
         self.sound_chips.set_templates(tpls, self._sel_sound)
         self._on_sound_tpl_changed()
 
@@ -2258,7 +2271,9 @@ class ProfileDialog(QDialog):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(6)
             pv = QLabel()
-            pv.setFixedSize(32, 32)
+            pv.setFixedSize(36, 36)
+            pv.setAlignment(Qt.AlignCenter)
+            pv.setStyleSheet("border:none; background:transparent; padding:0px;")
             row.addWidget(pv)
 
             info_col = QVBoxLayout()
@@ -2301,7 +2316,7 @@ class ProfileDialog(QDialog):
         self._reload_pieces_list()
 
     def _reload_pieces_list(self):
-        tpls = themes.list_piece_templates()
+        tpls = themes.list_piece_templates(disable_holidays=self._disable_holidays)
         self.pieces_chips.set_templates(tpls, self._sel_pieces)
         self._on_pieces_changed()
 
@@ -2343,7 +2358,7 @@ class ProfileDialog(QDialog):
         if not self._confirm_delete("Piece Template", tpl["name"]):
             return
         if themes.delete_piece_template(self._sel_pieces):
-            self._sel_pieces = "default"
+            self._sel_pieces = "inkwell"
             self._reload_pieces_list()
 
     def _set_piece_slot(self, pkey: str):
@@ -2458,7 +2473,9 @@ class ProfileDialog(QDialog):
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(6)
             pv = QLabel()
-            pv.setFixedSize(28, 28)
+            pv.setFixedSize(38, 38)
+            pv.setAlignment(Qt.AlignCenter)
+            pv.setStyleSheet("border:none; background:transparent; padding:0px;")
             row.addWidget(pv)
 
             right_col = QVBoxLayout()
@@ -2549,7 +2566,7 @@ class ProfileDialog(QDialog):
         self._reload_anno_list()
 
     def _reload_anno_list(self):
-        tpls = themes.list_annotation_templates()
+        tpls = themes.list_annotation_templates(disable_holidays=self._disable_holidays)
         self.anno_chips.set_templates(tpls, self._sel_annotations)
         self._on_anno_changed()
 
@@ -2603,7 +2620,7 @@ class ProfileDialog(QDialog):
         if not self._confirm_delete("Annotation Template", tpl["name"]):
             return
         if themes.delete_annotation_template(self._sel_annotations):
-            self._sel_annotations = "default"
+            self._sel_annotations = "inkwell"
             self._reload_anno_list()
 
     def _import_anno_folder(self):
@@ -2645,19 +2662,20 @@ class ProfileDialog(QDialog):
 
     def refresh_icons(self, tpl=None):
         if tpl is None:
-            tpl = themes.get_annotation_template(self._sel_annotations)
+            tpl = themes.get_annotation_template(self._sel_annotations, disable_holidays=self._disable_holidays)
         locked = bool(tpl.get("locked"))
-        ov_map = (tpl.get("icons") or {}) if not locked else {}
+        ov_map = tpl.get("icons") or {}
         for stem, (pv, tag, eb, rb) in self.icon_rows.items():
             ov = ov_map.get(stem, "")
-            is_cust = bool(ov and os.path.exists(ov))
-            path = ov if is_cust else icons.default_path(stem)
-            pm = icons.pixmap_from_file(path, 32)
+            has_ov = bool(ov and os.path.exists(ov))
+            path = ov if has_ov else icons.default_path(stem)
+            pm = icons.pixmap_from_file(path, 34)
             if pm is not None:
                 pv.setPixmap(pm)
+            is_cust = (not locked) and has_ov
             tag.setText("custom" if is_cust else "")
             eb.setEnabled(not locked)
-            rb.setEnabled((not locked) and is_cust)
+            rb.setEnabled(is_cust)
 
     def changeEvent(self, e):
         if e.type() == QEvent.ActivationChange and self.isActiveWindow() and hasattr(self, "icon_rows"):
@@ -3106,8 +3124,8 @@ class SettingsDialog(QDialog):
             sound_template=getattr(cur_s, "sound_template", "original"),
             board_template=getattr(cur_s, "board_template", "brown_tan"),
             background_template=getattr(cur_s, "background_template", "dark"),
-            piece_template=getattr(cur_s, "piece_template", "default"),
-            annotation_template=getattr(cur_s, "annotation_template", "default"),
+            piece_template=getattr(cur_s, "piece_template", "inkwell"),
+            annotation_template=getattr(cur_s, "annotation_template", "inkwell"),
             sound_volume=self.volume_slider.value(),
             mute_when_unfocused=self.mute_unfocused.isChecked(),
             mute_brilliants_when_unfocused=self.mute_brilliants_unfocused.isChecked(),
@@ -3116,6 +3134,9 @@ class SettingsDialog(QDialog):
             pre_event_app_icon=getattr(cur_s, "pre_event_app_icon", "fluent"),
             pre_event_board_template=getattr(cur_s, "pre_event_board_template", "brown_tan"),
             pre_event_background_template=getattr(cur_s, "pre_event_background_template", "dark"),
+            pre_event_piece_template=getattr(cur_s, "pre_event_piece_template", "inkwell"),
+            pre_event_annotation_template=getattr(cur_s, "pre_event_annotation_template", "inkwell"),
+            pre_event_sound_template=getattr(cur_s, "pre_event_sound_template", "original"),
             ui_color=getattr(cur_s, "ui_color", ""),
             accent_color=getattr(cur_s, "accent_color", ""),
         )
@@ -3534,8 +3555,8 @@ class MainWindow(QMainWindow):
             sound_template=qs.value("sound_template", "original"),
             board_template=qs.value("board_template", "brown_tan"),
             background_template=qs.value("background_template", "dark"),
-            piece_template=qs.value("piece_template", "default"),
-            annotation_template=qs.value("annotation_template", "default"),
+            piece_template=qs.value("piece_template", "inkwell"),
+            annotation_template=qs.value("annotation_template", "inkwell"),
             sound_volume=int(qs.value("sound_volume", 100)),
             mute_when_unfocused=qs.value("mute_when_unfocused", False, type=bool),
             mute_brilliants_when_unfocused=qs.value("mute_brilliants_when_unfocused", False, type=bool),
@@ -3544,6 +3565,9 @@ class MainWindow(QMainWindow):
             pre_event_app_icon=qs.value("pre_event_app_icon", "fluent"),
             pre_event_board_template=qs.value("pre_event_board_template", "brown_tan"),
             pre_event_background_template=qs.value("pre_event_background_template", "dark"),
+            pre_event_piece_template=qs.value("pre_event_piece_template", "inkwell"),
+            pre_event_annotation_template=qs.value("pre_event_annotation_template", "inkwell"),
+            pre_event_sound_template=qs.value("pre_event_sound_template", "original"),
             ui_color=qs.value("ui_color", ""),
             accent_color=qs.value("accent_color", ""),
         )
@@ -4620,8 +4644,10 @@ class MainWindow(QMainWindow):
         """Apply App Icon, Sound Template, Board Template, Background, and Piece Template."""
         if themes.sync_holiday_event_state(self.settings):
             for k in (
-                "app_icon", "board_template", "background_template", "last_holiday_event",
+                "app_icon", "board_template", "background_template",
+                "piece_template", "annotation_template", "sound_template", "last_holiday_event",
                 "pre_event_app_icon", "pre_event_board_template", "pre_event_background_template",
+                "pre_event_piece_template", "pre_event_annotation_template", "pre_event_sound_template",
             ):
                 self.qs.setValue(k, getattr(self.settings, k))
         dis_hol = bool(getattr(self.settings, "disable_holiday_events", False))
@@ -4661,7 +4687,10 @@ class MainWindow(QMainWindow):
                         self.qs.setValue("exe_icon_stamp", f"{icon_id}:{new_sz}:{ico_hash}")
 
         # 2. Sound Template & Audio Settings
-        self.sound.set_template(getattr(self.settings, "sound_template", "original"))
+        self.sound.set_template(
+            getattr(self.settings, "sound_template", "original"),
+            disable_holidays=dis_hol,
+        )
         self.sound.volume = int(getattr(self.settings, "sound_volume", 100))
         self.sound.mute_when_unfocused = bool(getattr(self.settings, "mute_when_unfocused", False))
         self.sound.mute_brilliants_when_unfocused = bool(getattr(self.settings, "mute_brilliants_when_unfocused", False))
@@ -4675,11 +4704,17 @@ class MainWindow(QMainWindow):
         self.board.set_board_theme(board_tpl, ny_colors)
 
         # 4. Piece Template
-        piece_tpl = themes.get_piece_template(getattr(self.settings, "piece_template", "default"))
+        piece_tpl = themes.get_piece_template(
+            getattr(self.settings, "piece_template", "inkwell"),
+            disable_holidays=dis_hol,
+        )
         self.board.set_piece_theme(piece_tpl)
 
         # 5. Annotation Template
-        anno_tpl = themes.get_annotation_template(getattr(self.settings, "annotation_template", "default"))
+        anno_tpl = themes.get_annotation_template(
+            getattr(self.settings, "annotation_template", "inkwell"),
+            disable_holidays=dis_hol,
+        )
         icons.set_template(anno_tpl)
         styles.set_template(anno_tpl)
 
@@ -4733,7 +4768,7 @@ class MainWindow(QMainWindow):
             self.qs.setValue(k, v)
         self.qs.setValue("name", self.settings.player_name)
 
-        anno_id = cust.get("annotation_template", "default")
+        anno_id = cust.get("annotation_template", "inkwell")
         if anno_id.startswith("custom:"):
             themes.update_annotation_template_styles(anno_id, d.mode.currentData(), d.result_styles())
         self.apply_customizations()

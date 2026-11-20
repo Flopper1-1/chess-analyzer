@@ -226,8 +226,8 @@ class Settings:
     sound_template: str = "original"
     board_template: str = "brown_tan"
     background_template: str = "dark"
-    piece_template: str = "default"
-    annotation_template: str = "default"
+    piece_template: str = "inkwell"
+    annotation_template: str = "inkwell"
     sound_volume: int = 100
     mute_when_unfocused: bool = False
     mute_brilliants_when_unfocused: bool = False
@@ -236,6 +236,9 @@ class Settings:
     pre_event_app_icon: str = "fluent"
     pre_event_board_template: str = "brown_tan"
     pre_event_background_template: str = "dark"
+    pre_event_piece_template: str = "inkwell"
+    pre_event_annotation_template: str = "inkwell"
+    pre_event_sound_template: str = "original"
     ui_color: str = ""
     accent_color: str = ""
 

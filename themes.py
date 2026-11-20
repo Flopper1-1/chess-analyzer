@@ -461,7 +461,10 @@ def sound_templates_dir() -> str:
     return d
 
 
-def _builtin_sound_templates() -> List[dict]:
+def _builtin_sound_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
     orig_events = {}
     for key, _lbl in SOUND_EVENT_SLOTS:
         wav = resource_path(os.path.join("assets", "sounds", f"{key}.wav"))
@@ -472,11 +475,12 @@ def _builtin_sound_templates() -> List[dict]:
         mp3 = resource_path(os.path.join("assets", "sounds", "legacy", f"{key}.mp3"))
         if os.path.exists(mp3):
             leg_events[key] = mp3
-    return [
+    out = [
         {
             "id": "original",
             "name": "Original (Default)",
             "locked": True,
+            "holiday": False,
             "events": orig_events,
             "annotations": {},
         },
@@ -484,10 +488,26 @@ def _builtin_sound_templates() -> List[dict]:
             "id": "legacy",
             "name": "Legacy",
             "locked": True,
+            "holiday": False,
             "events": leg_events,
             "annotations": {},
         },
     ]
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    if holiday and holiday in HOLIDAY_IDS:
+        hdir = resource_path(os.path.join("assets", "sounds", holiday))
+        if os.path.isdir(hdir):
+            hev, han = detect_sounds_in_folder(hdir)
+            if hev or han:
+                out.append({
+                    "id": holiday,
+                    "name": capitalize_asset_name(holiday),
+                    "locked": True,
+                    "holiday": True,
+                    "events": hev,
+                    "annotations": han,
+                })
+    return out
 
 
 SOUND_AUDIO_EXTS = (".wav", ".mp3", ".ogg", ".flac", ".m4a")
@@ -619,8 +639,11 @@ def detect_sounds_in_folder(folder_path: str) -> Tuple[Dict[str, str], Dict[str,
     return events, anns
 
 
-def list_sound_templates() -> List[dict]:
-    out = _builtin_sound_templates()
+def list_sound_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    out = _builtin_sound_templates(disable_holidays=disable_holidays, now=now)
     root = sound_templates_dir()
     for folder in sorted(os.listdir(root)):
         fdir = os.path.join(root, folder)
@@ -633,6 +656,7 @@ def list_sound_templates() -> List[dict]:
                     data = json.load(f)
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
+                data["holiday"] = False
                 ev = data.setdefault("events", {})
                 an = data.setdefault("annotations", {})
                 det_ev, det_an = detect_sounds_in_folder(fdir)
@@ -652,17 +676,22 @@ def list_sound_templates() -> List[dict]:
                     "id": f"custom:{folder}",
                     "name": capitalize_asset_name(folder),
                     "locked": False,
+                    "holiday": False,
                     "events": det_ev,
                     "annotations": det_an,
                 })
     return out
 
 
-def get_sound_template(template_id: str) -> dict:
-    for tpl in list_sound_templates():
+def get_sound_template(
+    template_id: str,
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> dict:
+    for tpl in list_sound_templates(disable_holidays=disable_holidays, now=now):
         if tpl["id"] == template_id:
             return tpl
-    return _builtin_sound_templates()[0]
+    return _builtin_sound_templates(disable_holidays=disable_holidays, now=now)[0]
 
 
 def create_sound_template(name: str, copy_from_id: str = "original") -> dict:
@@ -1104,22 +1133,57 @@ def piece_templates_dir() -> str:
     return d
 
 
-def list_piece_templates() -> List[dict]:
-    out = [{"id": "default", "name": "Default", "locked": True, "pieces": {}}]
+def _bundled_piece_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
     bundled_root = resource_path(os.path.join("assets", "pieces"))
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    regular: Dict[str, dict] = {}
+    holiday_item: Optional[dict] = None
     if os.path.isdir(bundled_root):
         for folder in sorted(os.listdir(bundled_root), key=str.lower):
             fdir = os.path.join(bundled_root, folder)
             if not os.path.isdir(fdir):
                 continue
             pieces = detect_pieces_in_folder(fdir)
-            if pieces:
-                out.append({
-                    "id": _slugify(folder, folder.lower()),
-                    "name": capitalize_asset_name(folder),
-                    "locked": True,
-                    "pieces": pieces,
-                })
+            if not pieces:
+                continue
+            tid = _slugify(folder, folder.lower())
+            if tid in HOLIDAY_IDS:
+                if holiday == tid:
+                    holiday_item = {
+                        "id": tid,
+                        "name": capitalize_asset_name(tid),
+                        "locked": True,
+                        "holiday": True,
+                        "pieces": pieces,
+                    }
+                continue
+            regular[tid] = {
+                "id": tid,
+                "name": "Inkwell (Default)" if tid == "inkwell" else capitalize_asset_name(folder),
+                "locked": True,
+                "holiday": False,
+                "pieces": pieces,
+            }
+    out: List[dict] = []
+    if "inkwell" in regular:
+        out.append(regular.pop("inkwell"))
+    for tid in sorted(regular.keys()):
+        out.append(regular[tid])
+    if holiday_item is not None:
+        out.append(holiday_item)
+    if not out:
+        out.append({"id": "inkwell", "name": "Inkwell (Default)", "locked": True, "holiday": False, "pieces": {}})
+    return out
+
+
+def list_piece_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    out = _bundled_piece_templates(disable_holidays=disable_holidays, now=now)
     root = piece_templates_dir()
     for folder in sorted(os.listdir(root)):
         fdir = os.path.join(root, folder)
@@ -1132,6 +1196,7 @@ def list_piece_templates() -> List[dict]:
                     data = json.load(f)
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
+                data["holiday"] = False
                 pieces = data.setdefault("pieces", {})
                 # Fill any unmapped slots automatically from image filenames in the folder
                 for k, p in detect_pieces_in_folder(fdir).items():
@@ -1147,16 +1212,23 @@ def list_piece_templates() -> List[dict]:
                     "id": f"custom:{folder}",
                     "name": capitalize_asset_name(folder),
                     "locked": False,
+                    "holiday": False,
                     "pieces": det,
                 })
     return out
 
 
-def get_piece_template(piece_id: str) -> dict:
-    for tpl in list_piece_templates():
-        if tpl["id"] == piece_id:
+def get_piece_template(
+    piece_id: str,
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> dict:
+    norm_id = "inkwell" if (piece_id or "").strip().lower() in ("", "default") else piece_id
+    tpls = list_piece_templates(disable_holidays=disable_holidays, now=now)
+    for tpl in tpls:
+        if tpl["id"] == norm_id:
             return tpl
-    return {"id": "default", "name": "Default", "locked": True, "pieces": {}}
+    return tpls[0]
 
 
 def create_piece_template(name: str) -> dict:
@@ -1263,12 +1335,15 @@ def annotation_templates_dir() -> str:
 
 
 def _default_annotation_template() -> dict:
+    ink_dir = resource_path(os.path.join("assets", "annotations", "inkwell"))
+    ink_icons = detect_annotations_in_folder(ink_dir) if os.path.isdir(ink_dir) else {}
     return {
-        "id": "default",
-        "name": "Default",
+        "id": "inkwell",
+        "name": "Inkwell (Default)",
         "locked": True,
+        "holiday": False,
         "mode": "icons",
-        "icons": {},
+        "icons": ink_icons,
         "styles": {},
     }
 
@@ -1305,8 +1380,10 @@ _ANNO_STEM_ALIASES = {
     "mistake": "mistake",
     "blunder": "blunder",
     "forced": "forced",
+    "forced_move": "forced",
     "only_move": "forced",
     "alternative": "alternative",
+    "alternative_move": "alternative",
     "alt": "alternative",
     "best_alt": "alternative",
     "checkmate_white": "checkmate_white",
@@ -1325,8 +1402,12 @@ _ANNO_STEM_ALIASES = {
     "black_draw": "draw_black",
     "resign_white": "resign_white",
     "white_resign": "resign_white",
+    "resignation_white": "resign_white",
+    "white_resignation": "resign_white",
     "resign_black": "resign_black",
     "black_resign": "resign_black",
+    "resignation_black": "resign_black",
+    "black_resignation": "resign_black",
 }
 
 _ANNO_SYMBOL_EXACT = {
@@ -1379,8 +1460,61 @@ def detect_annotations_in_folder(folder_path: str) -> Dict[str, str]:
     return detected
 
 
-def list_annotation_templates() -> List[dict]:
-    out = [_default_annotation_template()]
+def _bundled_annotation_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    bundled_root = resource_path(os.path.join("assets", "annotations"))
+    holiday = active_holiday_event(now=now, disabled=disable_holidays)
+    regular: Dict[str, dict] = {}
+    holiday_item: Optional[dict] = None
+    if os.path.isdir(bundled_root):
+        for folder in sorted(os.listdir(bundled_root), key=str.lower):
+            fdir = os.path.join(bundled_root, folder)
+            if not os.path.isdir(fdir):
+                continue
+            det = detect_annotations_in_folder(fdir)
+            if not det:
+                continue
+            tid = _slugify(folder, folder.lower())
+            if tid in HOLIDAY_IDS:
+                if holiday == tid:
+                    holiday_item = {
+                        "id": tid,
+                        "name": capitalize_asset_name(tid),
+                        "locked": True,
+                        "holiday": True,
+                        "mode": "icons",
+                        "icons": det,
+                        "styles": {},
+                    }
+                continue
+            regular[tid] = {
+                "id": tid,
+                "name": "Inkwell (Default)" if tid == "inkwell" else capitalize_asset_name(folder),
+                "locked": True,
+                "holiday": False,
+                "mode": "icons",
+                "icons": det,
+                "styles": {},
+            }
+    out: List[dict] = []
+    if "inkwell" in regular:
+        out.append(regular.pop("inkwell"))
+    else:
+        out.append(_default_annotation_template())
+    for tid in sorted(regular.keys()):
+        out.append(regular[tid])
+    if holiday_item is not None:
+        out.append(holiday_item)
+    return out
+
+
+def list_annotation_templates(
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> List[dict]:
+    out = _bundled_annotation_templates(disable_holidays=disable_holidays, now=now)
     root = annotation_templates_dir()
     for folder in sorted(os.listdir(root)):
         fdir = os.path.join(root, folder)
@@ -1393,6 +1527,7 @@ def list_annotation_templates() -> List[dict]:
                     data = json.load(f)
                 data["id"] = f"custom:{folder}"
                 data["locked"] = False
+                data["holiday"] = False
                 data.setdefault("mode", "icons")
                 ic = data.setdefault("icons", {})
                 for k, p in detect_annotations_in_folder(fdir).items():
@@ -1409,6 +1544,7 @@ def list_annotation_templates() -> List[dict]:
                     "id": f"custom:{folder}",
                     "name": capitalize_asset_name(folder),
                     "locked": False,
+                    "holiday": False,
                     "mode": "icons",
                     "icons": det,
                     "styles": {},
@@ -1416,11 +1552,17 @@ def list_annotation_templates() -> List[dict]:
     return out
 
 
-def get_annotation_template(tpl_id: str) -> dict:
-    for tpl in list_annotation_templates():
-        if tpl["id"] == tpl_id:
+def get_annotation_template(
+    tpl_id: str,
+    disable_holidays: bool = False,
+    now: Optional[datetime] = None,
+) -> dict:
+    norm_id = "inkwell" if (tpl_id or "").strip().lower() in ("", "default") else tpl_id
+    tpls = list_annotation_templates(disable_holidays=disable_holidays, now=now)
+    for tpl in tpls:
+        if tpl["id"] == norm_id:
             return tpl
-    return _default_annotation_template()
+    return tpls[0]
 
 
 def _save_annotation_manifest(template_id: str, tpl: dict) -> None:
@@ -2171,27 +2313,59 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
             cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
             cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
             cur_bg = getattr(settings, "background_template", "dark") or "dark"
+            cur_piece = getattr(settings, "piece_template", "inkwell") or "inkwell"
+            cur_anno = getattr(settings, "annotation_template", "inkwell") or "inkwell"
+            cur_sound = getattr(settings, "sound_template", "original") or "original"
             if cur_icon not in HOLIDAY_IDS:
                 settings.pre_event_app_icon = cur_icon
             if cur_board not in HOLIDAY_IDS:
                 settings.pre_event_board_template = cur_board
             if cur_bg not in HOLIDAY_IDS:
                 settings.pre_event_background_template = cur_bg
+            if cur_piece not in HOLIDAY_IDS:
+                settings.pre_event_piece_template = cur_piece
+            if cur_anno not in HOLIDAY_IDS:
+                settings.pre_event_annotation_template = cur_anno
+            if cur_sound not in HOLIDAY_IDS:
+                settings.pre_event_sound_template = cur_sound
+
             settings.app_icon = cur
             if cur in HOLIDAY_BOARDS:
                 settings.board_template = cur
             if cur in HOLIDAY_BACKGROUNDS:
                 settings.background_template = cur
+            avail_pieces = {t["id"] for t in _bundled_piece_templates(disable_holidays=False, now=now)}
+            if cur in avail_pieces:
+                settings.piece_template = cur
+            elif cur_piece in HOLIDAY_IDS:
+                pre_piece = getattr(settings, "pre_event_piece_template", "inkwell") or "inkwell"
+                settings.piece_template = pre_piece if pre_piece not in HOLIDAY_IDS else "inkwell"
+            avail_annos = {t["id"] for t in _bundled_annotation_templates(disable_holidays=False, now=now)}
+            if cur in avail_annos:
+                settings.annotation_template = cur
+            avail_sounds = {t["id"] for t in _builtin_sound_templates(disable_holidays=False, now=now)}
+            if cur in avail_sounds:
+                settings.sound_template = cur
             settings.last_holiday_event = cur
             changed = True
     else:
         cur_icon = getattr(settings, "app_icon", "fluent") or "fluent"
         cur_board = getattr(settings, "board_template", "brown_tan") or "brown_tan"
         cur_bg = getattr(settings, "background_template", "dark") or "dark"
-        if last or disabled or cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS or cur_bg in HOLIDAY_IDS:
+        cur_piece = getattr(settings, "piece_template", "inkwell") or "inkwell"
+        cur_anno = getattr(settings, "annotation_template", "inkwell") or "inkwell"
+        cur_sound = getattr(settings, "sound_template", "original") or "original"
+        any_holiday = (
+            cur_icon in HOLIDAY_IDS or cur_board in HOLIDAY_IDS or cur_bg in HOLIDAY_IDS
+            or cur_piece in HOLIDAY_IDS or cur_anno in HOLIDAY_IDS or cur_sound in HOLIDAY_IDS
+        )
+        if last or disabled or any_holiday:
             pre_icon = getattr(settings, "pre_event_app_icon", "fluent") or "fluent"
             pre_board = getattr(settings, "pre_event_board_template", "brown_tan") or "brown_tan"
             pre_bg = getattr(settings, "pre_event_background_template", "dark") or "dark"
+            pre_piece = getattr(settings, "pre_event_piece_template", "inkwell") or "inkwell"
+            pre_anno = getattr(settings, "pre_event_annotation_template", "inkwell") or "inkwell"
+            pre_sound = getattr(settings, "pre_event_sound_template", "original") or "original"
             if cur_icon in HOLIDAY_IDS or last:
                 settings.app_icon = pre_icon if pre_icon not in HOLIDAY_IDS else "fluent"
                 changed = True
@@ -2200,6 +2374,15 @@ def sync_holiday_event_state(settings, now: Optional[datetime] = None) -> bool:
                 changed = True
             if cur_bg in HOLIDAY_IDS or last:
                 settings.background_template = pre_bg if pre_bg not in HOLIDAY_IDS else "dark"
+                changed = True
+            if cur_piece in HOLIDAY_IDS or last:
+                settings.piece_template = pre_piece if pre_piece not in HOLIDAY_IDS else "inkwell"
+                changed = True
+            if cur_anno in HOLIDAY_IDS or last:
+                settings.annotation_template = pre_anno if pre_anno not in HOLIDAY_IDS else "inkwell"
+                changed = True
+            if cur_sound in HOLIDAY_IDS or last:
+                settings.sound_template = pre_sound if pre_sound not in HOLIDAY_IDS else "original"
                 changed = True
             if last:
                 settings.last_holiday_event = ""

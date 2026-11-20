@@ -27,17 +27,17 @@ ICON_LIST = [
 ]
 
 _cache = {}
-active_template_id = "default"
+active_template_id = "inkwell"
 active_icon_overrides = {}
 
 
 def set_template(tpl: dict | None):
     global active_template_id, active_icon_overrides
-    if not tpl or tpl.get("locked") or tpl.get("id", "default") == "default":
-        active_template_id = "default"
+    if not tpl:
+        active_template_id = "inkwell"
         active_icon_overrides = {}
     else:
-        active_template_id = tpl.get("id", "default")
+        active_template_id = tpl.get("id", "inkwell")
         active_icon_overrides = dict(tpl.get("icons") or {})
     _cache.clear()
 

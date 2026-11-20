@@ -608,7 +608,7 @@ def test_sound_board_background_and_piece_templates(tmp_path, monkeypatch):
     bg_names = [b["name"] for b in themes.list_background_templates()]
     for expected in ("Dark", "Light", "High Contrast", "Aqua Blue"):
         assert expected in bg_names
-    assert themes.list_piece_templates()[0]["name"] == "Default"
+    assert themes.list_piece_templates()[0]["name"] == "Inkwell (Default)"
     assert themes.list_piece_templates()[0]["locked"]
     pt = themes.create_piece_template("Custom Set")
     png = tmp_path / "wk.png"
