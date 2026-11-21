@@ -1,3 +1,4 @@
+import dataclasses
 import ctypes
 import getpass
 import hashlib
@@ -43,6 +44,7 @@ import accuracy as ACC
 import library as LIB
 import themes
 import updater
+import explanations as EX
 
 APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
@@ -356,6 +358,8 @@ LEGACY_END = {
 
 
 class BoardWidget(QWidget):
+    move_played = Signal(object)
+
     def __init__(self):
         super().__init__()
         self.board = chess.Board()
@@ -364,6 +368,15 @@ class BoardWidget(QWidget):
         self.alt_move = None
         self.end_badges = []
         self.flipped = False
+        self.interactive = True
+        self._selected_sq = None
+        self._legal_targets = {}
+        self._dragging = False
+        self._drag_sq = None
+        self._drag_piece = None
+        self._drag_start_pos = None
+        self._drag_pos = None
+        self._was_selected_same = False
         self.board_template = dict(themes.BUILTIN_BOARDS[0])
         self.new_years_colors = []
         self.piece_template = {"id": "default", "name": "Default", "locked": True, "pieces": {}}
@@ -382,7 +395,184 @@ class BoardWidget(QWidget):
         self.setMinimumSize(380, 380)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
+    def clear_selection(self, redraw: bool = True):
+        self._selected_sq = None
+        self._legal_targets = {}
+        self._dragging = False
+        self._drag_sq = None
+        self._drag_piece = None
+        self._drag_start_pos = None
+        self._drag_pos = None
+        self._was_selected_same = False
+        if redraw:
+            self.update()
+
+    def _board_geom(self):
+        s = min(self.width(), self.height()) // 8
+        ox = (self.width() - 8 * s) / 2.0
+        oy = (self.height() - 8 * s) / 2.0
+        return s, ox, oy
+
+    def _square_rect(self, sq: int, s: int, ox: float, oy: float) -> QRectF:
+        f, r = chess.square_file(sq), chess.square_rank(sq)
+        if self.flipped:
+            f, r = 7 - f, 7 - r
+        return QRectF(ox + f * s, oy + (7 - r) * s, s, s)
+
+    def _square_at(self, pos: QPointF):
+        s, ox, oy = self._board_geom()
+        if s <= 0:
+            return None
+        x = pos.x() - ox
+        y = pos.y() - oy
+        if x < 0 or y < 0 or x >= 8 * s or y >= 8 * s:
+            return None
+        col = int(x // s)
+        row = int(y // s)
+        if not (0 <= col < 8 and 0 <= row < 8):
+            return None
+        f = (7 - col) if self.flipped else col
+        r = row if self.flipped else (7 - row)
+        return chess.square(f, r)
+
+    def _select_square(self, sq):
+        if sq is None or self.board is None or not self.interactive:
+            self._selected_sq = None
+            self._legal_targets = {}
+            return
+        pc = self.board.piece_at(sq)
+        if pc is None or pc.color != self.board.turn:
+            self._selected_sq = None
+            self._legal_targets = {}
+            return
+        targets = {}
+        for mv in self.board.legal_moves:
+            if mv.from_square == sq:
+                targets.setdefault(mv.to_square, []).append(mv)
+        self._selected_sq = sq
+        self._legal_targets = targets
+
+    def _pick_promotion(self, moves, color: bool):
+        if not moves:
+            return None
+        if len(moves) == 1:
+            return moves[0]
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Promote Pawn")
+        dlg.setModal(True)
+        lay = QHBoxLayout(dlg)
+        lay.setContentsMargins(10, 10, 10, 10)
+        lay.setSpacing(8)
+        chosen = {"move": None}
+        by_pt = {m.promotion: m for m in moves if m.promotion}
+        for pt, label in (
+            (chess.QUEEN, "Queen"),
+            (chess.ROOK, "Rook"),
+            (chess.BISHOP, "Bishop"),
+            (chess.KNIGHT, "Knight"),
+        ):
+            mv = by_pt.get(pt)
+            if mv is None:
+                continue
+            btn = QPushButton(dlg)
+            btn.setToolTip(label)
+            btn.setFixedSize(64, 64)
+            pc = chess.Piece(pt, color)
+            pm = self._piece_pixmap(pc, 48)
+            if pm is not None and not pm.isNull():
+                btn.setIcon(QIcon(pm))
+                btn.setIconSize(QSize(44, 44))
+            else:
+                btn.setText(PIECES.get(pc.symbol(), label[0]))
+                f = btn.font()
+                f.setPointSize(24)
+                btn.setFont(f)
+            btn.clicked.connect(lambda _=False, m=mv: (chosen.__setitem__("move", m), dlg.accept()))
+            lay.addWidget(btn)
+        dlg.exec()
+        return chosen["move"]
+
+    def _complete_move(self, target_sq: int) -> bool:
+        candidates = self._legal_targets.get(target_sq) or []
+        if not candidates or self.board is None:
+            return False
+        if len(candidates) == 1:
+            chosen = candidates[0]
+        else:
+            chosen = self._pick_promotion(candidates, self.board.turn)
+        self.clear_selection()
+        if chosen is not None and chosen in self.board.legal_moves:
+            self.move_played.emit(chosen)
+            return True
+        return False
+
+    def mousePressEvent(self, e):
+        if e.button() != Qt.LeftButton or not self.interactive or self.board is None:
+            super().mousePressEvent(e)
+            return
+        pos = e.position()
+        sq = self._square_at(pos)
+        if sq is None:
+            self.clear_selection()
+            return
+        if self._selected_sq is not None and sq in self._legal_targets:
+            self._complete_move(sq)
+            return
+        pc = self.board.piece_at(sq)
+        if pc is not None and pc.color == self.board.turn:
+            was_same = (self._selected_sq == sq)
+            self._select_square(sq)
+            self._was_selected_same = was_same
+            self._drag_sq = sq
+            self._drag_piece = pc
+            self._drag_start_pos = pos
+            self._drag_pos = pos
+            self._dragging = False
+            self.update()
+            return
+        self.clear_selection()
+
+    def mouseMoveEvent(self, e):
+        if self._drag_sq is None or self._drag_start_pos is None:
+            super().mouseMoveEvent(e)
+            return
+        pos = e.position()
+        if not self._dragging and (pos - self._drag_start_pos).manhattanLength() >= 6:
+            self._dragging = True
+        if self._dragging:
+            self._drag_pos = pos
+            self.update()
+
+    def mouseReleaseEvent(self, e):
+        if e.button() != Qt.LeftButton or self._drag_sq is None:
+            super().mouseReleaseEvent(e)
+            return
+        was_dragging = self._dragging
+        drag_sq = self._drag_sq
+        was_same = self._was_selected_same
+        drop_sq = self._square_at(e.position())
+        self._dragging = False
+        self._drag_sq = None
+        self._drag_piece = None
+        self._drag_start_pos = None
+        self._drag_pos = None
+        self._was_selected_same = False
+        if was_dragging:
+            if drop_sq is not None and drop_sq != drag_sq and drop_sq in self._legal_targets:
+                self._complete_move(drop_sq)
+                return
+            if drop_sq != drag_sq:
+                self.clear_selection()
+            else:
+                self.update()
+            return
+        if was_same:
+            self.clear_selection()
+            return
+        self.update()
+
     def set_position(self, board, last_move=None, badge="", alt_move=None, end_badges=None, animate=True):
+        self.clear_selection(redraw=False)
         self.board, self.last_move, self.badge = board, last_move, badge
         self.alt_move, self.end_badges = alt_move, end_badges or []
         if animate and last_move is not None and board is not None:
@@ -554,14 +744,10 @@ class BoardWidget(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        s = min(self.width(), self.height()) // 8
-        ox, oy = (self.width() - 8 * s) / 2, (self.height() - 8 * s) / 2
+        s, ox, oy = self._board_geom()
 
         def rect(sq):
-            f, r = chess.square_file(sq), chess.square_rank(sq)
-            if self.flipped:
-                f, r = 7 - f, 7 - r
-            return QRectF(ox + f * s, oy + (7 - r) * s, s, s)
+            return self._square_rect(sq, s, ox, oy)
 
         animating = self.anim_move is not None and self.anim_progress < 1.0
         if animating and self.anim_is_brilliant:
@@ -637,6 +823,8 @@ class BoardWidget(QWidget):
                 else:
                     hl = QColor(205, 210, 106, 145) if light else QColor(170, 162, 58, 145)
                 p.fillRect(sq_rect, hl)
+            if self._selected_sq == sq:
+                p.fillRect(sq_rect, QColor(38, 198, 218, 118))
 
         if is_aero_board and s > 0:
             # Diagonal Windows 7 Aero glass sheen streaks across the board (behind pieces)
@@ -759,10 +947,23 @@ class BoardWidget(QWidget):
             p.setBrush(Qt.NoBrush)
             p.drawRect(r_to.adjusted(1.5, 1.5, -1.5, -1.5))
 
+        # Legal move dots for quiet targets before drawing pieces
+        if self._legal_targets and self.board is not None:
+            p.save()
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(15, 23, 42, 92))
+            dot_r = max(4.0, s * 0.165)
+            for tsq, mvs in self._legal_targets.items():
+                if not any(self.board.is_capture(m) for m in mvs) and self.board.piece_at(tsq) is None:
+                    p.drawEllipse(rect(tsq).center(), dot_r, dot_r)
+            p.restore()
+
         font = QFont("Segoe UI Symbol", int(s * 0.62))
         p.setFont(font)
         for sq, pc in self.board.piece_map().items():
             if animating and self.anim_move and sq == self.anim_move.to_square:
+                continue
+            if self._dragging and sq == self._drag_sq:
                 continue
             self._draw_piece(p, rect(sq), pc)
 
@@ -792,6 +993,22 @@ class BoardWidget(QWidget):
             self.draw_badge(p, rect(self.last_move.to_square), self.badge, "tr", slide_t=slide_t)
         for sq, key in self.end_badges:
             self.draw_badge(p, rect(sq), key, "tr")
+
+        # Capture rings on legal capture targets
+        if self._legal_targets and self.board is not None:
+            p.save()
+            ring_r = max(8.0, s * 0.43)
+            p.setPen(QPen(QColor(15, 23, 42, 110), max(2.5, s * 0.085)))
+            p.setBrush(Qt.NoBrush)
+            for tsq, mvs in self._legal_targets.items():
+                if any(self.board.is_capture(m) for m in mvs) or self.board.piece_at(tsq) is not None:
+                    p.drawEllipse(rect(tsq).center(), ring_r, ring_r)
+            p.restore()
+
+        # Lifted piece under cursor while dragging
+        if self._dragging and self._drag_piece is not None and self._drag_pos is not None and s > 0:
+            drag_rect = QRectF(self._drag_pos.x() - s * 0.5, self._drag_pos.y() - s * 0.5, s, s)
+            self._draw_piece(p, drag_rect, self._drag_piece, scale=1.10)
 
 
 class EvalBar(QWidget):
@@ -1063,6 +1280,81 @@ class LineWorker(QThread):
             self.done.emit(lines, self.fen)
         except Exception as e:
             self.failed.emit(str(e))
+
+
+class MoveEvalWorker(QThread):
+    done = Signal(int, int, object, list)
+    failed = Signal(int, int, str)
+
+    def __init__(
+        self,
+        holder,
+        settings,
+        book,
+        route_token: int,
+        step_idx: int,
+        fen_before: str,
+        move_uci: str,
+        cached_before_infos=None,
+        prev_move_uci: str = "",
+        prev_was_capture: bool = False,
+        prev_eval_before_white=None,
+        prev_eval_after_white=None,
+        prev_eval_after_text: str = "",
+        prev_symbol: str = "",
+        book_active: bool = True,
+        ply: int = 1,
+    ):
+        super().__init__()
+        self.holder = holder
+        self.settings = settings
+        self.book = book
+        self.route_token = route_token
+        self.step_idx = step_idx
+        self.fen_before = fen_before
+        self.move_uci = move_uci
+        self.cached_before_infos = cached_before_infos
+        self.prev_move_uci = prev_move_uci
+        self.prev_was_capture = prev_was_capture
+        self.prev_eval_before_white = prev_eval_before_white
+        self.prev_eval_after_white = prev_eval_after_white
+        self.prev_eval_after_text = prev_eval_after_text
+        self.prev_symbol = prev_symbol
+        self.book_active = book_active
+        self.ply = ply
+
+    def run(self):
+        decremented = False
+        self.holder.waiting += 1
+        try:
+            with self.holder.lock:
+                self.holder.waiting -= 1
+                decremented = True
+                eng = self.holder.get(self.settings)
+                b_before = chess.Board(self.fen_before)
+                mv = chess.Move.from_uci(self.move_uci)
+                prev_mv = chess.Move.from_uci(self.prev_move_uci) if self.prev_move_uci else None
+                res, after_infos = A.analyse_single_move(
+                    eng,
+                    b_before,
+                    mv,
+                    self.settings,
+                    self.book,
+                    cached_before_infos=self.cached_before_infos,
+                    prev_move=prev_mv,
+                    prev_was_capture=self.prev_was_capture,
+                    prev_eval_before_white=self.prev_eval_before_white,
+                    prev_eval_after_white=self.prev_eval_after_white,
+                    prev_eval_after_text=self.prev_eval_after_text,
+                    prev_symbol=self.prev_symbol,
+                    book_active=self.book_active,
+                    ply=self.ply,
+                )
+            self.done.emit(self.route_token, self.step_idx, res, after_infos)
+        except Exception as e:
+            if not decremented:
+                self.holder.waiting = max(0, self.holder.waiting - 1)
+            self.failed.emit(self.route_token, self.step_idx, str(e))
 
 
 class UpdateCheckWorker(QThread):
@@ -4463,6 +4755,11 @@ class MainWindow(QMainWindow):
         self._best_lines_row = None
         self._best_lines_base_fen = ""
         self._best_lines_store = self._load_best_lines_store()
+        self._alt_route = None
+        self._alt_route_token = 0
+        self._alt_routes_store = self._load_alt_routes_store()
+        self._move_eval_workers = []
+        self._active_move_worker = None
 
         c = QWidget(); self.setCentralWidget(c)
         root = QHBoxLayout(c)
@@ -4480,6 +4777,7 @@ class MainWindow(QMainWindow):
         self.evalbar = EvalBar()
         self.evalbar.formula = self.settings.eval_formula
         self.board = BoardWidget()
+        self.board.move_played.connect(self._on_board_move_played)
         bh.addWidget(self.evalbar); bh.addWidget(self.board, 1)
         left.addLayout(bh, 1)
 
@@ -4526,6 +4824,120 @@ class MainWindow(QMainWindow):
             hh.setSectionResizeMode(i, QHeaderView.Fixed); self.table.setColumnWidth(i, w)
         self.table.cellClicked.connect(lambda r, _c: self.goto(r))
         right.addWidget(self.table, 3)
+
+        # Move explanation card
+        self.explain_card = QFrame()
+        self.explain_card.setObjectName("ExplainCard")
+        ex_lay = QVBoxLayout(self.explain_card)
+        ex_lay.setContentsMargins(10, 7, 10, 8)
+        ex_lay.setSpacing(4)
+        ex_top = QHBoxLayout()
+        ex_top.setContentsMargins(0, 0, 0, 0)
+        ex_top.setSpacing(7)
+        self.explain_icon = QLabel()
+        self.explain_icon.setFixedSize(22, 22)
+        self.explain_icon.setAlignment(Qt.AlignCenter)
+        ex_top.addWidget(self.explain_icon)
+        self.explain_title = QLabel("Move Explanation")
+        self.explain_title.setTextFormat(Qt.RichText)
+        ex_top.addWidget(self.explain_title, 1)
+        self.explain_eval = QLabel("")
+        self.explain_eval.setAlignment(Qt.AlignCenter)
+        self.explain_eval.setMinimumWidth(46)
+        self.explain_eval.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.explain_eval.setVisible(False)
+        ex_top.addWidget(self.explain_eval)
+        ex_lay.addLayout(ex_top)
+        self.explain_body = QLabel(
+            "Open a PGN/FEN or move any piece on the board to see move explanations and live analysis."
+        )
+        self.explain_body.setWordWrap(True)
+        self.explain_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.explain_body.setMinimumHeight(34)
+        ex_lay.addWidget(self.explain_body)
+        right.addWidget(self.explain_card)
+
+        # Manual alternate route bar (active variation + resume prompt)
+        self.alt_route_frame = QFrame()
+        self.alt_route_frame.setObjectName("AltRouteFrame")
+        alt_outer = QVBoxLayout(self.alt_route_frame)
+        alt_outer.setContentsMargins(8, 6, 8, 6)
+        alt_outer.setSpacing(4)
+
+        self.alt_resume_box = QWidget()
+        res_lay = QHBoxLayout(self.alt_resume_box)
+        res_lay.setContentsMargins(0, 0, 0, 0)
+        res_lay.setSpacing(6)
+        self.alt_resume_lbl = QLabel("")
+        self.btn_alt_resume = QPushButton("Open Route")
+        self.btn_alt_delete = QPushButton("Delete")
+        for b in (self.btn_alt_resume, self.btn_alt_delete):
+            b.setProperty("compactBtn", True)
+        self.btn_alt_resume.clicked.connect(self._open_saved_alt_route)
+        self.btn_alt_delete.clicked.connect(self._delete_saved_alt_route_at_cur)
+        res_lay.addWidget(self.alt_resume_lbl, 1)
+        res_lay.addWidget(self.btn_alt_resume)
+        res_lay.addWidget(self.btn_alt_delete)
+        alt_outer.addWidget(self.alt_resume_box)
+
+        self.alt_active_box = QWidget()
+        act_lay = QVBoxLayout(self.alt_active_box)
+        act_lay.setContentsMargins(0, 0, 0, 0)
+        act_lay.setSpacing(4)
+        act_top = QHBoxLayout()
+        act_top.setContentsMargins(0, 0, 0, 0)
+        act_top.setSpacing(4)
+        self.alt_route_title = QLabel("<b>Alternate Route</b>")
+        self.alt_route_title.setTextFormat(Qt.RichText)
+        self.alt_route_status = QLabel("Live")
+        self.btn_alt_prev = QPushButton("◀")
+        self.btn_alt_next = QPushButton("▶")
+        self.btn_alt_undo = QPushButton("Undo")
+        self.btn_alt_clear = QPushButton("Reset")
+        self.btn_alt_exit = QPushButton("Back to Game")
+        for b in (self.btn_alt_prev, self.btn_alt_next, self.btn_alt_undo, self.btn_alt_clear, self.btn_alt_exit):
+            b.setProperty("compactBtn", True)
+        self.btn_alt_prev.setMinimumWidth(28)
+        self.btn_alt_next.setMinimumWidth(28)
+        self.btn_alt_prev.setToolTip("Previous route move (Left)")
+        self.btn_alt_next.setToolTip("Next route move (Right)")
+        self.btn_alt_undo.setToolTip("Undo last move in alternate route")
+        self.btn_alt_clear.setToolTip("Delete alternate route and return")
+        self.btn_alt_exit.setToolTip("Return to main game")
+        self.btn_alt_prev.clicked.connect(lambda: self._step_alt_route(-1))
+        self.btn_alt_next.clicked.connect(lambda: self._step_alt_route(1))
+        self.btn_alt_undo.clicked.connect(self._undo_alt_move)
+        self.btn_alt_clear.clicked.connect(self._clear_alt_route)
+        self.btn_alt_exit.clicked.connect(lambda: self._exit_alt_route(navigate=True))
+        act_top.addWidget(self.alt_route_title)
+        act_top.addWidget(self.alt_route_status)
+        act_top.addStretch(1)
+        act_top.addWidget(self.btn_alt_prev)
+        act_top.addWidget(self.btn_alt_next)
+        act_top.addWidget(self.btn_alt_undo)
+        act_top.addWidget(self.btn_alt_clear)
+        act_top.addWidget(self.btn_alt_exit)
+        act_lay.addLayout(act_top)
+
+        self.alt_chips_scroll = QScrollArea()
+        self.alt_chips_scroll.setWidgetResizable(True)
+        self.alt_chips_scroll.setFrameShape(QFrame.NoFrame)
+        self.alt_chips_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.alt_chips_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.alt_chips_scroll.setFixedHeight(36)
+        self.alt_chips_host = QWidget()
+        self.alt_chips_host.setObjectName("AltChipsHost")
+        self.alt_chips_lay = QHBoxLayout(self.alt_chips_host)
+        self.alt_chips_lay.setContentsMargins(0, 2, 0, 2)
+        self.alt_chips_lay.setSpacing(4)
+        self.alt_chips_lay.addStretch(1)
+        self.alt_chips_scroll.setWidget(self.alt_chips_host)
+        act_lay.addWidget(self.alt_chips_scroll)
+        alt_outer.addWidget(self.alt_active_box)
+
+        self.alt_route_frame.setVisible(False)
+        right.addWidget(self.alt_route_frame)
+
         self.line_title = QLabel("Best line: click “Best” on a move")
         right.addWidget(self.line_title)
         self.line_list = QListWidget()
@@ -4625,12 +5037,12 @@ class MainWindow(QMainWindow):
 
     def _keybind_callbacks(self):
         return {
-            "prev_move": lambda: self.goto(self.cur - 1),
-            "next_move": lambda: self.goto(self.cur + 1),
-            "prev_move_alt": lambda: self.goto(self.cur - 1),
-            "next_move_alt": lambda: self.goto(self.cur + 1),
-            "first_pos": lambda: self.goto(0),
-            "last_pos": lambda: self.goto(len(self.basic)),
+            "prev_move": self._nav_prev,
+            "next_move": self._nav_next,
+            "prev_move_alt": self._nav_prev,
+            "next_move_alt": self._nav_next,
+            "first_pos": self._nav_first,
+            "last_pos": self._nav_last,
             "back_10": lambda: self.goto(self.cur - 10),
             "fwd_10": lambda: self.goto(self.cur + 10),
             "flip_board": self.flip,
@@ -4835,6 +5247,8 @@ class MainWindow(QMainWindow):
     def pick_game(self, i):
         if i < 0 or i >= len(self.games):
             return
+        self._alt_route_token += 1
+        self._alt_route = None
         self.job = self.jobs[i]
         self.game = self.games[i]
         self.results = self.job.results
@@ -4907,6 +5321,8 @@ class MainWindow(QMainWindow):
         if not self.games:
             return
         self.stop()
+        self._alt_route_token += 1
+        self._alt_route = None
         for j in self.jobs:
             j.results, j.done, j.running, j.progress = [], False, False, (0, 1)
         self.results = self.job.results
@@ -4917,11 +5333,26 @@ class MainWindow(QMainWindow):
         self.refresh_combo()
         self.start_queue()
 
+    def _stop_alt_workers(self, wait_ms: int = 1200):
+        self._alt_route_token += 1
+        alive = [w for w in list(getattr(self, "_move_eval_workers", [])) if w is not None and w.isRunning()]
+        for w in alive:
+            try:
+                w.wait(wait_ms)
+            except Exception:
+                pass
+        self._move_eval_workers = [w for w in getattr(self, "_move_eval_workers", []) if w is not None and w.isRunning()]
+        if self._active_move_worker is not None and not self._active_move_worker.isRunning():
+            self._active_move_worker = None
+
     def stop(self):
         if self.worker and self.worker.isRunning():
             self.worker.cancel_flag = True
             self.holder.abort()
             self.worker.wait(2000)
+        elif any(w is not None and w.isRunning() for w in getattr(self, "_move_eval_workers", [])):
+            self.holder.abort()
+        self._stop_alt_workers(wait_ms=1200)
         winutil.keep_awake(False)
         self.setWindowTitle(APP_TITLE)
         for j in self.jobs:
@@ -4966,8 +5397,11 @@ class MainWindow(QMainWindow):
         self.set_row(len(self.results) - 1)
         self.refresh_graph()
         self.update_accuracy(final=False)
-        if frontier:
-            self.goto(len(self.results))
+        if self._alt_route is None and self._pv_state is None:
+            if frontier:
+                self.goto(len(self.results))
+            elif self.cur == r.ply:
+                self.goto(self.cur, animate=False, play_sound=False)
 
     def on_job_done(self, job, ok):
         job.running = False
@@ -4982,7 +5416,8 @@ class MainWindow(QMainWindow):
                     self.set_row(k)
                 self.refresh_graph()
                 self.update_accuracy(final=True)
-                self.goto(self.cur, animate=False, play_sound=False)
+                if self._alt_route is None and self._pv_state is None:
+                    self.goto(self.cur, animate=False, play_sound=False)
             self.update_status()
         if not any(not j.done for j in self.jobs):
             self.progress.setVisible(False)
@@ -5260,7 +5695,98 @@ class MainWindow(QMainWindow):
                 break
         return b
 
+    def _play_move_sound(self, b_before, mv, b_after, sym="", is_draw_end=False):
+        if mv is None or not hasattr(self, "sound"):
+            return
+        if sym == "!!":
+            self.sound.play_for_move("brilliant", sym)
+        elif b_after.is_checkmate():
+            self.sound.play_for_move("Checkmate", sym)
+        elif is_draw_end:
+            self.sound.play_for_move("draw", sym)
+        elif b_after.is_check():
+            self.sound.play_for_move("Check", sym)
+        elif b_before is not None and b_before.is_castling(mv):
+            self.sound.play_for_move("Castle", sym)
+        elif b_before is not None and b_before.is_capture(mv):
+            self.sound.play_for_move("Capture", sym)
+        else:
+            self.sound.play_for_move("Move", sym)
+
+    def _apply_badge_to_label(self, lbl: QLabel, sym: str, size: int = 20):
+        lbl.setPixmap(QPixmap())
+        lbl.setText("")
+        lbl.setStyleSheet("border:none; background:transparent;")
+        if not sym:
+            lbl.setText("♟")
+            lbl.setStyleSheet("border:none; background:transparent; font-size:14px;")
+            return
+        if styles.mode == "icons":
+            pm = icons.pixmap_for_key(sym, size)
+            if pm is not None and not pm.isNull():
+                lbl.setPixmap(pm)
+                return
+        bg = styles.color(sym) or "#555555"
+        txt = styles.symbol(sym) or sym
+        lbl.setText(txt)
+        lbl.setStyleSheet(
+            f"background:{bg}; color:#ffffff; border:none; border-radius:{size // 2}px; "
+            f"font-size:11px; font-weight:bold;"
+        )
+
+    def _update_explanation_card(
+        self,
+        san: str = "",
+        symbol: str = "",
+        eval_text: str = "",
+        explanation: str = "",
+        move_num_label: str = "",
+        brilliant_type: str = "",
+        is_manual: bool = False,
+        pending: bool = False,
+    ):
+        if not hasattr(self, "explain_title"):
+            return
+        self._apply_badge_to_label(self.explain_icon, symbol, 20)
+        if pending:
+            title_core = f"{move_num_label} {san}".strip()
+            self.explain_title.setText(f"<b>{title_core}</b> &nbsp; <span style='opacity:0.75;'>Analyzing…</span>")
+            self.explain_eval.setText("…")
+            self.explain_eval.setVisible(True)
+            self.explain_eval.adjustSize()
+            self.explain_body.setText(explanation or "Analyzing move with Stockfish for live evaluation and explanation…")
+            return
+        if not san:
+            self.explain_title.setText("<b>Start Position</b>")
+            ev = eval_text or "0.0"
+            self.explain_eval.setText(ev)
+            self.explain_eval.setVisible(bool(ev))
+            self.explain_eval.adjustSize()
+            self.explain_body.setText(
+                explanation or "Select a move in the table or play any legal move on the board to inspect an alternate route."
+            )
+            return
+        sym_name = styles.name(symbol) if symbol else "Move"
+        if symbol == "!!" and brilliant_type:
+            bt_label = "Underpromotion" if brilliant_type == "underpromotion" else f"{brilliant_type.title()} Sacrifice"
+            sym_name = f"{sym_name} · {bt_label}"
+        tag_col = styles.color(symbol) if symbol else ""
+        move_hdr = f"{move_num_label} {san}".strip()
+        prefix = "Alternate · " if is_manual else ""
+        if tag_col:
+            self.explain_title.setText(
+                f"<b>{prefix}{move_hdr}</b> — <b style='color:{tag_col};'>{sym_name}</b>"
+            )
+        else:
+            self.explain_title.setText(f"<b>{prefix}{move_hdr}</b> — {sym_name}")
+        self.explain_eval.setText(eval_text or "")
+        self.explain_eval.setVisible(bool(eval_text))
+        self.explain_eval.adjustSize()
+        self.explain_body.setText(explanation or "No explanation available for this move.")
+
     def goto(self, idx, animate=True, play_sound=True, _keep_best_panel=False):
+        if self._alt_route is not None:
+            self._exit_alt_route(navigate=False)
         if not self.game:
             return
         if not _keep_best_panel:
@@ -5274,7 +5800,7 @@ class MainWindow(QMainWindow):
         sym = r.symbol if r else ""
         do_anim = bool(animate and mv is not None and (sym == "!!" or idx != prev_idx))
         self.board.set_position(b, mv, sym, self.alt_for(r), self.end_badges(b, idx), animate=do_anim)
-        if play_sound and idx > 0 and mv is not None and idx != prev_idx and hasattr(self, "sound"):
+        if play_sound and idx > 0 and mv is not None and idx != prev_idx:
             b_before = self.board_at(idx - 1)
             is_draw_end = (
                 b.is_stalemate()
@@ -5283,20 +5809,7 @@ class MainWindow(QMainWindow):
                 or b.is_repetition(3)
                 or (idx == len(self.basic) and self.game and self.game.headers.get("Result") == "1/2-1/2")
             )
-            if sym == "!!":
-                self.sound.play_for_move("brilliant", sym)
-            elif b.is_checkmate():
-                self.sound.play_for_move("Checkmate", sym)
-            elif is_draw_end:
-                self.sound.play_for_move("draw", sym)
-            elif b.is_check():
-                self.sound.play_for_move("Check", sym)
-            elif b_before.is_castling(mv):
-                self.sound.play_for_move("Castle", sym)
-            elif b_before.is_capture(mv):
-                self.sound.play_for_move("Capture", sym)
-            else:
-                self.sound.play_for_move("Move", sym)
+            self._play_move_sound(b_before, mv, b, sym, is_draw_end=is_draw_end)
         self.table.blockSignals(True)
         self.table.selectRow(idx)
         self.table.blockSignals(False)
@@ -5318,6 +5831,51 @@ class MainWindow(QMainWindow):
             if k - 1 < len(self.results) and self.results[k - 1].opening:
                 name = "%s  %s" % (self.results[k - 1].eco, self.results[k - 1].opening); break
         self.opening_label.setText("Opening: " + name)
+
+        if idx == 0:
+            self._update_explanation_card(
+                eval_text=self.evalbar.text,
+                explanation="Starting position. Step through moves in the table or play any legal move directly on the board to try an alternate route.",
+            )
+        else:
+            ply, color, san_txt, _mv, _fen = self.basic[idx - 1]
+            num_lbl = "%d%s" % ((ply + 1) // 2, "." if color else "…")
+            if r is not None and (r.analysed or r.book or r.symbol):
+                ex_txt = EX.explain_result(r)
+                self._update_explanation_card(
+                    san=san_txt,
+                    symbol=r.symbol,
+                    eval_text=self.evalbar.text,
+                    explanation=ex_txt,
+                    move_num_label=num_lbl,
+                    brilliant_type=getattr(r, "brilliant_type", ""),
+                    is_manual=False,
+                    pending=False,
+                )
+            elif r is not None and not r.analysed and not r.book:
+                self._update_explanation_card(
+                    san=san_txt,
+                    symbol="",
+                    eval_text="",
+                    explanation=f"{san_txt} was skipped by the current analysis scope setting (or you can play a move on the board to analyze it live).",
+                    move_num_label=num_lbl,
+                )
+            elif self.job and self.job.running:
+                self._update_explanation_card(
+                    san=san_txt,
+                    move_num_label=num_lbl,
+                    pending=True,
+                )
+            else:
+                self._update_explanation_card(
+                    san=san_txt,
+                    symbol="",
+                    eval_text="",
+                    explanation="Not yet analysed. Press Re-analyze or play an alternate move directly on the board.",
+                    move_num_label=num_lbl,
+                )
+
+        self._sync_alt_route_ui()
         self.update_player_bars()
 
     def end_badges(self, b, idx):
@@ -5943,6 +6501,9 @@ class MainWindow(QMainWindow):
         self.profile_btn.set_theme(
             bar_bg, pal["bar_fg"], bar_border, pal["muted"], hover_bg, accent_use, border_w=border_w
         )
+        self._apply_explain_alt_theme(
+            bar_bg, pal["bar_fg"], bar_border, pal["muted"], hover_bg, accent_use, pal["accent_fg"], border_w=border_w
+        )
         self.graph.set_theme(graph_bg, pal["graph_fill"], pal["graph_mid"], pal["border"])
         for kind, btn in getattr(self, "_nav_buttons", []):
             btn.setIcon(_make_nav_icon(kind, pal["fg"], 18))
@@ -6227,7 +6788,9 @@ class MainWindow(QMainWindow):
             for j in self.jobs:
                 if j.results:
                     A.reclassify_results(j.game, j.results, self.settings)
-        if self.game:
+        if self._alt_route is not None:
+            self._render_alt_route(animate=False, play_sound=False)
+        elif self.game:
             if name_changed:
                 self.orient()
             for k in range(len(self.basic)):
@@ -6512,6 +7075,650 @@ class MainWindow(QMainWindow):
             self.qs.setValue("survey_status", "ask_later")
             self.qs.sync()
 
+    # ------------------------------------------------------------ move explanations & manual alternate routes
+    def _apply_explain_alt_theme(self, bar_bg: str, fg: str, border: str, muted: str,
+                                 hover_bg: str, accent: str, accent_fg: str, border_w: str = "1px"):
+        self._cached_card_theme = (bar_bg, fg, border, muted, hover_bg, accent, accent_fg, border_w)
+        if hasattr(self, "explain_card"):
+            self.explain_card.setStyleSheet(
+                f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
+                f"QFrame#ExplainCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:12px; }}"
+            )
+        if hasattr(self, "explain_eval"):
+            self.explain_eval.setStyleSheet(
+                f"background:{hover_bg}; color:{fg}; border:1px solid {border}; border-radius:4px; "
+                f"padding:1px 6px; font-family:'Consolas','Segoe UI',monospace; font-size:12px; font-weight:bold;"
+            )
+        if hasattr(self, "alt_route_frame"):
+            self.alt_route_frame.setStyleSheet(
+                f"QFrame#AltRouteFrame {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
+                f"QFrame#AltRouteFrame QLabel {{ background:transparent; border:none; color:{fg}; font-size:12px; }}"
+                f"QFrame#AltRouteFrame QWidget#AltChipsHost, "
+                f"QFrame#AltRouteFrame QScrollArea, "
+                f"QFrame#AltRouteFrame QScrollArea QWidget#qt_scrollarea_viewport "
+                f"{{ background:transparent; border:none; }}"
+                f"QPushButton[altChip='true'] {{ background:{bar_bg}; color:{fg}; border:{border_w} solid {border}; "
+                f"border-radius:11px; padding:2px 9px; font-size:12px; font-weight:600; }}"
+                f"QPushButton[altChip='true']:hover {{ background:{hover_bg}; border-color:{accent}; }}"
+                f"QPushButton[altChip='true']:checked {{ background:{accent}; color:{accent_fg}; "
+                f"border-color:{accent}; font-weight:bold; }}"
+            )
+        if hasattr(self, "alt_route_status"):
+            self.alt_route_status.setStyleSheet(f"color:{muted}; background:transparent; border:none; font-size:11px;")
+
+    def _alt_routes_cache_path(self) -> str:
+        return os.path.join(themes.data_root(), "alt_routes_cache.json")
+
+    def _load_alt_routes_store(self) -> dict:
+        p = self._alt_routes_cache_path()
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return {}
+
+    def _save_alt_routes_store(self) -> None:
+        try:
+            if len(self._alt_routes_store) > 120:
+                keys = list(self._alt_routes_store.keys())[-120:]
+                self._alt_routes_store = {k: self._alt_routes_store[k] for k in keys}
+            with open(self._alt_routes_cache_path(), "w", encoding="utf-8") as f:
+                json.dump(self._alt_routes_store, f)
+        except Exception:
+            pass
+
+    def _persist_current_alt_route(self) -> None:
+        route = self._alt_route
+        if not route or self.game is None:
+            return
+        gkey = self._current_game_cache_key()
+        if not gkey:
+            return
+        steps = route.get("steps") or []
+        key_ply = str(route["anchor_ply"])
+        game_map = self._alt_routes_store.setdefault(gkey, {})
+        if not steps:
+            if key_ply in game_map:
+                del game_map[key_ply]
+                self._save_alt_routes_store()
+            return
+        serialized_steps = []
+        for st in steps:
+            res = st.get("result")
+            serialized_steps.append({
+                "uci": st["uci"],
+                "san": st["san"],
+                "fen_before": st["fen_before"],
+                "fen_after": st["fen_after"],
+                "result": dataclasses.asdict(res) if res is not None else None,
+            })
+        game_map[key_ply] = {
+            "anchor_ply": route["anchor_ply"],
+            "anchor_fen": route["anchor_fen"],
+            "anchor_book_active": bool(route.get("anchor_book_active", False)),
+            "anchor_eval_cp": route.get("anchor_eval_cp"),
+            "anchor_eval_text": route.get("anchor_eval_text", ""),
+            "steps": serialized_steps,
+        }
+        self._save_alt_routes_store()
+
+    def _saved_alt_entry_for_ply(self, ply: int):
+        if self.game is None:
+            return None
+        gkey = self._current_game_cache_key()
+        if not gkey:
+            return None
+        entry = (self._alt_routes_store.get(gkey) or {}).get(str(ply))
+        if isinstance(entry, dict) and entry.get("steps"):
+            return entry
+        return None
+
+    def _delete_saved_alt_route_at_cur(self):
+        if self.game is None:
+            return
+        gkey = self._current_game_cache_key()
+        if not gkey:
+            return
+        game_map = self._alt_routes_store.get(gkey)
+        if isinstance(game_map, dict) and str(self.cur) in game_map:
+            del game_map[str(self.cur)]
+            self._save_alt_routes_store()
+        self._sync_alt_route_ui()
+
+    def _open_saved_alt_route(self):
+        entry = self._saved_alt_entry_for_ply(self.cur)
+        if not entry:
+            return
+        if self._pv_state is not None:
+            self._hide_best_lines_panel()
+        anchor_ply = int(entry.get("anchor_ply", self.cur))
+        anchor_r = self.results[anchor_ply - 1] if (anchor_ply > 0 and anchor_ply - 1 < len(self.results)) else None
+        anchor_mv = self.basic[anchor_ply - 1][3] if (anchor_ply > 0 and anchor_ply - 1 < len(self.basic)) else None
+        anchor_open = ""
+        for k in range(anchor_ply, 0, -1):
+            if k - 1 < len(self.results) and self.results[k - 1].opening:
+                anchor_open = f"{self.results[k - 1].eco}  {self.results[k - 1].opening}"
+                break
+        fields = set(A.MoveResult.__dataclass_fields__.keys())
+        steps = []
+        for sd in entry.get("steps", []):
+            res_obj = None
+            raw_r = sd.get("result")
+            if isinstance(raw_r, dict):
+                try:
+                    res_obj = A.MoveResult(**{k: v for k, v in raw_r.items() if k in fields})
+                except Exception:
+                    res_obj = None
+            steps.append({
+                "uci": sd["uci"],
+                "san": sd["san"],
+                "fen_before": sd["fen_before"],
+                "fen_after": sd["fen_after"],
+                "result": res_obj,
+                "after_infos": None,
+                "pending": res_obj is None,
+                "error": "",
+            })
+        self._alt_route_token += 1
+        self._alt_route = {
+            "token": self._alt_route_token,
+            "anchor_ply": anchor_ply,
+            "anchor_fen": entry["anchor_fen"],
+            "anchor_book_active": bool(entry.get("anchor_book_active", False)),
+            "anchor_eval_cp": entry.get("anchor_eval_cp", self.evalbar.cp),
+            "anchor_eval_text": entry.get("anchor_eval_text", self.evalbar.text),
+            "anchor_infos": None,
+            "anchor_last_move": anchor_mv,
+            "anchor_symbol": anchor_r.symbol if anchor_r else "",
+            "anchor_opening": anchor_open,
+            "steps": steps,
+            "index": len(steps),
+        }
+        self.ensure_book()
+        self._render_alt_route(animate=False, play_sound=False)
+        self._pump_alt_eval()
+
+    def _create_alt_route_from_current_view(self, anchor_board: chess.Board):
+        self._alt_route_token += 1
+        anchor_ply = self.cur if self.game is not None else 0
+        in_pv = self._pv_state is not None
+        if in_pv:
+            anchor_mv = self.board.last_move
+            anchor_sym = ""
+            anchor_book_active = False
+            anchor_eval_cp = self.evalbar.cp
+            anchor_eval_text = self.evalbar.text
+            anchor_open = self.opening_label.text.replace("Opening: ", "", 1)
+            if anchor_open == "–":
+                anchor_open = ""
+            self._hide_best_lines_panel()
+        elif self.game is not None:
+            anchor_r = self.results[anchor_ply - 1] if (anchor_ply > 0 and anchor_ply - 1 < len(self.results)) else None
+            anchor_mv = self.basic[anchor_ply - 1][3] if (anchor_ply > 0 and anchor_ply - 1 < len(self.basic)) else None
+            anchor_sym = anchor_r.symbol if anchor_r else ""
+            anchor_book_active = (anchor_ply == 0) or bool(anchor_r and anchor_r.book)
+            anchor_eval_cp = self.evalbar.cp
+            anchor_eval_text = self.evalbar.text
+            anchor_open = ""
+            for k in range(anchor_ply, 0, -1):
+                if k - 1 < len(self.results) and self.results[k - 1].opening:
+                    anchor_open = f"{self.results[k - 1].eco}  {self.results[k - 1].opening}"
+                    break
+        else:
+            anchor_mv = None
+            anchor_sym = ""
+            anchor_book_active = True
+            anchor_eval_cp = 0
+            anchor_eval_text = "0.0"
+            anchor_open = ""
+        return {
+            "token": self._alt_route_token,
+            "anchor_ply": anchor_ply,
+            "anchor_fen": anchor_board.fen(),
+            "anchor_book_active": anchor_book_active,
+            "anchor_eval_cp": anchor_eval_cp,
+            "anchor_eval_text": anchor_eval_text,
+            "anchor_infos": None,
+            "anchor_last_move": anchor_mv,
+            "anchor_symbol": anchor_sym,
+            "anchor_opening": anchor_open,
+            "steps": [],
+            "index": 0,
+        }
+
+    def _on_board_move_played(self, move: chess.Move):
+        cur_board = self.board.board.copy() if (self.board and self.board.board is not None) else chess.Board()
+        if move not in cur_board.legal_moves:
+            return
+        self.ensure_book()
+        if self._alt_route is None:
+            self._alt_route = self._create_alt_route_from_current_view(cur_board)
+        route = self._alt_route
+        idx = route["index"]
+        steps = route["steps"]
+
+        # If stepping forward onto the exact next existing move in the branch, advance without discarding!
+        if idx < len(steps) and steps[idx]["uci"] == move.uci():
+            self._set_alt_step(idx + 1, animate=True, play_sound=True)
+            return
+
+        # Otherwise branch from `idx`: drop any stale tail moves forward of `idx`
+        if idx < len(steps):
+            route["steps"] = steps[:idx]
+            steps = route["steps"]
+            self._alt_route_token += 1
+            route["token"] = self._alt_route_token
+
+        san = cur_board.san(move)
+        b_after = cur_board.copy()
+        b_after.push(move)
+        ply_num = (route["anchor_ply"] if self.game is not None else 0) + len(steps) + 1
+        step_entry = {
+            "uci": move.uci(),
+            "san": san,
+            "fen_before": cur_board.fen(),
+            "fen_after": b_after.fen(),
+            "result": None,
+            "after_infos": None,
+            "pending": True,
+            "error": "",
+            "ply": ply_num,
+        }
+        prev_idx = route["index"]
+        steps.append(step_entry)
+        route["index"] = len(steps)
+        self._render_alt_route(animate=True, play_sound=True, prev_step_index=prev_idx)
+        self._persist_current_alt_route()
+        self._pump_alt_eval()
+
+    def _pump_alt_eval(self):
+        route = self._alt_route
+        if not route:
+            return
+        # Clean up finished workers
+        self._move_eval_workers = [w for w in self._move_eval_workers if w is not None and w.isRunning()]
+        if self._active_move_worker is not None:
+            if self._active_move_worker.isRunning() and getattr(self._active_move_worker, "route_token", None) == route["token"]:
+                return
+            if not self._active_move_worker.isRunning():
+                self._active_move_worker = None
+
+        steps = route["steps"]
+        target_idx = None
+        for i, st in enumerate(steps):
+            if st.get("result") is None and not st.get("error"):
+                target_idx = i
+                break
+        if target_idx is None:
+            if hasattr(self, "alt_route_status"):
+                self.alt_route_status.setText("Live")
+            return
+
+        st = steps[target_idx]
+        cached_infos = None
+        prev_uci = ""
+        prev_cap = False
+        prev_eb_w = None
+        prev_ea_w = None
+        prev_ea_txt = ""
+        prev_sym = ""
+        book_active = bool(route.get("anchor_book_active", False))
+
+        if target_idx > 0:
+            pst = steps[target_idx - 1]
+            cached_infos = pst.get("after_infos")
+            prev_uci = pst["uci"]
+            try:
+                pb = chess.Board(pst["fen_before"])
+                prev_cap = pb.is_capture(chess.Move.from_uci(prev_uci))
+            except Exception:
+                prev_cap = False
+            pr = pst.get("result")
+            if pr is not None:
+                prev_eb_w = pr.eval_before
+                prev_ea_w = pr.eval_after
+                prev_ea_txt = pr.eval_after_text
+                prev_sym = pr.symbol
+                book_active = all(bool(steps[k].get("result") and steps[k]["result"].book) for k in range(target_idx))
+        elif route["anchor_ply"] > 0 and route["anchor_ply"] - 1 < len(self.results):
+            ar = self.results[route["anchor_ply"] - 1]
+            prev_uci = ar.uci
+            try:
+                if ar.fen_before and ar.uci:
+                    prev_cap = chess.Board(ar.fen_before).is_capture(chess.Move.from_uci(ar.uci))
+            except Exception:
+                prev_cap = False
+            prev_eb_w = ar.eval_before
+            prev_ea_w = ar.eval_after
+            prev_ea_txt = ar.eval_after_text
+            prev_sym = ar.symbol
+            book_active = bool(ar.book)
+
+        ply_num = st.get("ply") or ((route["anchor_ply"] if self.game is not None else 0) + target_idx + 1)
+        w = MoveEvalWorker(
+            self.holder,
+            self.settings,
+            self.book,
+            route["token"],
+            target_idx,
+            st["fen_before"],
+            st["uci"],
+            cached_before_infos=cached_infos,
+            prev_move_uci=prev_uci,
+            prev_was_capture=prev_cap,
+            prev_eval_before_white=prev_eb_w,
+            prev_eval_after_white=prev_ea_w,
+            prev_eval_after_text=prev_ea_txt,
+            prev_symbol=prev_sym,
+            book_active=book_active,
+            ply=ply_num,
+        )
+        w.done.connect(self._on_alt_move_analysed)
+        w.failed.connect(self._on_alt_move_failed)
+        self._active_move_worker = w
+        self._move_eval_workers.append(w)
+        if hasattr(self, "alt_route_status"):
+            self.alt_route_status.setText("Analyzing…")
+        w.start()
+
+    def _on_alt_move_analysed(self, token: int, step_idx: int, res, after_infos: list):
+        self._move_eval_workers = [w for w in self._move_eval_workers if w is not None and w.isRunning()]
+        if self._active_move_worker is not None and not self._active_move_worker.isRunning():
+            self._active_move_worker = None
+        route = self._alt_route
+        if not route or route["token"] != token or step_idx >= len(route["steps"]):
+            self._pump_alt_eval()
+            return
+        st = route["steps"][step_idx]
+        st["result"] = res
+        st["after_infos"] = after_infos
+        st["pending"] = False
+        st["error"] = ""
+        self._persist_current_alt_route()
+        if route["index"] == step_idx + 1:
+            self._render_alt_route(animate=(res.symbol == "!!"), play_sound=False, prev_step_index=route["index"])
+            if res.symbol == "!!" and hasattr(self, "sound"):
+                self.sound.play_for_move("brilliant", "!!")
+        else:
+            self._sync_alt_route_ui()
+        self._pump_alt_eval()
+
+    def _on_alt_move_failed(self, token: int, step_idx: int, err: str):
+        self._move_eval_workers = [w for w in self._move_eval_workers if w is not None and w.isRunning()]
+        if self._active_move_worker is not None and not self._active_move_worker.isRunning():
+            self._active_move_worker = None
+        route = self._alt_route
+        if not route or route["token"] != token or step_idx >= len(route["steps"]):
+            self._pump_alt_eval()
+            return
+        st = route["steps"][step_idx]
+        st["pending"] = False
+        st["error"] = err or "Analysis failed"
+        if route["index"] == step_idx + 1:
+            self._render_alt_route(animate=False, play_sound=False, prev_step_index=route["index"])
+        else:
+            self._sync_alt_route_ui()
+        if hasattr(self, "alt_route_status"):
+            self.alt_route_status.setText("Live")
+        self._pump_alt_eval()
+
+    def _render_alt_route(self, animate: bool = True, play_sound: bool = True, prev_step_index=None):
+        route = self._alt_route
+        if not route:
+            self._sync_alt_route_ui()
+            return
+        idx = max(0, min(route["index"], len(route["steps"])))
+        route["index"] = idx
+        steps = route["steps"]
+
+        if idx == 0:
+            try:
+                b = chess.Board(route["anchor_fen"])
+            except Exception:
+                b = chess.Board()
+            ap = route["anchor_ply"]
+            ar = self.results[ap - 1] if (self.game is not None and ap > 0 and ap - 1 < len(self.results)) else None
+            mv = route.get("anchor_last_move")
+            sym = route.get("anchor_symbol", "")
+            alt_mv = self.alt_for(ar) if ar else None
+            self.board.set_position(b, mv, sym, alt_mv, [], animate=False)
+            cp = route.get("anchor_eval_cp")
+            txt = route.get("anchor_eval_text", "")
+            self.evalbar.set_eval(cp, txt, is_start=(ap == 0 and C.is_standard_start(b)))
+            if route.get("anchor_opening"):
+                self.opening_label.setText("Opening: " + route["anchor_opening"])
+            if ar is not None and (ar.analysed or ar.book or ar.symbol):
+                num_lbl = "%d%s" % ((ar.ply + 1) // 2, "." if ar.color else "…")
+                self._update_explanation_card(
+                    san=ar.san,
+                    symbol=ar.symbol,
+                    eval_text=self.evalbar.text,
+                    explanation=EX.explain_result(ar),
+                    move_num_label=num_lbl,
+                    brilliant_type=getattr(ar, "brilliant_type", ""),
+                    is_manual=False,
+                    pending=False,
+                )
+            else:
+                self._update_explanation_card(
+                    eval_text=self.evalbar.text,
+                    explanation="Anchor position for this alternate route. Play any legal move on the board or step forward.",
+                )
+        else:
+            st = steps[idx - 1]
+            b_before = chess.Board(st["fen_before"])
+            b_after = chess.Board(st["fen_after"])
+            mv = chess.Move.from_uci(st["uci"])
+            r = st.get("result")
+            sym = r.symbol if r else ""
+            alt_mv = self.alt_for(r) if r else None
+            do_anim = bool(animate and (prev_step_index != idx or sym == "!!"))
+            self.board.set_position(b_after, mv, sym, alt_mv, [], animate=do_anim)
+            if play_sound and prev_step_index != idx:
+                is_draw_end = (
+                    b_after.is_stalemate()
+                    or b_after.is_insufficient_material()
+                    or b_after.is_fifty_moves()
+                    or b_after.is_repetition(3)
+                )
+                self._play_move_sound(b_before, mv, b_after, sym, is_draw_end=is_draw_end)
+
+            num_lbl = "%d%s" % (b_before.fullmove_number, "." if b_before.turn == chess.WHITE else "…")
+            if r is not None:
+                cp = r.eval_after
+                txt = r.eval_after_text
+                if C.is_deadlocked_position(b_after, r.pv_uci if r.pv_uci else None):
+                    cp, txt = 0, "0.0"
+                self.evalbar.set_eval(cp, txt, is_start=False)
+                if r.opening:
+                    self.opening_label.setText(f"Opening: {r.eco}  {r.opening}")
+                elif route.get("anchor_opening"):
+                    self.opening_label.setText("Opening: " + route["anchor_opening"])
+                self._update_explanation_card(
+                    san=st["san"],
+                    symbol=r.symbol,
+                    eval_text=self.evalbar.text,
+                    explanation=EX.explain_result(r),
+                    move_num_label=num_lbl,
+                    brilliant_type=getattr(r, "brilliant_type", ""),
+                    is_manual=True,
+                    pending=False,
+                )
+            elif st.get("error"):
+                self._update_explanation_card(
+                    san=st["san"],
+                    symbol="",
+                    eval_text="",
+                    explanation=f"Could not analyze {st['san']}: {st['error']}",
+                    move_num_label=num_lbl,
+                    is_manual=True,
+                    pending=False,
+                )
+            else:
+                self._update_explanation_card(
+                    san=st["san"],
+                    move_num_label=num_lbl,
+                    explanation="Analyzing move with Stockfish for live annotation & explanation…",
+                    is_manual=True,
+                    pending=True,
+                )
+
+        self._sync_alt_route_ui()
+        self.update_player_bars()
+
+    def _sync_alt_route_ui(self):
+        if not hasattr(self, "alt_route_frame"):
+            return
+        route = self._alt_route
+        if route is not None:
+            self.alt_route_frame.setVisible(True)
+            self.alt_resume_box.setVisible(False)
+            self.alt_active_box.setVisible(True)
+            ap = route["anchor_ply"]
+            if self.game is None and ap == 0:
+                self.alt_route_title.setText("<b>Analysis Board</b>")
+            elif ap == 0:
+                self.alt_route_title.setText("<b>Alternate Route</b> · Start")
+            else:
+                move_n = (ap + 1) // 2
+                self.alt_route_title.setText(f"<b>Alternate Route</b> · Move {move_n}")
+            steps = route["steps"]
+            idx = route["index"]
+            any_pending = any(st.get("result") is None and not st.get("error") for st in steps)
+            self.alt_route_status.setText("Analyzing…" if any_pending else "Live")
+            self.btn_alt_prev.setEnabled(idx > 0)
+            self.btn_alt_next.setEnabled(idx < len(steps))
+            self.btn_alt_undo.setEnabled(len(steps) > 0)
+            self._rebuild_alt_chips()
+            return
+
+        saved = self._saved_alt_entry_for_ply(self.cur)
+        if saved:
+            n_mv = len(saved.get("steps") or [])
+            self.alt_resume_lbl.setText(f"Saved alternate route from this position ({n_mv} move{'s' if n_mv != 1 else ''})")
+            self.alt_route_frame.setVisible(True)
+            self.alt_active_box.setVisible(False)
+            self.alt_resume_box.setVisible(True)
+        else:
+            self.alt_route_frame.setVisible(False)
+
+    def _rebuild_alt_chips(self):
+        if not hasattr(self, "alt_chips_lay"):
+            return
+        while self.alt_chips_lay.count() > 0:
+            item = self.alt_chips_lay.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        route = self._alt_route
+        if not route:
+            self.alt_chips_lay.addStretch(1)
+            return
+        cur_idx = route["index"]
+        active_btn = None
+        for i, st in enumerate(route["steps"]):
+            try:
+                bb = chess.Board(st["fen_before"])
+                num = f"{bb.fullmove_number}{'.' if bb.turn == chess.WHITE else '…'}"
+            except Exception:
+                num = ""
+            res = st.get("result")
+            sym = res.symbol if res else ""
+            label = f"{num} {st['san']}".strip()
+            if sym == "" and res is None and not st.get("error"):
+                label += " …"
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(cur_idx == i + 1)
+            btn.setProperty("altChip", True)
+            if sym:
+                if styles.mode == "icons":
+                    pm = icons.pixmap_for_key(sym, 16)
+                    if pm is not None and not pm.isNull():
+                        btn.setIcon(QIcon(pm))
+                        btn.setIconSize(QSize(15, 15))
+                    else:
+                        btn.setText(f"{label} {styles.symbol(sym)}")
+                else:
+                    btn.setText(f"{label} [{styles.symbol(sym)}]")
+            btn.clicked.connect(lambda _=False, target=i + 1: self._set_alt_step(target))
+            self.alt_chips_lay.addWidget(btn)
+            if cur_idx == i + 1:
+                active_btn = btn
+        self.alt_chips_lay.addStretch(1)
+        if active_btn is not None:
+            QTimer.singleShot(0, lambda b=active_btn: self.alt_chips_scroll.ensureWidgetVisible(b, 20, 4))
+
+    def _set_alt_step(self, step_idx: int, animate: bool = True, play_sound: bool = True):
+        route = self._alt_route
+        if not route:
+            return
+        prev_idx = route["index"]
+        route["index"] = max(0, min(int(step_idx), len(route["steps"])))
+        self._render_alt_route(animate=animate, play_sound=play_sound, prev_step_index=prev_idx)
+
+    def _step_alt_route(self, delta: int):
+        route = self._alt_route
+        if not route:
+            return
+        self._set_alt_step(route["index"] + delta, animate=True, play_sound=True)
+
+    def _undo_alt_move(self):
+        route = self._alt_route
+        if not route or not route["steps"]:
+            return
+        idx = route["index"]
+        steps = route["steps"]
+        trim_to = (idx - 1) if idx > 0 else (len(steps) - 1)
+        route["steps"] = steps[:max(0, trim_to)]
+        self._alt_route_token += 1
+        route["token"] = self._alt_route_token
+        if not route["steps"]:
+            self._clear_alt_route()
+            return
+        route["index"] = min(trim_to, len(route["steps"]))
+        self._persist_current_alt_route()
+        self._render_alt_route(animate=False, play_sound=False)
+        self._pump_alt_eval()
+
+    def _clear_alt_route(self):
+        route = self._alt_route
+        anchor_ply = route["anchor_ply"] if route else self.cur
+        if route:
+            route["steps"] = []
+        if self.game is not None:
+            gkey = self._current_game_cache_key()
+            if gkey and isinstance(self._alt_routes_store.get(gkey), dict):
+                self._alt_routes_store[gkey].pop(str(anchor_ply), None)
+                self._save_alt_routes_store()
+        self._exit_alt_route(navigate=True)
+
+    def _exit_alt_route(self, navigate: bool = True):
+        route = self._alt_route
+        if route and route.get("steps") and self.game is not None:
+            self._persist_current_alt_route()
+        anchor_ply = route["anchor_ply"] if route else self.cur
+        self._alt_route_token += 1
+        self._alt_route = None
+        if navigate:
+            if self.game is not None:
+                self.goto(anchor_ply, animate=False, play_sound=False)
+            else:
+                b0 = chess.Board()
+                self.board.set_position(b0, None, "", None, [], animate=False)
+                self.evalbar.set_eval(0, "0.0", is_start=True)
+                self.opening_label.setText("Opening: –")
+                self._update_explanation_card()
+                self._sync_alt_route_ui()
+        else:
+            self._sync_alt_route_ui()
+
     # ------------------------------------------------------------ best lines (player's turn + interactive stepping + persistence)
     def _best_lines_cache_path(self) -> str:
         return os.path.join(themes.data_root(), "best_lines_cache.json")
@@ -6558,25 +7765,33 @@ class MainWindow(QMainWindow):
             self.line_title.setText("Best line: click “Best” on a move")
 
     def _nav_first(self):
-        if self._pv_state:
+        if self._alt_route:
+            self._set_alt_step(0, animate=False, play_sound=False)
+        elif self._pv_state:
             self._set_pv_step(1)
         else:
             self.goto(0)
 
     def _nav_prev(self):
-        if self._pv_state:
+        if self._alt_route:
+            self._step_alt_route(-1)
+        elif self._pv_state:
             self._step_pv(-1)
         else:
             self.goto(self.cur - 1)
 
     def _nav_next(self):
-        if self._pv_state:
+        if self._alt_route:
+            self._step_alt_route(1)
+        elif self._pv_state:
             self._step_pv(1)
         else:
             self.goto(self.cur + 1)
 
     def _nav_last(self):
-        if self._pv_state:
+        if self._alt_route:
+            self._set_alt_step(len(self._alt_route["steps"]), animate=False, play_sound=False)
+        elif self._pv_state:
             self._set_pv_step(len(self._pv_state["ucis"]))
         else:
             self.goto(len(self.results))
@@ -6814,7 +8029,9 @@ class MainWindow(QMainWindow):
                 for j in self.jobs:
                     if j.results:
                         A.reclassify_results(j.game, j.results, s)
-            if self.game:
+            if self._alt_route is not None:
+                self._render_alt_route(animate=False, play_sound=False)
+            elif self.game:
                 self.orient()
                 for k in range(len(self.basic)):
                     self.set_row(k)

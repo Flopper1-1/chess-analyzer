@@ -6,7 +6,7 @@
 
   **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, sound effects, and an in-app game library with advanced Brilliant (`!!`) tracking.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.10.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.11.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20.EXE-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6-41cd52?style=for-the-badge)
@@ -53,6 +53,16 @@
     <td width="50%">
       <h3>⚡ Unthrottled Background Queue</h3>
       Windows PowerThrottling bypass ensures Stockfish 19 continues calculating at maximum CPU speed even when tabbed out or minimized.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3>💡 Move Explanations</h3>
+      Every analysed move displays a clear, board-aware tactical explanation detailing forks, hanging pieces, checks, sacrifices, book lines, and stronger alternatives.
+    </td>
+    <td width="50%">
+      <h3>🔀 Manual Alternate Routes with Live Annotation</h3>
+      Drag or click pieces directly on the board at any position to test alternate variations—with instant Stockfish evaluation, live annotation badges, arrows, sounds, and move explanations.
     </td>
   </tr>
 </table>

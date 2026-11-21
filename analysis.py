@@ -10,6 +10,7 @@ import chess
 import chess.engine
 
 import classify as C
+import explanations as EX
 from openings import OpeningBook, resource_path
 from accuracy import phase_of
 
@@ -317,6 +318,7 @@ class MoveResult:
     move_time_text: str = ""
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
+    explanation: str = ""
 
 
 def format_cp_text(cp: Optional[int], score: Optional[chess.engine.PovScore] = None) -> str:
@@ -324,6 +326,8 @@ def format_cp_text(cp: Optional[int], score: Optional[chess.engine.PovScore] = N
         w = score.white()
         if w.is_mate():
             m = w.mate()
+            if m == 0:
+                return "#" if (cp is None or cp >= 0) else "-#"
             return ("#%d" % m) if m > 0 else ("-#%d" % -m)
     if cp is None:
         return ""
@@ -637,10 +641,14 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 prev_critical=prev_critical,
                 already_overwhelming=already_overwhelming,
             )
-            r.loss, r.analysed = loss, True
+            in_scope = tracked_mover(i) or _scope_allows(sym, mover, tracked, settings.scope)
+            if r.book:
+                in_scope = _scope_allows("/", mover, tracked, settings.scope, is_book=True)
+            r.loss = loss if in_scope else 0.0
+            r.analysed = bool(in_scope)
             r.brilliant_type = ""
             if r.book:
-                r.symbol = "/" if _scope_allows("/", mover, tracked, settings.scope, is_book=True) else ""
+                r.symbol = "/" if in_scope else ""
             elif _scope_allows(sym, mover, tracked, settings.scope):
                 r.symbol = sym
                 if r.symbol == "!!":
@@ -663,8 +671,26 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 r.eval_after = results[i - 1].eval_after
                 r.eval_after_text = results[i - 1].eval_after_text
         elif r.book:
-            r.analysed = True
-            r.symbol = "/" if _scope_allows("/", mover, tracked, settings.scope, is_book=True) else ""
+            in_scope = _scope_allows("/", mover, tracked, settings.scope, is_book=True)
+            r.analysed = bool(in_scope)
+            r.symbol = "/" if in_scope else ""
+
+        if r.analysed or r.book or r.symbol:
+            r.explanation = EX.explain_move(
+                r.fen_before, r.uci, r.symbol,
+                eval_before=r.eval_before,
+                eval_after=r.eval_after,
+                best_san=r.best_san,
+                best_uci=r.pv_uci[0] if r.pv_uci else "",
+                pv_san=r.pv,
+                pv_uci=r.pv_uci,
+                after_pv_uci=[m.uci() for m in after_pv] if after_pv else None,
+                opening=r.opening,
+                eco=r.eco,
+                brilliant_type=r.brilliant_type,
+                eval_after_text=r.eval_after_text,
+                second_cp=r.second_cp,
+            )
         return r
 
     for i in range(n + 1):
@@ -815,11 +841,238 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
             else:
                 r.symbol = ""
                 r.brilliant_type = ""
+        if r.analysed or r.book or r.symbol:
+            r.explanation = EX.explain_move(
+                r.fen_before or b.fen(), r.uci or mv.uci(), r.symbol,
+                eval_before=r.eval_before,
+                eval_after=r.eval_after,
+                best_san=r.best_san,
+                best_uci=r.pv_uci[0] if r.pv_uci else "",
+                pv_san=r.pv,
+                pv_uci=r.pv_uci,
+                opening=r.opening,
+                eco=r.eco,
+                brilliant_type=r.brilliant_type,
+                eval_after_text=r.eval_after_text,
+                second_cp=r.second_cp,
+            )
         prev_was_capture = b.is_capture(mv)
         prev_move = mv
         moves_hist.append(mv)
         b.push(mv)
         boards_hist.append(b.copy())
+
+
+def analyse_single_move(
+    engine,
+    board_before: chess.Board,
+    move: chess.Move,
+    settings: Settings,
+    book: Optional[OpeningBook] = None,
+    cached_before_infos: Optional[list] = None,
+    prev_move: Optional[chess.Move] = None,
+    prev_was_capture: bool = False,
+    prev_eval_before_white: Optional[int] = None,
+    prev_eval_after_white: Optional[int] = None,
+    prev_eval_after_text: str = "",
+    prev_symbol: str = "",
+    book_active: bool = True,
+    ply: int = 1,
+) -> Tuple[MoveResult, list]:
+    """Evaluate a single manual move on `board_before` and classify + explain it live.
+
+    Returns `(MoveResult, after_infos)` so subsequent chained manual moves can reuse
+    `after_infos` as `cached_before_infos` without re-searching the before-position.
+    """
+    b = board_before.copy()
+    mover = b.turn
+    board_after = b.copy()
+    board_after.push(move)
+
+    use_cal = (settings.annotation_system == "modern") or (settings.eval_formula == "improved")
+
+    def _norm_cp(raw_cp: Optional[int]) -> Optional[int]:
+        if raw_cp is None:
+            return None
+        return C.calibrate_cp(raw_cp) if use_cal else int(raw_cp)
+
+    sac_threshold = 1 if settings.lenient_brilliant else 2
+    max_loss = 5.0 if settings.lenient_brilliant else 2.5
+    live_depth = max(8, min(int(settings.depth), 16))
+
+    r = MoveResult(
+        ply=ply,
+        color=mover,
+        san=b.san(move),
+        uci=move.uci(),
+        fen_before=b.fen(),
+        fen_after=board_after.fen(),
+    )
+
+    entry = book.lookup(board_after) if (book and book_active) else None
+    if entry:
+        r.book = True
+        r.eco, r.opening = entry
+    r.phase = phase_of(b, r.book)
+
+    legal_count = b.legal_moves.count()
+    need_multipv2 = (legal_count >= 2)
+    before = list(cached_before_infos) if cached_before_infos else []
+    if not b.is_game_over(claim_draw=False) and (not before or (need_multipv2 and len(before) < 2)):
+        before = analyse_position(engine, b, live_depth, 2 if need_multipv2 else 1)
+
+    if board_after.is_game_over(claim_draw=False):
+        after = []
+        after_score = terminal_score(board_after)
+        after_pv = []
+    else:
+        after = analyse_position(engine, board_after, live_depth, 2)
+        after_score = after[0]["score"] if after else None
+        after_pv = (after[0].get("pv") or []) if after else []
+
+    if before:
+        raw_before_pv = before[0].get("pv", [])
+        if C.is_standard_start(b):
+            r.eval_before = 0
+        elif C.is_deadlocked_position(b, raw_before_pv):
+            r.eval_before = 0
+        else:
+            r.eval_before = _norm_cp(before[0]["score"].white().score(mate_score=10000))
+        r.pv, r.pv_uci = pv_to_san(b, raw_before_pv)
+        if r.pv:
+            r.best_san = r.pv[0]
+    elif C.is_standard_start(b):
+        r.eval_before = 0
+
+    is_best = bool(before and before[0].get("pv") and before[0]["pv"][0] == move)
+    if after_score is not None:
+        if C.is_deadlocked_position(board_after, after_pv):
+            r.eval_after = 0
+            r.eval_after_text = "0.0"
+        else:
+            r.eval_after = _norm_cp(after_score.white().score(mate_score=10000))
+            r.eval_after_text = format_cp_text(r.eval_after, after_score)
+
+    if legal_count == 1 and not r.book:
+        r.symbol, r.analysed = "forced", True
+    elif r.book:
+        r.symbol, r.analysed = "/", True
+    elif before and after_score is not None:
+        best_cp = _norm_cp(C.cp_of(before[0]["score"].pov(mover)))
+        after_cp = _norm_cp(C.cp_of(after_score.pov(mover)))
+        is_capture = b.is_capture(move)
+        attacks_piece = bool(
+            b.piece_type_at(move.from_square) == chess.PAWN
+            and not is_capture
+            and any(
+                board_after.piece_at(sq) is not None
+                and board_after.piece_at(sq).color != mover
+                and board_after.piece_at(sq).piece_type in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                for sq in board_after.attacks(move.to_square)
+            )
+        )
+        repeats_pos = bool(
+            board_after.is_repetition(2)
+            or (b.halfmove_clock >= 5 and abs(best_cp) <= 25)
+        )
+        if is_best:
+            after_cp = best_cp
+        elif (
+            after_cp >= best_cp
+            and not repeats_pos
+            and (
+                r.phase == "opening"
+                or attacks_piece
+                or (
+                    b.halfmove_clock < 5
+                    and b.piece_type_at(move.from_square) in (chess.KNIGHT, chess.BISHOP, chess.ROOK, chess.QUEEN)
+                    and chess.square_rank(move.to_square) not in (0, 7)
+                )
+            )
+        ):
+            is_best = True
+            after_cp = best_cp
+
+        best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
+        loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
+        second_cp = _norm_cp(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
+        r.second_cp = second_cp
+        second_wp = C.win_pct(second_cp) if second_cp is not None else None
+
+        if C.is_standard_start(b):
+            before_cp = 0
+            wp_before = 50.0
+        elif prev_eval_before_white is not None:
+            before_cp = prev_eval_before_white if mover == chess.WHITE else -prev_eval_before_white
+            wp_before = C.win_pct(before_cp)
+        else:
+            before_cp = best_cp
+            wp_before = best_wp
+
+        is_recapture = bool(prev_move is not None and prev_was_capture and move.to_square == prev_move.to_square)
+        mat_diff_before = C.material(b, mover) - C.material(b, not mover)
+        already_overwhelming = bool(
+            mat_diff_before >= 7
+            and wp_before >= 80.0
+            and (second_wp is None or second_wp >= 75.0)
+        )
+        in_check = b.is_check()
+        gives_check = board_after.is_check()
+        sac = C.is_sacrifice(b, move, sac_threshold)
+        underpromo = C.is_brilliant_underpromotion(
+            b, move, is_best, loss, max_loss, second_wp=second_wp, best_wp=best_wp
+        )
+        sym = C.classify(
+            loss, is_best, after_wp, best_wp, second_wp, sac, wp_before,
+            lenient=settings.lenient_brilliant,
+            underpromo_brilliant=underpromo,
+            system=settings.annotation_system,
+            cp_before=before_cp,
+            cp_after=after_cp,
+            best_cp=best_cp,
+            is_recapture=is_recapture,
+            in_check=in_check,
+            gives_check=gives_check,
+            phase=r.phase,
+            repeats_position=repeats_pos,
+            is_capture=is_capture,
+            pre_attacked_free_piece=False,
+            pendulum_return=False,
+            attacks_piece=attacks_piece,
+            prev_critical=(prev_symbol in ("!!", "!")),
+            already_overwhelming=already_overwhelming,
+        )
+        r.loss, r.analysed = loss, True
+        r.symbol = sym
+        r.brilliant_type = C.brilliant_category(b, move) if sym == "!!" else ""
+
+        if (
+            (is_best or sym == "!!")
+            and sym in ("+++", "!", "!!")
+            and prev_eval_after_white is not None
+            and not C.is_deadlocked_position(board_after, after_pv)
+        ):
+            r.eval_before = prev_eval_after_white
+            r.eval_after = prev_eval_after_white
+            if prev_eval_after_text:
+                r.eval_after_text = prev_eval_after_text
+
+    r.explanation = EX.explain_move(
+        r.fen_before, r.uci, r.symbol,
+        eval_before=r.eval_before,
+        eval_after=r.eval_after,
+        best_san=r.best_san,
+        best_uci=r.pv_uci[0] if r.pv_uci else "",
+        pv_san=r.pv,
+        pv_uci=r.pv_uci,
+        after_pv_uci=[m.uci() for m in after_pv] if after_pv else None,
+        opening=r.opening,
+        eco=r.eco,
+        brilliant_type=r.brilliant_type,
+        eval_after_text=r.eval_after_text,
+        second_cp=r.second_cp,
+    )
+    return r, after
 
 
 def best_line(engine, fen: str, depth: int, multipv=3):
