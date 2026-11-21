@@ -1332,6 +1332,11 @@ class _UIOverlayWidget(QWidget):
         p.end()
 
 
+def _shift_held() -> bool:
+    """True when the user is holding Shift to skip confirmation prompts."""
+    return bool(QApplication.keyboardModifiers() & Qt.ShiftModifier)
+
+
 def _make_nav_icon(kind: str, fg_hex: str = "#e6e6e6", size: int = 18) -> QIcon:
     """Render crisp antialiased vector icons for the bottom board navigation buttons."""
     pm = QPixmap(size, size)
@@ -1558,7 +1563,7 @@ class TemplateChipBar(QFrame):
         self._buttons = []
         self._cur_tpl = None
 
-    def set_templates(self, templates: list, selected_id: str) -> None:
+    def set_templates(self, templates: list, selected_id: str, icon_fn=None) -> None:
         while self._flow.count():
             it = self._flow.takeAt(0)
             if it and it.widget():
@@ -1587,13 +1592,23 @@ class TemplateChipBar(QFrame):
             btn.setProperty("templateChip", True)
             btn.setToolTip(tip)
             btn.setCursor(Qt.PointingHandCursor)
+            extra_ic = 0
+            if icon_fn is not None:
+                try:
+                    ic = icon_fn(tpl)
+                    if ic is not None and not ic.isNull():
+                        btn.setIcon(ic)
+                        btn.setIconSize(QSize(18, 18))
+                        extra_ic = 24
+                except Exception:
+                    pass
             # Reserve full bold text width so narrow leading letters (e.g. 'Inkwell') never clip
             bold_font = QFont(btn.font())
             bold_font.setBold(True)
             bold_font.setPixelSize(12)
             fm = QFontMetrics(bold_font)
-            btn.setMinimumWidth(fm.horizontalAdvance(label) + 34)
-            btn.setMinimumHeight(26)
+            btn.setMinimumWidth(fm.horizontalAdvance(label) + 34 + extra_ic)
+            btn.setMinimumHeight(28)
             self._group.addButton(btn)
             self._flow.addWidget(btn)
             self._buttons.append((btn, tpl))
@@ -1712,10 +1727,12 @@ class ProfileDialog(QDialog):
         lay.addStretch(1)
         self._refresh_preview()
 
-    # ---- Tab 1b: Master Theme Templates ("Template Templates")
+    # ---- Tab 1b: Master Theme Templates ("Template Templates" — compact chip UI)
     def _build_templates_tab(self):
         page = QWidget()
         lay = QVBoxLayout(page)
+        lay.setContentsMargins(8, 6, 8, 6)
+        lay.setSpacing(6)
         self.tabs.addTab(page, "Templates")
 
         top = QHBoxLayout()
@@ -1724,6 +1741,7 @@ class ProfileDialog(QDialog):
         self.btn_save_preset = QPushButton("Save Current as Template…")
         self.btn_copy_preset = QPushButton("Copy…")
         self.btn_del_preset = QPushButton("Delete")
+        self.btn_del_preset.setToolTip("Hold Shift while clicking to skip confirmation")
         self.btn_save_preset.clicked.connect(self._save_theme_preset)
         self.btn_copy_preset.clicked.connect(self._copy_theme_preset)
         self.btn_del_preset.clicked.connect(self._delete_theme_preset)
@@ -1732,14 +1750,14 @@ class ProfileDialog(QDialog):
             top.addWidget(b)
         lay.addLayout(top)
 
-        self.preset_list = QListWidget()
-        self.preset_list.setSpacing(3)
-        self.preset_list.currentItemChanged.connect(self._on_preset_selected)
-        self.preset_list.itemDoubleClicked.connect(lambda _it: self._apply_selected_preset())
-        lay.addWidget(self.preset_list, 1)
+        self._sel_preset = "inkwell"
+        self.preset_chips = TemplateChipBar()
+        self.preset_chips.selectionChanged.connect(lambda _tpl: self._on_preset_selected())
+        lay.addWidget(self.preset_chips)
 
         self.preset_info = QLabel("")
         self.preset_info.setWordWrap(True)
+        self.preset_info.setStyleSheet("padding:8px; border-radius:6px;")
         lay.addWidget(self.preset_info)
 
         act_row = QHBoxLayout()
@@ -1748,37 +1766,29 @@ class ProfileDialog(QDialog):
         self.btn_apply_preset.clicked.connect(self._apply_selected_preset)
         act_row.addWidget(self.btn_apply_preset)
         lay.addLayout(act_row)
+        lay.addStretch(1)
         self._reload_preset_list()
 
     def _reload_preset_list(self):
-        self.preset_list.blockSignals(True)
-        self.preset_list.clear()
-        for pr in themes.list_theme_presets():
-            tag = " [Built-in]" if pr.get("locked") else " [Custom]"
-            li = QListWidgetItem(pr["name"] + tag)
-            li.setData(Qt.UserRole, pr)
-            self.preset_list.addItem(li)
-        if self.preset_list.count() > 0:
-            self.preset_list.setCurrentRow(0)
-        self.preset_list.blockSignals(False)
+        presets = themes.list_theme_presets()
+        self.preset_chips.set_templates(presets, self._sel_preset)
         self._on_preset_selected()
 
     def _on_preset_selected(self):
-        li = self.preset_list.currentItem()
-        pr = li.data(Qt.UserRole) if li else None
+        pr = self.preset_chips.current_template()
         if not pr:
             return
+        self._sel_preset = pr["id"]
         self.btn_del_preset.setEnabled(not pr.get("locked"))
         self.preset_info.setText(
-            f"<b>{pr['name']}</b><br>{pr.get('description', '')}<br>"
-            f"<span style='font-size:11px;'>Icon: {pr.get('app_icon')} • Board: {pr.get('board_template')} • "
-            f"Background: {pr.get('background_template')} • Pieces: {pr.get('piece_template')} • "
-            f"Annotations: {pr.get('annotation_template')} • Sounds: {pr.get('sound_template')}</span>"
+            f"<b>{pr['name']}</b><br>{pr.get('description', '')}<br><br>"
+            f"<span style='font-size:11px;'>App Icon: <b>{pr.get('app_icon')}</b> • Board: <b>{pr.get('board_template')}</b> • "
+            f"UI: <b>{pr.get('background_template')}</b> • Pieces: <b>{pr.get('piece_template')}</b> • "
+            f"Annotations: <b>{pr.get('annotation_template')}</b> • Sounds: <b>{pr.get('sound_template')}</b></span>"
         )
 
     def _apply_selected_preset(self):
-        li = self.preset_list.currentItem()
-        pr = li.data(Qt.UserRole) if li else None
+        pr = self.preset_chips.current_template()
         if not pr:
             return
         self._sel_app_icon = pr.get("app_icon", "fluent")
@@ -1807,12 +1817,12 @@ class ProfileDialog(QDialog):
         )
         if not ok or not nm.strip():
             return
-        themes.save_custom_theme_preset(nm.strip(), self.result_customizations())
+        created = themes.save_custom_theme_preset(nm.strip(), self.result_customizations())
+        self._sel_preset = created["id"]
         self._reload_preset_list()
 
     def _copy_theme_preset(self):
-        li = self.preset_list.currentItem()
-        pr = li.data(Qt.UserRole) if li else None
+        pr = self.preset_chips.current_template()
         if not pr:
             return
         nm, ok = QInputDialog.getText(
@@ -1820,17 +1830,18 @@ class ProfileDialog(QDialog):
         )
         if not ok or not nm.strip():
             return
-        themes.copy_theme_preset(pr, nm.strip())
+        created = themes.copy_theme_preset(pr, nm.strip())
+        self._sel_preset = created["id"]
         self._reload_preset_list()
 
     def _delete_theme_preset(self):
-        li = self.preset_list.currentItem()
-        pr = li.data(Qt.UserRole) if li else None
+        pr = self.preset_chips.current_template()
         if not pr or pr.get("locked"):
             return
         if not self._confirm_delete("Theme Template", pr["name"]):
             return
         if themes.delete_custom_theme_preset(pr["id"]):
+            self._sel_preset = "inkwell"
             self._reload_preset_list()
 
     # ---- Tab 2: App Icon (Library)
@@ -1860,11 +1871,9 @@ class ProfileDialog(QDialog):
         btn_row.addWidget(self.btn_del_icon)
         lay.addLayout(btn_row)
 
-        self.icon_list = QListWidget()
-        self.icon_list.setIconSize(QSize(40, 40))
-        self.icon_list.setSpacing(2)
-        self.icon_list.currentItemChanged.connect(self._on_icon_changed)
-        lay.addWidget(self.icon_list, 1)
+        self.icon_chips = TemplateChipBar()
+        self.icon_chips.selectionChanged.connect(lambda _tpl: self._on_icon_changed())
+        lay.addWidget(self.icon_chips)
 
         prev_row = QHBoxLayout()
         self.app_icon_preview = QLabel()
@@ -1875,31 +1884,20 @@ class ProfileDialog(QDialog):
         prev_row.addWidget(self.app_icon_preview)
         prev_row.addWidget(self.app_icon_info, 1)
         lay.addLayout(prev_row)
+        lay.addStretch(1)
         self._reload_icon_list()
 
     def _reload_icon_list(self):
-        self.icon_list.blockSignals(True)
-        self.icon_list.clear()
-        sel_row = 0
         items = themes.list_selectable_app_icons(disable_holidays=self._disable_holidays)
-        for i, item in enumerate(items):
-            tag = " [Event]" if item.get("holiday") else (" [Built-in]" if item["locked"] else " [Custom]")
-            li = QListWidgetItem(item["name"] + tag)
-            pm = themes.cropped_icon_pixmap(item["path"], 48)
-            if not pm.isNull():
-                li.setIcon(QIcon(pm))
-            li.setData(Qt.UserRole, item)
-            self.icon_list.addItem(li)
-            if item["id"] == self._sel_app_icon:
-                sel_row = i
-        if self.icon_list.count() > 0:
-            self.icon_list.setCurrentRow(sel_row)
-        self.icon_list.blockSignals(False)
+        self.icon_chips.set_templates(
+            items,
+            self._sel_app_icon,
+            icon_fn=lambda it: QIcon(themes.cropped_icon_pixmap(it["path"], 24)),
+        )
         self._on_icon_changed()
 
     def _on_icon_changed(self):
-        li = self.icon_list.currentItem()
-        item = li.data(Qt.UserRole) if li else None
+        item = self.icon_chips.current_template()
         if not item:
             return
         self._sel_app_icon = item["id"]
@@ -1932,6 +1930,8 @@ class ProfileDialog(QDialog):
         self._reload_icon_list()
 
     def _confirm_delete(self, kind: str, name: str) -> bool:
+        if _shift_held():
+            return True
         res = QMessageBox.question(
             self,
             f"Delete {kind}",
@@ -1969,8 +1969,7 @@ class ProfileDialog(QDialog):
         return pm
 
     def _delete_custom_icon(self):
-        li = self.icon_list.currentItem()
-        item = li.data(Qt.UserRole) if li else None
+        item = self.icon_chips.current_template()
         if not item or item["locked"]:
             return
         if not self._confirm_delete("App Icon", item["name"]):
@@ -2230,11 +2229,9 @@ class ProfileDialog(QDialog):
         top.addWidget(self.btn_del_board)
         lay.addLayout(top)
 
-        self.board_list = QListWidget()
-        self.board_list.setIconSize(QSize(36, 36))
-        self.board_list.setSpacing(2)
-        self.board_list.currentItemChanged.connect(self._on_board_changed)
-        lay.addWidget(self.board_list, 1)
+        self.board_chips = TemplateChipBar()
+        self.board_chips.selectionChanged.connect(lambda _tpl: self._on_board_changed())
+        lay.addWidget(self.board_chips)
 
         form = QFormLayout()
         self.board_light_hex = QLineEdit("#f0d9b5")
@@ -2281,28 +2278,18 @@ class ProfileDialog(QDialog):
         self.btn_save_board.clicked.connect(self._save_board_edits)
         form.addRow("", self.btn_save_board)
         lay.addLayout(form)
+        lay.addStretch(1)
         self._reload_board_list()
 
     def _reload_board_list(self):
-        self.board_list.blockSignals(True)
-        self.board_list.clear()
-        sel_row = 0
         boards = themes.list_selectable_board_templates(disable_holidays=self._disable_holidays)
-        for i, b in enumerate(boards):
-            tag = " [Event]" if b.get("holiday") else (" [Built-in]" if b["locked"] else " [Custom]")
-            li = QListWidgetItem(_board_swatch_icon(b), b["name"] + tag)
-            li.setData(Qt.UserRole, b)
-            self.board_list.addItem(li)
-            if b["id"] == self._sel_board:
-                sel_row = i
-        if self.board_list.count() > 0:
-            self.board_list.setCurrentRow(sel_row)
-        self.board_list.blockSignals(False)
+        self.board_chips.set_templates(
+            boards, self._sel_board, icon_fn=lambda b: _board_swatch_icon(b, 20)
+        )
         self._on_board_changed()
 
     def _on_board_changed(self):
-        li = self.board_list.currentItem()
-        b = li.data(Qt.UserRole) if li else None
+        b = self.board_chips.current_template()
         if not b:
             return
         self._sel_board = b["id"]
@@ -2327,8 +2314,7 @@ class ProfileDialog(QDialog):
         self._reload_board_list()
 
     def _copy_board_tpl(self):
-        li = self.board_list.currentItem()
-        b = li.data(Qt.UserRole) if li else None
+        b = self.board_chips.current_template()
         if not b:
             return
         nm, ok = QInputDialog.getText(
@@ -2341,8 +2327,7 @@ class ProfileDialog(QDialog):
         self._reload_board_list()
 
     def _delete_board_tpl(self):
-        li = self.board_list.currentItem()
-        b = li.data(Qt.UserRole) if li else None
+        b = self.board_chips.current_template()
         if not b or b.get("locked"):
             return
         if not self._confirm_delete("Board Template", b["name"]):
@@ -2363,8 +2348,7 @@ class ProfileDialog(QDialog):
             ed.setText(c.name())
 
     def _pick_board_png(self, is_light: bool):
-        li = self.board_list.currentItem()
-        b = li.data(Qt.UserRole) if li else None
+        b = self.board_chips.current_template()
         if not b or b.get("locked"):
             return
         p, _ = QFileDialog.getOpenFileName(self, "Select Tile PNG", "", "PNG Images (*.png);;All files (*)")
@@ -2385,8 +2369,7 @@ class ProfileDialog(QDialog):
         self._reload_board_list()
 
     def _save_board_edits(self):
-        li = self.board_list.currentItem()
-        b = li.data(Qt.UserRole) if li else None
+        b = self.board_chips.current_template()
         if not b or b.get("locked"):
             return
         themes.save_custom_board_template(
@@ -2434,11 +2417,9 @@ class ProfileDialog(QDialog):
             row.addWidget(b)
         lay.addLayout(row)
 
-        self.bg_list = QListWidget()
-        self.bg_list.setIconSize(QSize(36, 36))
-        self.bg_list.setSpacing(2)
-        self.bg_list.currentItemChanged.connect(self._on_bg_changed)
-        lay.addWidget(self.bg_list, 1)
+        self.bg_chips = TemplateChipBar()
+        self.bg_chips.selectionChanged.connect(lambda _tpl: self._on_bg_changed())
+        lay.addWidget(self.bg_chips)
 
         self.bg_info = QLabel("")
         self.bg_info.setWordWrap(True)
@@ -2529,6 +2510,32 @@ class ProfileDialog(QDialog):
         ov_row.addWidget(self.overlay_opacity_lbl)
         col_form.addRow("UI overlay:", ov_row)
 
+        eff_row = QHBoxLayout()
+        self.bg_effect_combo = QComboBox()
+        self.bg_effect_combo.addItem("None", "none")
+        self.bg_effect_combo.addItem("Moving Stars", "stars")
+        self.bg_effect_combo.addItem("Falling Sakura Blossoms", "sakura")
+        self.eff_density_slider = QSlider(Qt.Horizontal)
+        self.eff_density_slider.setRange(10, 100)
+        self.eff_density_slider.setValue(55)
+        self.eff_density_lbl = QLabel("55%")
+        self.eff_density_lbl.setMinimumWidth(34)
+        self.eff_density_slider.valueChanged.connect(lambda v: self.eff_density_lbl.setText(f"{v}%"))
+        self.eff_speed_slider = QSlider(Qt.Horizontal)
+        self.eff_speed_slider.setRange(20, 200)
+        self.eff_speed_slider.setValue(100)
+        self.eff_speed_lbl = QLabel("100%")
+        self.eff_speed_lbl.setMinimumWidth(38)
+        self.eff_speed_slider.valueChanged.connect(lambda v: self.eff_speed_lbl.setText(f"{v}%"))
+        eff_row.addWidget(self.bg_effect_combo)
+        eff_row.addWidget(QLabel("Density:"))
+        eff_row.addWidget(self.eff_density_slider, 1)
+        eff_row.addWidget(self.eff_density_lbl)
+        eff_row.addWidget(QLabel("Speed:"))
+        eff_row.addWidget(self.eff_speed_slider, 1)
+        eff_row.addWidget(self.eff_speed_lbl)
+        col_form.addRow("BG modifier:", eff_row)
+
         act_row = QHBoxLayout()
         self.btn_save_bg_opts = QPushButton("Save Changes")
         self.btn_save_bg_opts.clicked.connect(self._save_custom_bg_options)
@@ -2547,32 +2554,13 @@ class ProfileDialog(QDialog):
 
     def _reload_bg_list(self):
         self._reloading_bg = True
-        self.bg_list.blockSignals(True)
-        self.bg_list.clear()
-        sel_row = 0
-        for i, bg in enumerate(themes.list_background_templates(disable_holidays=self._disable_holidays)):
-            if bg.get("holiday"):
-                tag = " [Holiday Event]"
-            elif bg.get("locked"):
-                tag = " [Built-in]"
-            elif bg.get("image_path"):
-                tag = " [Custom Image]"
-            else:
-                tag = " [Custom Color]"
-            li = QListWidgetItem(_bg_swatch_icon(bg), bg["name"] + tag)
-            li.setData(Qt.UserRole, bg)
-            self.bg_list.addItem(li)
-            if bg["id"] == self._sel_bg:
-                sel_row = i
-        if self.bg_list.count() > 0:
-            self.bg_list.setCurrentRow(sel_row)
-        self.bg_list.blockSignals(False)
+        bgs = themes.list_background_templates(disable_holidays=self._disable_holidays)
+        self.bg_chips.set_templates(bgs, self._sel_bg, icon_fn=lambda b: _bg_swatch_icon(b, 20))
         self._on_bg_changed()
         self._reloading_bg = False
 
     def _on_bg_changed(self):
-        li = self.bg_list.currentItem()
-        bg = li.data(Qt.UserRole) if li else None
+        bg = self.bg_chips.current_template()
         if not bg:
             return
         prev_id = self._sel_bg
@@ -2609,11 +2597,22 @@ class ProfileDialog(QDialog):
         self.overlay_opacity_lbl.setText(f"{ov_op}%")
         self.overlay_opacity_slider.blockSignals(False)
 
+        eff_val = (bg.get("bg_effect") or "none").strip().lower()
+        self.bg_effect_combo.blockSignals(True)
+        idx_ef = self.bg_effect_combo.findData(eff_val if eff_val in ("none", "stars", "sakura") else "none")
+        self.bg_effect_combo.setCurrentIndex(idx_ef if idx_ef >= 0 else 0)
+        self.bg_effect_combo.blockSignals(False)
+        ef_dens = max(10, min(100, int(bg.get("effect_density", 55))))
+        ef_spd = max(20, min(200, int(bg.get("effect_speed", 100))))
+        self.eff_density_slider.setValue(ef_dens)
+        self.eff_speed_slider.setValue(ef_spd)
+
         for w in (
             self.btn_del_bg, self.btn_save_bg_opts, self.btn_ui_color, self.btn_ui_color_reset,
             self.btn_accent_color, self.btn_accent_color_reset, self.btn_text_color, self.btn_text_color_reset,
             self.bg_opacity_slider, self.smart_invert_combo, self.btn_overlay_img, self.btn_overlay_clear,
-            self.overlay_opacity_slider, self.btn_reset_all_colors,
+            self.overlay_opacity_slider, self.bg_effect_combo, self.eff_density_slider, self.eff_speed_slider,
+            self.btn_reset_all_colors,
         ):
             w.setEnabled(not locked)
         bg_id = bg.get("id", "")
@@ -2684,6 +2683,9 @@ class ProfileDialog(QDialog):
             ui_color=self._ui_color,
             accent_color=self._accent_color,
             overlay_opacity=self.overlay_opacity_slider.value(),
+            bg_effect=self.bg_effect_combo.currentData() or "none",
+            effect_density=self.eff_density_slider.value(),
+            effect_speed=self.eff_speed_slider.value(),
         ):
             self._reload_bg_list()
 
@@ -2703,8 +2705,7 @@ class ProfileDialog(QDialog):
             self._reload_bg_list()
 
     def _copy_bg_tpl(self):
-        li = self.bg_list.currentItem()
-        bg = li.data(Qt.UserRole) if li else None
+        bg = self.bg_chips.current_template()
         if not bg:
             return
         nm, ok = QInputDialog.getText(
@@ -2828,8 +2829,7 @@ class ProfileDialog(QDialog):
             self._reload_bg_list()
 
     def _delete_custom_bg(self):
-        li = self.bg_list.currentItem()
-        bg = li.data(Qt.UserRole) if li else None
+        bg = self.bg_chips.current_template()
         if not bg or bg.get("locked"):
             return
         if not self._confirm_delete("Background", bg["name"]):
@@ -3681,7 +3681,7 @@ class SettingsDialog(QDialog):
             self.main_win.check_channels(self._on_channels_loaded)
 
     def _request_restart(self):
-        if QMessageBox.question(
+        if _shift_held() or QMessageBox.question(
             self,
             APP_TITLE,
             "Save settings and restart Holly's Chess Analyzer now?",
@@ -4387,6 +4387,15 @@ class MainWindow(QMainWindow):
         self._fireworks_timer = QTimer(self)
         self._fireworks_timer.setInterval(45)
         self._fireworks_timer.timeout.connect(self._tick_fireworks)
+        self._bg_effect_mode = "none"
+        self._bg_effect_density = 55
+        self._bg_effect_speed = 100
+        self._bg_particles = []
+        self._bg_particle_sprites = {}
+        self._bg_effect_last_ts = time.monotonic()
+        self._bg_effect_timer = QTimer(self)
+        self._bg_effect_timer.setInterval(45)
+        self._bg_effect_timer.timeout.connect(self._tick_bg_particles)
         styles.load(qs)
         self.sound = SoundPlayer()
         self.holder = EngineHolder()
@@ -5485,6 +5494,8 @@ class MainWindow(QMainWindow):
                 self._bg_scaled_cache = (key, composed)
             p = QPainter(self)
             p.drawPixmap(e_rect, self._bg_scaled_cache[1], e_rect)
+            if self._bg_effect_mode in ("stars", "sakura", "snow"):
+                self._draw_bg_particles(p)
             return
         if self._fireworks_active:
             p = QPainter(self)
@@ -5493,35 +5504,138 @@ class MainWindow(QMainWindow):
         if self._cached_anim_mode in ("christmas_shift", "halloween_shift") and not self._cached_ui_color:
             p = QPainter(self)
             p.fillRect(e_rect, self._cached_anim_bg_color)
+            if self._bg_effect_mode == "snow":
+                self._draw_bg_particles(p)
             return
-        if self._cached_bg.get("starfield") and not self._cached_ui_color:
-            key = (self.width(), self.height(), self._bg_cache_token, "starfield")
-            if self._bg_scaled_cache is None or self._bg_scaled_cache[0] != key:
-                composed = QPixmap(self.size())
-                cp = QPainter(composed)
-                cp.setRenderHint(QPainter.Antialiasing)
+        if self._bg_effect_mode in ("stars", "sakura", "snow"):
+            p = QPainter(self)
+            bg_id = self._cached_bg.get("id", "")
+            if bg_id == "space_cosmos" and not self._cached_ui_color:
                 w, h = float(self.width()), float(self.height())
                 bg_grad = QLinearGradient(0, 0, w, h)
                 bg_grad.setColorAt(0.0, QColor("#060916"))
                 bg_grad.setColorAt(0.5, QColor("#0e1535"))
                 bg_grad.setColorAt(1.0, QColor("#180c2e"))
-                cp.fillRect(composed.rect(), bg_grad)
-                rng = random.Random(42)
-                cp.setPen(Qt.NoPen)
-                for _ in range(120):
-                    sx = rng.random() * w
-                    sy = rng.random() * h
-                    sr = rng.uniform(0.7, 2.0)
-                    sa = rng.randint(90, 235)
-                    col = rng.choice((QColor(255, 255, 255, sa), QColor(186, 230, 253, sa), QColor(221, 214, 254, sa)))
-                    cp.setBrush(col)
-                    cp.drawEllipse(QPointF(sx, sy), sr, sr)
-                cp.end()
-                self._bg_scaled_cache = (key, composed)
-            p = QPainter(self)
-            p.drawPixmap(e_rect, self._bg_scaled_cache[1], e_rect)
+                p.fillRect(e_rect, bg_grad)
+            elif bg_id == "sakura_blossom" and not self._cached_ui_color:
+                w, h = float(self.width()), float(self.height())
+                bg_grad = QLinearGradient(0, 0, 0, h)
+                bg_grad.setColorAt(0.0, QColor("#2a162d"))
+                bg_grad.setColorAt(0.6, QColor("#201323"))
+                bg_grad.setColorAt(1.0, QColor("#180f1c"))
+                p.fillRect(e_rect, bg_grad)
+            else:
+                p.fillRect(e_rect, self._cached_anim_bg_color)
+            self._draw_bg_particles(p)
             return
         super().paintEvent(e)
+
+    def _get_particle_sprite(self, kind: str, size_key: int) -> QPixmap:
+        ck = (kind, size_key)
+        pm = self._bg_particle_sprites.get(ck)
+        if pm is not None:
+            return pm
+        dim = max(6, size_key)
+        pm = QPixmap(dim, dim)
+        pm.fill(Qt.transparent)
+        p = QPainter(pm)
+        p.setRenderHint(QPainter.Antialiasing)
+        c = dim / 2.0
+        if kind == "stars":
+            grad = QRadialGradient(c, c, c)
+            grad.setColorAt(0.0, QColor(255, 255, 255, 245))
+            grad.setColorAt(0.45, QColor(186, 230, 253, 180))
+            grad.setColorAt(1.0, QColor(124, 58, 237, 0))
+            p.setPen(Qt.NoPen)
+            p.setBrush(grad)
+            p.drawEllipse(QPointF(c, c), c, c)
+        elif kind == "sakura":
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(251, 207, 232, 215))
+            p.drawEllipse(QRectF(dim * 0.12, dim * 0.25, dim * 0.76, dim * 0.48))
+            p.setBrush(QColor(244, 114, 182, 145))
+            p.drawEllipse(QRectF(dim * 0.28, dim * 0.34, dim * 0.44, dim * 0.28))
+        else:  # snow
+            grad = QRadialGradient(c, c, c)
+            grad.setColorAt(0.0, QColor(255, 255, 255, 245))
+            grad.setColorAt(0.55, QColor(224, 242, 254, 185))
+            grad.setColorAt(1.0, QColor(255, 255, 255, 0))
+            p.setPen(Qt.NoPen)
+            p.setBrush(grad)
+            p.drawEllipse(QPointF(c, c), c, c)
+        p.end()
+        self._bg_particle_sprites[ck] = pm
+        return pm
+
+    def _seed_bg_particles(self, mode: str, density: int, speed: int):
+        self._bg_particles.clear()
+        w = max(800, self.width())
+        h = max(600, self.height())
+        count = max(14, min(110, int(round(density * (1.1 if mode == "stars" else 0.75)))))
+        spd_mult = max(0.2, min(2.0, speed / 100.0))
+        rng = random.Random()
+        for _ in range(count):
+            if mode == "stars":
+                sz = rng.choice((6, 8, 10, 12))
+                vx = rng.uniform(-18.0, -5.0) * spd_mult * (sz / 10.0)
+                vy = rng.uniform(2.0, 9.0) * spd_mult * (sz / 10.0)
+                phase = rng.uniform(0, math.tau)
+                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+            elif mode == "sakura":
+                sz = rng.choice((12, 16, 20))
+                vx = rng.uniform(-14.0, 18.0) * spd_mult
+                vy = rng.uniform(24.0, 52.0) * spd_mult
+                phase = rng.uniform(0, math.tau)
+                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+            elif mode == "snow":
+                sz = rng.choice((8, 12, 16))
+                vx = rng.uniform(-10.0, 10.0) * spd_mult
+                vy = rng.uniform(22.0, 56.0) * spd_mult
+                phase = rng.uniform(0, math.tau)
+                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+        self._bg_effect_last_ts = time.monotonic()
+
+    def _tick_bg_particles(self):
+        if self._bg_effect_mode not in ("stars", "sakura", "snow") or not self._bg_particles:
+            self._bg_effect_timer.stop()
+            return
+        if not self.isVisible() or self.isMinimized():
+            return
+        now = time.monotonic()
+        dt = min(0.12, max(0.01, now - self._bg_effect_last_ts))
+        self._bg_effect_last_ts = now
+        w = max(200.0, float(self.width()))
+        h = max(200.0, float(self.height()))
+        mode = self._bg_effect_mode
+        for pt in self._bg_particles:
+            pt[5] += dt * (2.2 if mode == "stars" else 1.8)
+            sway = math.sin(pt[5]) * (18.0 if mode == "sakura" else (12.0 if mode == "snow" else 0.0))
+            pt[0] += (pt[2] + sway) * dt
+            pt[1] += pt[3] * dt
+            if pt[0] < -24:
+                pt[0] = w + 16
+            elif pt[0] > w + 24:
+                pt[0] = -16
+            if pt[1] > h + 24:
+                pt[1] = -16
+                pt[0] = random.uniform(0, w)
+            elif pt[1] < -24:
+                pt[1] = h + 16
+        self.update()
+
+    def _draw_bg_particles(self, p: QPainter):
+        mode = self._bg_effect_mode
+        if not self._bg_particles:
+            return
+        p.save()
+        for x, y, _vx, _vy, sz, phase in self._bg_particles:
+            pm = self._get_particle_sprite(mode, int(sz))
+            if mode == "stars":
+                p.setOpacity(0.52 + 0.45 * (0.5 + 0.5 * math.sin(phase)))
+            else:
+                p.setOpacity(0.85)
+            p.drawPixmap(int(x - sz / 2), int(y - sz / 2), pm)
+        p.restore()
 
     def _sync_toolbar_elevations(self):
         """Ensure toolbar action tabs, game_combo, and ProfileButtonWidget share identical height/elevation."""
@@ -5841,6 +5955,27 @@ class MainWindow(QMainWindow):
             self._fireworks_rockets.clear()
             self._fireworks_sparks.clear()
 
+        bg_eff = (bg.get("bg_effect") or "none").strip().lower()
+        ef_dens = max(10, min(100, int(bg.get("effect_density", 55))))
+        ef_spd = max(20, min(200, int(bg.get("effect_speed", 100))))
+        if bg_eff in ("stars", "sakura", "snow"):
+            if (
+                self._bg_effect_mode != bg_eff
+                or self._bg_effect_density != ef_dens
+                or self._bg_effect_speed != ef_spd
+                or not self._bg_particles
+            ):
+                self._bg_effect_mode = bg_eff
+                self._bg_effect_density = ef_dens
+                self._bg_effect_speed = ef_spd
+                self._seed_bg_particles(bg_eff, ef_dens, ef_spd)
+            if not self._bg_effect_timer.isActive():
+                self._bg_effect_timer.start()
+        else:
+            self._bg_effect_mode = "none"
+            self._bg_effect_timer.stop()
+            self._bg_particles.clear()
+
         self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
         if hasattr(self, "ui_overlay") and self.ui_overlay is not None:
             self.ui_overlay.setGeometry(self.rect())
@@ -6008,7 +6143,7 @@ class MainWindow(QMainWindow):
             if confirm:
                 QMessageBox.information(self, APP_TITLE, "An update download is already in progress.")
             return False
-        if confirm and QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
+        if confirm and not _shift_held() and QMessageBox.question(self, APP_TITLE, text + "\n\nDownload and install now?") != QMessageBox.Yes:
             return False
         import tempfile, threading
         ver_slug = info["latest_version"].lstrip("v")
@@ -6479,6 +6614,7 @@ class MainWindow(QMainWindow):
         try:
             self._christmas_timer.stop()
             self._fireworks_timer.stop()
+            self._bg_effect_timer.stop()
         except Exception:
             pass
         try:
@@ -6522,6 +6658,7 @@ class MainWindow(QMainWindow):
         try:
             self._christmas_timer.stop()
             self._fireworks_timer.stop()
+            self._bg_effect_timer.stop()
         except Exception:
             pass
         try:

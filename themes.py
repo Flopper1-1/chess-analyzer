@@ -276,7 +276,9 @@ BUILTIN_BACKGROUNDS = [
         "accent_bg": "#7c3aed",
         "image_path": "",
         "locked": True,
-        "starfield": True,
+        "bg_effect": "stars",
+        "effect_density": 65,
+        "effect_speed": 100,
     },
     {
         "id": "emerald_club",
@@ -305,6 +307,9 @@ BUILTIN_BACKGROUNDS = [
         "accent_bg": "#f472b6",
         "image_path": "",
         "locked": True,
+        "bg_effect": "sakura",
+        "effect_density": 55,
+        "effect_speed": 100,
     },
     {
         "id": "midnight_gold",
@@ -362,13 +367,13 @@ BUILTIN_THEME_PRESETS = [
     {
         "id": "space",
         "name": "Space",
-        "description": "Deep Space starfield UI, Space Nebula board, Liquidglass icon, Inkwell pieces & annotations.",
+        "description": "Deep Space moving starfield UI, Space Nebula board, Space icon & cosmic Space annotations.",
         "locked": True,
-        "app_icon": "liquidglass",
+        "app_icon": "space",
         "board_template": "space_nebula",
         "background_template": "space_cosmos",
         "piece_template": "inkwell",
-        "annotation_template": "inkwell",
+        "annotation_template": "space",
         "sound_template": "original",
     },
     {
@@ -386,25 +391,25 @@ BUILTIN_THEME_PRESETS = [
     {
         "id": "sakura",
         "name": "Sakura",
-        "description": "Sakura Twilight plum UI, Sakura Blossom board, Flatdesign icon, Inkwell pieces & annotations.",
+        "description": "Sakura Twilight falling cherry blossoms UI, Sakura Blossom board, Sakura icon & Sakura annotations.",
         "locked": True,
-        "app_icon": "flatdesign",
+        "app_icon": "sakura",
         "board_template": "sakura_board",
         "background_template": "sakura_blossom",
         "piece_template": "inkwell",
-        "annotation_template": "inkwell",
+        "annotation_template": "sakura",
         "sound_template": "original",
     },
     {
         "id": "midnight_gold",
         "name": "Midnight Gold",
-        "description": "Obsidian & brushed gold UI, Obsidian & Gold board, Metro icon, CBurnett pieces.",
+        "description": "Obsidian & brushed gold UI, Obsidian & Gold board, Fluent icon, CBurnett pieces & Midnight Gold annotations.",
         "locked": True,
-        "app_icon": "metro",
+        "app_icon": "fluent",
         "board_template": "obsidian_gold",
         "background_template": "midnight_gold",
         "piece_template": "cburnett",
-        "annotation_template": "inkwell",
+        "annotation_template": "midnight_gold",
         "sound_template": "original",
     },
 ]
@@ -441,6 +446,7 @@ HOLIDAY_BACKGROUNDS = {
         "locked": True,
         "holiday": True,
         "animated": "christmas_shift",
+        "bg_effect": "snow",
     },
     "new_year": {
         "id": "new_year",
@@ -1335,8 +1341,11 @@ def update_custom_background_options(
     ui_color: Optional[str] = None,
     accent_color: Optional[str] = None,
     overlay_opacity: Optional[int] = None,
+    bg_effect: Optional[str] = None,
+    effect_density: Optional[int] = None,
+    effect_speed: Optional[int] = None,
 ) -> bool:
-    """Update UI opacity, colors, smart contrast, and overlay opacity on a custom UI template."""
+    """Update UI opacity, colors, smart contrast, overlay opacity, and non-holiday effect modifiers."""
     if not bg_id or not bg_id.startswith("custom:"):
         return False
     folder = bg_id.split(":", 1)[1]
@@ -1360,6 +1369,14 @@ def update_custom_background_options(
             data["aero_glass"] = bool(aero_glass)
         if overlay_opacity is not None:
             data["overlay_opacity"] = max(0, min(85, int(overlay_opacity)))
+        if bg_effect is not None:
+            # Holiday-only effects ('snow', 'fireworks') are never assignable to custom backgrounds
+            eff = (bg_effect or "").strip().lower()
+            data["bg_effect"] = eff if eff in ("none", "stars", "sakura") else "none"
+        if effect_density is not None:
+            data["effect_density"] = max(10, min(100, int(effect_density)))
+        if effect_speed is not None:
+            data["effect_speed"] = max(20, min(200, int(effect_speed)))
         with open(manifest, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return True
@@ -1409,10 +1426,20 @@ def copy_background_template(src_bg: dict, new_name: str) -> Optional[dict]:
     os.makedirs(bdir, exist_ok=True)
     pal = get_theme_palette(src_bg)
     data = dict(src_bg)
+    is_hol = bool(src_bg.get("holiday")) or (src_bg.get("id") in HOLIDAY_IDS)
     data["id"] = f"custom:{folder}"
     data["name"] = clean
     data["locked"] = False
     data.pop("holiday", None)
+    if is_hol:
+        # Limited-time holiday effects cannot be copied into permanent custom UIs
+        data.pop("animated", None)
+        data["bg_effect"] = "none"
+    else:
+        eff = (src_bg.get("bg_effect") or "none").strip().lower()
+        data["bg_effect"] = eff if eff in ("none", "stars", "sakura") else "none"
+        data["effect_density"] = max(10, min(100, int(src_bg.get("effect_density", 55))))
+        data["effect_speed"] = max(20, min(200, int(src_bg.get("effect_speed", 100))))
     data.setdefault("window_bg", pal["bg"])
     data.setdefault("panel_bg", pal["panel"])
     data.setdefault("button_bg", pal["btn_bg"])
@@ -2703,7 +2730,8 @@ def build_app_stylesheet(
     animated_bg = bg.get("animated") or ""
     is_fireworks = animated_bg == "fireworks" and not is_custom_image
     is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
-    is_starfield = bool(bg.get("starfield")) and not is_custom_image and not eff_ui
+    bg_eff = (bg.get("bg_effect") or "none").strip().lower()
+    has_bg_effect = bg_eff in ("stars", "sakura", "snow")
     raw_op = ui_opacity if (ui_opacity is not None and 20 <= int(ui_opacity) <= 100) else int(bg.get("ui_opacity", 100))
     eff_op = max(20, min(100, raw_op))
     is_translucent = eff_op < 100
@@ -2717,7 +2745,7 @@ def build_app_stylesheet(
         p["accent"] = "#eab308"
         p["accent_hover"] = "#facc15"
         p["accent_fg"] = "#111827"
-    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass or is_starfield) else p["bg"]
+    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass or has_bg_effect) else p["bg"]
     if is_aero_glass:
         op_scale = eff_op / 55.0
         def _sa(a: int) -> int:
