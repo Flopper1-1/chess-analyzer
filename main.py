@@ -1284,6 +1284,54 @@ class ProfileButtonWidget(QFrame):
         super().mousePressEvent(e)
 
 
+class _UIOverlayWidget(QWidget):
+    """Click-through translucent image overlay rendered on top of the MainWindow UI."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._pixmap = None
+        self._opacity = 0.25
+        self._scaled_cache = None
+        self._token = 0
+        self.hide()
+
+    def set_overlay(self, path: str, opacity_pct: int = 25):
+        self._opacity = max(0.0, min(0.85, float(opacity_pct) / 100.0))
+        if path and os.path.exists(path):
+            pm = QPixmap(path)
+            if not pm.isNull() and self._opacity > 0.005:
+                self._pixmap = pm
+                self._scaled_cache = None
+                self._token += 1
+                self.show()
+                self.raise_()
+                self.update()
+                return
+        self._pixmap = None
+        self._scaled_cache = None
+        self.hide()
+
+    def paintEvent(self, e):
+        if self._pixmap is None or self._pixmap.isNull() or self._opacity <= 0.005:
+            return
+        key = (self.width(), self.height(), self._token)
+        if self._scaled_cache is None or self._scaled_cache[0] != key:
+            scaled = self._pixmap.scaled(
+                self.size(), Qt.KeepAspectRatioByExpanding, Qt.SmoothTransformation
+            )
+            sx = max(0, (scaled.width() - self.width()) // 2)
+            sy = max(0, (scaled.height() - self.height()) // 2)
+            cropped = scaled.copy(sx, sy, self.width(), self.height())
+            self._scaled_cache = (key, cropped)
+        p = QPainter(self)
+        p.setOpacity(self._opacity)
+        p.drawPixmap(0, 0, self._scaled_cache[1])
+        p.end()
+
+
 def _make_nav_icon(kind: str, fg_hex: str = "#e6e6e6", size: int = 18) -> QIcon:
     """Render crisp antialiased vector icons for the bottom board navigation buttons."""
     pm = QPixmap(size, size)
@@ -1674,10 +1722,12 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Theme Templates (Full Bundles)</b>"))
         top.addStretch(1)
         self.btn_save_preset = QPushButton("Save Current as Template…")
+        self.btn_copy_preset = QPushButton("Copy…")
         self.btn_del_preset = QPushButton("Delete")
         self.btn_save_preset.clicked.connect(self._save_theme_preset)
+        self.btn_copy_preset.clicked.connect(self._copy_theme_preset)
         self.btn_del_preset.clicked.connect(self._delete_theme_preset)
-        for b in (self.btn_save_preset, self.btn_del_preset):
+        for b in (self.btn_save_preset, self.btn_copy_preset, self.btn_del_preset):
             b.setProperty("compactBtn", True)
             top.addWidget(b)
         lay.addLayout(top)
@@ -1758,6 +1808,19 @@ class ProfileDialog(QDialog):
         if not ok or not nm.strip():
             return
         themes.save_custom_theme_preset(nm.strip(), self.result_customizations())
+        self._reload_preset_list()
+
+    def _copy_theme_preset(self):
+        li = self.preset_list.currentItem()
+        pr = li.data(Qt.UserRole) if li else None
+        if not pr:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy Theme Template", "New template bundle name:", QLineEdit.Normal, f"{pr['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        themes.copy_theme_preset(pr, nm.strip())
         self._reload_preset_list()
 
     def _delete_theme_preset(self):
@@ -1928,14 +1991,16 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Sound Template Library</b>"))
         top.addStretch(1)
         self.btn_new_sound = QPushButton("New Template…")
+        self.btn_copy_sound = QPushButton("Copy…")
         self.btn_import_sound_folder = QPushButton("Import Folder…")
         self.btn_import_sound_files = QPushButton("Auto-Detect Files…")
         self.btn_del_sound = QPushButton("Delete")
         self.btn_new_sound.clicked.connect(self._create_sound_tpl)
+        self.btn_copy_sound.clicked.connect(self._copy_sound_tpl)
         self.btn_import_sound_folder.clicked.connect(self._import_sounds_folder)
         self.btn_import_sound_files.clicked.connect(self._import_sound_files)
         self.btn_del_sound.clicked.connect(self._delete_sound_tpl)
-        for b in (self.btn_new_sound, self.btn_import_sound_folder, self.btn_import_sound_files, self.btn_del_sound):
+        for b in (self.btn_new_sound, self.btn_copy_sound, self.btn_import_sound_folder, self.btn_import_sound_files, self.btn_del_sound):
             b.setProperty("compactBtn", True)
             top.addWidget(b)
         lay.addLayout(top)
@@ -2062,6 +2127,19 @@ class ProfileDialog(QDialog):
         self._sel_sound = created["id"]
         self._reload_sound_list()
 
+    def _copy_sound_tpl(self):
+        cur = self.sound_chips.current_template()
+        if not cur:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy Sound Template", "New sound template name:", QLineEdit.Normal, f"{cur['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.create_sound_template(nm.strip(), copy_from_id=cur["id"])
+        self._sel_sound = created["id"]
+        self._reload_sound_list()
+
     def _delete_sound_tpl(self):
         tpl = self.sound_chips.current_template()
         if not tpl or tpl.get("locked"):
@@ -2142,10 +2220,13 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Board Template Library</b>"))
         top.addStretch(1)
         self.btn_new_board = QPushButton("New Custom Board…")
+        self.btn_copy_board = QPushButton("Copy…")
         self.btn_del_board = QPushButton("Delete")
         self.btn_new_board.clicked.connect(self._create_board_tpl)
+        self.btn_copy_board.clicked.connect(self._copy_board_tpl)
         self.btn_del_board.clicked.connect(self._delete_board_tpl)
         top.addWidget(self.btn_new_board)
+        top.addWidget(self.btn_copy_board)
         top.addWidget(self.btn_del_board)
         lay.addLayout(top)
 
@@ -2245,6 +2326,20 @@ class ProfileDialog(QDialog):
         self._sel_board = created["id"]
         self._reload_board_list()
 
+    def _copy_board_tpl(self):
+        li = self.board_list.currentItem()
+        b = li.data(Qt.UserRole) if li else None
+        if not b:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy Board Template", "New board template name:", QLineEdit.Normal, f"{b['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.copy_board_template(b, nm.strip())
+        self._sel_board = created["id"]
+        self._reload_board_list()
+
     def _delete_board_tpl(self):
         li = self.board_list.currentItem()
         b = li.data(Qt.UserRole) if li else None
@@ -2306,11 +2401,11 @@ class ProfileDialog(QDialog):
         )
         self._reload_board_list()
 
-    # ---- Tab 5: Background (Library)
+    # ---- Tab 5: UI (Library)
     def _build_bg_tab(self):
         page = QWidget()
         lay = QVBoxLayout(page)
-        self.tabs.addTab(page, "Background")
+        self.tabs.addTab(page, "UI")
 
         holiday = themes.active_holiday_event(disabled=self._disable_holidays)
         if holiday and holiday in themes.HOLIDAY_BACKGROUNDS:
@@ -2324,17 +2419,19 @@ class ProfileDialog(QDialog):
             lay.addWidget(hl)
 
         row = QHBoxLayout()
-        row.addWidget(QLabel("<b>Background Library</b>"))
+        row.addWidget(QLabel("<b>UI Library</b>"))
         row.addStretch(1)
         self.btn_add_color_bg = QPushButton("Add Color…")
         self.btn_add_bg = QPushButton("Add Image…")
+        self.btn_copy_bg = QPushButton("Copy…")
         self.btn_del_bg = QPushButton("Delete")
         self.btn_add_color_bg.clicked.connect(self._add_custom_color_bg)
         self.btn_add_bg.clicked.connect(self._add_custom_bg)
+        self.btn_copy_bg.clicked.connect(self._copy_bg_tpl)
         self.btn_del_bg.clicked.connect(self._delete_custom_bg)
-        row.addWidget(self.btn_add_color_bg)
-        row.addWidget(self.btn_add_bg)
-        row.addWidget(self.btn_del_bg)
+        for b in (self.btn_add_color_bg, self.btn_add_bg, self.btn_copy_bg, self.btn_del_bg):
+            b.setProperty("compactBtn", True)
+            row.addWidget(b)
         lay.addLayout(row)
 
         self.bg_list = QListWidget()
@@ -2413,8 +2510,27 @@ class ProfileDialog(QDialog):
         self.smart_invert_combo.currentIndexChanged.connect(self._on_smart_invert_changed)
         col_form.addRow("Smart contrast:", self.smart_invert_combo)
 
+        ov_row = QHBoxLayout()
+        self.lbl_overlay_img = QLabel("None")
+        self.btn_overlay_img = QPushButton("Overlay Image…")
+        self.btn_overlay_clear = QPushButton("Clear")
+        self.overlay_opacity_slider = QSlider(Qt.Horizontal)
+        self.overlay_opacity_slider.setRange(5, 85)
+        self.overlay_opacity_slider.setValue(25)
+        self.overlay_opacity_lbl = QLabel("25%")
+        self.overlay_opacity_lbl.setMinimumWidth(34)
+        self.overlay_opacity_slider.valueChanged.connect(lambda v: self.overlay_opacity_lbl.setText(f"{v}%"))
+        self.btn_overlay_img.clicked.connect(self._pick_bg_overlay)
+        self.btn_overlay_clear.clicked.connect(self._clear_bg_overlay)
+        ov_row.addWidget(self.lbl_overlay_img, 1)
+        ov_row.addWidget(self.btn_overlay_img)
+        ov_row.addWidget(self.btn_overlay_clear)
+        ov_row.addWidget(self.overlay_opacity_slider, 1)
+        ov_row.addWidget(self.overlay_opacity_lbl)
+        col_form.addRow("UI overlay:", ov_row)
+
         act_row = QHBoxLayout()
-        self.btn_save_bg_opts = QPushButton("Save to Custom BG")
+        self.btn_save_bg_opts = QPushButton("Save Changes")
         self.btn_save_bg_opts.clicked.connect(self._save_custom_bg_options)
         self.btn_save_color_preset = QPushButton("Save Colors as Preset…")
         self.btn_reset_all_colors = QPushButton("Reset Colors")
@@ -2461,32 +2577,54 @@ class ProfileDialog(QDialog):
             return
         prev_id = self._sel_bg
         self._sel_bg = bg["id"]
-        if not self._reloading_bg and prev_id != self._sel_bg:
-            if not bg.get("image_path"):
-                self._ui_color = ""
-                self._accent_color = ""
+        locked = bool(bg.get("locked"))
+        if locked:
+            # Built-in UI templates cannot be modified directly — clear overrides so built-in stays pure
+            self._ui_color = ""
+            self._accent_color = ""
             self._text_color = themes.normalize_hex(bg.get("text_color", ""))
             self._ui_opacity = max(20, min(100, int(bg.get("ui_opacity", 100))))
             self._smart_text_invert = bg.get("smart_text_invert", "") or ""
-            self.bg_opacity_slider.blockSignals(True)
-            self.bg_opacity_slider.setValue(self._ui_opacity)
-            self.bg_opacity_lbl.setText(f"{self._ui_opacity}%")
-            self.bg_opacity_slider.blockSignals(False)
-            self.smart_invert_combo.blockSignals(True)
-            idx_si = self.smart_invert_combo.findData(self._smart_text_invert)
-            self.smart_invert_combo.setCurrentIndex(idx_si if idx_si >= 0 else 0)
-            self.smart_invert_combo.blockSignals(False)
-        self.btn_del_bg.setEnabled(not bg.get("locked"))
-        self.btn_save_bg_opts.setEnabled(not bg.get("locked"))
+        elif not self._reloading_bg and prev_id != self._sel_bg:
+            if not bg.get("image_path"):
+                self._ui_color = themes.normalize_hex(bg.get("ui_color", ""))
+                self._accent_color = themes.normalize_hex(bg.get("accent_color", ""))
+            self._text_color = themes.normalize_hex(bg.get("text_color", ""))
+            self._ui_opacity = max(20, min(100, int(bg.get("ui_opacity", 100))))
+            self._smart_text_invert = bg.get("smart_text_invert", "") or ""
+
+        self.bg_opacity_slider.blockSignals(True)
+        self.bg_opacity_slider.setValue(self._ui_opacity)
+        self.bg_opacity_lbl.setText(f"{self._ui_opacity}%")
+        self.bg_opacity_slider.blockSignals(False)
+        self.smart_invert_combo.blockSignals(True)
+        idx_si = self.smart_invert_combo.findData(self._smart_text_invert)
+        self.smart_invert_combo.setCurrentIndex(idx_si if idx_si >= 0 else 0)
+        self.smart_invert_combo.blockSignals(False)
+        ov_path = bg.get("overlay_path") or ""
+        ov_op = max(5, min(85, int(bg.get("overlay_opacity", 25))))
+        self.lbl_overlay_img.setText(os.path.basename(ov_path) if (ov_path and os.path.exists(ov_path)) else "None")
+        self.overlay_opacity_slider.blockSignals(True)
+        self.overlay_opacity_slider.setValue(ov_op)
+        self.overlay_opacity_lbl.setText(f"{ov_op}%")
+        self.overlay_opacity_slider.blockSignals(False)
+
+        for w in (
+            self.btn_del_bg, self.btn_save_bg_opts, self.btn_ui_color, self.btn_ui_color_reset,
+            self.btn_accent_color, self.btn_accent_color_reset, self.btn_text_color, self.btn_text_color_reset,
+            self.bg_opacity_slider, self.smart_invert_combo, self.btn_overlay_img, self.btn_overlay_clear,
+            self.overlay_opacity_slider, self.btn_reset_all_colors,
+        ):
+            w.setEnabled(not locked)
         bg_id = bg.get("id", "")
         if bg_id == "halloween":
-            desc = "Halloween theme that slowly shifts between pumpkin orange and spooky black."
+            desc = "Halloween UI theme (read-only). Click 'Copy…' to make an editable copy."
         elif bg_id == "christmas":
-            desc = "Christmas theme that slowly shifts between festive red and green."
+            desc = "Christmas UI theme (read-only). Click 'Copy…' to make an editable copy."
         elif bg_id == "new_year":
-            desc = "Dark midnight sky theme with animated fireworks in the background."
-        elif bg.get("locked"):
-            desc = "Built-in theme template."
+            desc = "Dark midnight sky UI with animated fireworks (read-only). Click 'Copy…' to customize."
+        elif locked:
+            desc = "Built-in UI template (read-only). Click 'Copy…' to create an editable copy."
         elif bg.get("image_path"):
             desc = f"Custom image: {bg.get('image_path', '')}"
         else:
@@ -2543,7 +2681,40 @@ class ProfileDialog(QDialog):
             ui_opacity=self._ui_opacity,
             text_color=self._text_color,
             smart_text_invert=mode,
+            ui_color=self._ui_color,
+            accent_color=self._accent_color,
+            overlay_opacity=self.overlay_opacity_slider.value(),
         ):
+            self._reload_bg_list()
+
+    def _pick_bg_overlay(self):
+        if not self._sel_bg.startswith("custom:"):
+            return
+        p, _ = QFileDialog.getOpenFileName(
+            self, "Select UI Overlay Image", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp)"
+        )
+        if p and themes.set_custom_background_overlay(self._sel_bg, p, self.overlay_opacity_slider.value()):
+            self._reload_bg_list()
+
+    def _clear_bg_overlay(self):
+        if not self._sel_bg.startswith("custom:"):
+            return
+        if themes.set_custom_background_overlay(self._sel_bg, "", self.overlay_opacity_slider.value()):
+            self._reload_bg_list()
+
+    def _copy_bg_tpl(self):
+        li = self.bg_list.currentItem()
+        bg = li.data(Qt.UserRole) if li else None
+        if not bg:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy UI Template", "New UI template name:", QLineEdit.Normal, f"{bg['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.copy_background_template(bg, nm.strip())
+        if created:
+            self._sel_bg = created["id"]
             self._reload_bg_list()
 
     def _pick_ui_color(self):
@@ -2679,14 +2850,16 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Piece Template Library</b>"))
         top.addStretch(1)
         self.btn_new_pieces = QPushButton("New Template…")
+        self.btn_copy_pieces = QPushButton("Copy…")
         self.btn_import_pieces_folder = QPushButton("Import Folder…")
         self.btn_import_pieces_files = QPushButton("Auto-Detect Files…")
         self.btn_del_pieces = QPushButton("Delete")
         self.btn_new_pieces.clicked.connect(self._create_pieces_tpl)
+        self.btn_copy_pieces.clicked.connect(self._copy_pieces_tpl)
         self.btn_import_pieces_folder.clicked.connect(self._import_pieces_folder)
         self.btn_import_pieces_files.clicked.connect(self._import_piece_files)
         self.btn_del_pieces.clicked.connect(self._delete_pieces_tpl)
-        for b in (self.btn_new_pieces, self.btn_import_pieces_folder, self.btn_import_pieces_files, self.btn_del_pieces):
+        for b in (self.btn_new_pieces, self.btn_copy_pieces, self.btn_import_pieces_folder, self.btn_import_pieces_files, self.btn_del_pieces):
             b.setProperty("compactBtn", True)
             top.addWidget(b)
         lay.addLayout(top)
@@ -2797,6 +2970,19 @@ class ProfileDialog(QDialog):
         self._sel_pieces = created["id"]
         self._reload_pieces_list()
 
+    def _copy_pieces_tpl(self):
+        cur = self.pieces_chips.current_template()
+        if not cur:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy Piece Template", "New piece template name:", QLineEdit.Normal, f"{cur['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.copy_piece_template(cur, nm.strip())
+        self._sel_pieces = created["id"]
+        self._reload_pieces_list()
+
     def _delete_pieces_tpl(self):
         tpl = self.pieces_chips.current_template()
         if not tpl or tpl.get("locked"):
@@ -2865,14 +3051,16 @@ class ProfileDialog(QDialog):
         top.addWidget(QLabel("<b>Annotation Template Library</b>"))
         top.addStretch(1)
         self.btn_new_anno = QPushButton("New Template…")
+        self.btn_copy_anno = QPushButton("Copy…")
         self.btn_import_anno_folder = QPushButton("Import Folder…")
         self.btn_import_anno_files = QPushButton("Auto-Detect Files…")
         self.btn_del_anno = QPushButton("Delete")
         self.btn_new_anno.clicked.connect(self._create_anno_tpl)
+        self.btn_copy_anno.clicked.connect(self._copy_anno_tpl)
         self.btn_import_anno_folder.clicked.connect(self._import_anno_folder)
         self.btn_import_anno_files.clicked.connect(self._import_anno_files)
         self.btn_del_anno.clicked.connect(self._delete_anno_tpl)
-        for b in (self.btn_new_anno, self.btn_import_anno_folder, self.btn_import_anno_files, self.btn_del_anno):
+        for b in (self.btn_new_anno, self.btn_copy_anno, self.btn_import_anno_folder, self.btn_import_anno_files, self.btn_del_anno):
             b.setProperty("compactBtn", True)
             top.addWidget(b)
         l2.addLayout(top)
@@ -3056,6 +3244,19 @@ class ProfileDialog(QDialog):
         if not ok or not nm.strip():
             return
         created = themes.create_annotation_template(nm.strip())
+        self._sel_annotations = created["id"]
+        self._reload_anno_list()
+
+    def _copy_anno_tpl(self):
+        cur = self.anno_chips.current_template()
+        if not cur:
+            return
+        nm, ok = QInputDialog.getText(
+            self, "Copy Annotation Template", "New annotation template name:", QLineEdit.Normal, f"{cur['name']} Copy"
+        )
+        if not ok or not nm.strip():
+            return
+        created = themes.copy_annotation_template(cur, nm.strip())
         self._sel_annotations = created["id"]
         self._reload_anno_list()
 
@@ -4201,6 +4402,10 @@ class MainWindow(QMainWindow):
         self.download_worker = None
         self.cur = 0
         self.pv_boards = None
+        self._pv_state = None
+        self._best_lines_row = None
+        self._best_lines_base_fen = ""
+        self._best_lines_store = self._load_best_lines_store()
 
         c = QWidget(); self.setCentralWidget(c)
         root = QHBoxLayout(c)
@@ -4228,10 +4433,10 @@ class MainWindow(QMainWindow):
         nav = QHBoxLayout()
         self._nav_buttons = []
         for kind, tip, fn in (
-            ("first", "First move (Home)", lambda: self.goto(0)),
-            ("prev", "Previous move (Left)", lambda: self.goto(self.cur - 1)),
-            ("next", "Next move (Right)", lambda: self.goto(self.cur + 1)),
-            ("last", "Last move (End)", lambda: self.goto(len(self.results))),
+            ("first", "First move (Home)", self._nav_first),
+            ("prev", "Previous move (Left)", self._nav_prev),
+            ("next", "Next move (Right)", self._nav_next),
+            ("last", "Last move (End)", self._nav_last),
             ("flip", "Flip board (F)", self.flip),
         ):
             b = QPushButton()
@@ -4269,7 +4474,28 @@ class MainWindow(QMainWindow):
         self.line_list = QListWidget()
         self.line_list.setMaximumHeight(130)
         self.line_list.itemClicked.connect(self.on_line_clicked)
+        self.line_list.setVisible(False)
         right.addWidget(self.line_list)
+        self.pv_bar = QWidget()
+        pv_lay = QHBoxLayout(self.pv_bar)
+        pv_lay.setContentsMargins(0, 0, 0, 0)
+        pv_lay.setSpacing(6)
+        self.btn_pv_prev = QPushButton("◀ Prev")
+        self.btn_pv_next = QPushButton("Next ▶")
+        self.btn_pv_exit = QPushButton("Exit Line")
+        self.pv_step_lbl = QLabel("")
+        self.pv_step_lbl.setAlignment(Qt.AlignCenter)
+        self.btn_pv_prev.clicked.connect(lambda: self._step_pv(-1))
+        self.btn_pv_next.clicked.connect(lambda: self._step_pv(1))
+        self.btn_pv_exit.clicked.connect(self._exit_pv_mode)
+        for b in (self.btn_pv_prev, self.btn_pv_next, self.btn_pv_exit):
+            b.setProperty("compactBtn", True)
+        pv_lay.addWidget(self.btn_pv_prev)
+        pv_lay.addWidget(self.pv_step_lbl, 1)
+        pv_lay.addWidget(self.btn_pv_next)
+        pv_lay.addWidget(self.btn_pv_exit)
+        self.pv_bar.setVisible(False)
+        right.addWidget(self.pv_bar)
         self.acc_label = QLabel("")
         self.acc_label.setTextFormat(Qt.RichText)
         right.addWidget(self.acc_label)
@@ -4316,6 +4542,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("QMainWindow,QWidget{background:#2b2b2b;color:#ddd;} QTableWidget{background:#1f1f1f;gridline-color:#333;}"
                            "QPushButton{background:#444;border:1px solid #555;padding:3px 8px;} QHeaderView::section{background:#333;color:#ddd;}"
                            "QListWidget,QPlainTextEdit,QLineEdit,QSpinBox,QComboBox{background:#1f1f1f;}")
+        self.ui_overlay = _UIOverlayWidget(self)
+        self.ui_overlay.setGeometry(self.rect())
+
         self.apply_customizations()
         self.refresh_profile_ui()
         if "--selftest" not in sys.argv:
@@ -4555,6 +4784,7 @@ class MainWindow(QMainWindow):
         self.update_players_header()
         self.populate_basic()
         self.orient()
+
         self.apply_customizations()
         for k in range(len(self.results)):
             self.set_row(k)
@@ -4973,9 +5203,11 @@ class MainWindow(QMainWindow):
                 break
         return b
 
-    def goto(self, idx, animate=True, play_sound=True):
+    def goto(self, idx, animate=True, play_sound=True, _keep_best_panel=False):
         if not self.game:
             return
+        if not _keep_best_panel:
+            self._hide_best_lines_panel()
         idx = max(0, min(idx, len(self.basic)))
         prev_idx = self.cur
         self.cur = idx
@@ -5262,6 +5494,33 @@ class MainWindow(QMainWindow):
             p = QPainter(self)
             p.fillRect(e_rect, self._cached_anim_bg_color)
             return
+        if self._cached_bg.get("starfield") and not self._cached_ui_color:
+            key = (self.width(), self.height(), self._bg_cache_token, "starfield")
+            if self._bg_scaled_cache is None or self._bg_scaled_cache[0] != key:
+                composed = QPixmap(self.size())
+                cp = QPainter(composed)
+                cp.setRenderHint(QPainter.Antialiasing)
+                w, h = float(self.width()), float(self.height())
+                bg_grad = QLinearGradient(0, 0, w, h)
+                bg_grad.setColorAt(0.0, QColor("#060916"))
+                bg_grad.setColorAt(0.5, QColor("#0e1535"))
+                bg_grad.setColorAt(1.0, QColor("#180c2e"))
+                cp.fillRect(composed.rect(), bg_grad)
+                rng = random.Random(42)
+                cp.setPen(Qt.NoPen)
+                for _ in range(120):
+                    sx = rng.random() * w
+                    sy = rng.random() * h
+                    sr = rng.uniform(0.7, 2.0)
+                    sa = rng.randint(90, 235)
+                    col = rng.choice((QColor(255, 255, 255, sa), QColor(186, 230, 253, sa), QColor(221, 214, 254, sa)))
+                    cp.setBrush(col)
+                    cp.drawEllipse(QPointF(sx, sy), sr, sr)
+                cp.end()
+                self._bg_scaled_cache = (key, composed)
+            p = QPainter(self)
+            p.drawPixmap(e_rect, self._bg_scaled_cache[1], e_rect)
+            return
         super().paintEvent(e)
 
     def _sync_toolbar_elevations(self):
@@ -5366,6 +5625,10 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
+        if hasattr(self, "ui_overlay") and self.ui_overlay is not None:
+            self.ui_overlay.setGeometry(self.rect())
+            if self.ui_overlay.isVisible():
+                self.ui_overlay.raise_()
         if getattr(self, "_cached_bg", None):
             QTimer.singleShot(0, self._apply_smart_text_contrast)
 
@@ -5579,6 +5842,12 @@ class MainWindow(QMainWindow):
             self._fireworks_sparks.clear()
 
         self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
+        if hasattr(self, "ui_overlay") and self.ui_overlay is not None:
+            self.ui_overlay.setGeometry(self.rect())
+            self.ui_overlay.set_overlay(
+                bg.get("overlay_path", ""),
+                int(bg.get("overlay_opacity", 25)),
+            )
         self.update()
 
     def apply_profile_dialog(self, d: ProfileDialog):
@@ -5593,6 +5862,7 @@ class MainWindow(QMainWindow):
         anno_id = cust.get("annotation_template", "inkwell")
         if anno_id.startswith("custom:"):
             themes.update_annotation_template_styles(anno_id, d.mode.currentData(), d.result_styles())
+
         self.apply_customizations()
         styles.save(self.qs)
         icons._cache.clear()
@@ -5887,47 +6157,182 @@ class MainWindow(QMainWindow):
             self.qs.setValue("survey_status", "ask_later")
             self.qs.sync()
 
-    # ------------------------------------------------------------ best lines
+    # ------------------------------------------------------------ best lines (player's turn + interactive stepping + persistence)
+    def _best_lines_cache_path(self) -> str:
+        return os.path.join(themes.data_root(), "best_lines_cache.json")
+
+    def _load_best_lines_store(self) -> dict:
+        p = self._best_lines_cache_path()
+        if os.path.isfile(p):
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+            except Exception:
+                pass
+        return {}
+
+    def _save_best_lines_store(self) -> None:
+        try:
+            # Cap cache to most recent 120 games to stay fast & lightweight
+            if len(self._best_lines_store) > 120:
+                keys = list(self._best_lines_store.keys())[-120:]
+                self._best_lines_store = {k: self._best_lines_store[k] for k in keys}
+            with open(self._best_lines_cache_path(), "w", encoding="utf-8") as f:
+                json.dump(self._best_lines_store, f)
+        except Exception:
+            pass
+
+    def _current_game_cache_key(self) -> str:
+        if not self.game:
+            return ""
+        h = self.game.headers
+        moves_str = " ".join(m.uci() for m in self.game.mainline_moves())
+        raw = f"{h.get('White','')}|{h.get('Black','')}|{h.get('Date','')}|{moves_str}"
+        return hashlib.sha1(raw.encode("utf-8", errors="ignore")).hexdigest()[:20]
+
+    def _hide_best_lines_panel(self):
+        self._pv_state = None
+        if hasattr(self, "pv_bar"):
+            self.pv_bar.setVisible(False)
+        if hasattr(self, "line_list"):
+            self.line_list.clear()
+            self.line_list.setVisible(False)
+        if hasattr(self, "line_title"):
+            self.line_title.setText("Best line: click “Best” on a move")
+
+    def _nav_first(self):
+        if self._pv_state:
+            self._set_pv_step(1)
+        else:
+            self.goto(0)
+
+    def _nav_prev(self):
+        if self._pv_state:
+            self._step_pv(-1)
+        else:
+            self.goto(self.cur - 1)
+
+    def _nav_next(self):
+        if self._pv_state:
+            self._step_pv(1)
+        else:
+            self.goto(self.cur + 1)
+
+    def _nav_last(self):
+        if self._pv_state:
+            self._set_pv_step(len(self._pv_state["ucis"]))
+        else:
+            self.goto(len(self.results))
+
+    def _exit_pv_mode(self):
+        row = self._pv_state["row"] if self._pv_state else self.cur
+        self._hide_best_lines_panel()
+        self.goto(row, animate=False, play_sound=False)
+
+    def _step_pv(self, delta: int):
+        if not self._pv_state:
+            return
+        self._set_pv_step(self._pv_state["step"] + delta)
+
+    def _set_pv_step(self, step: int):
+        st = self._pv_state
+        if not st:
+            return
+        ucis = st["ucis"]
+        if not ucis:
+            return
+        step = max(1, min(len(ucis), int(step)))
+        st["step"] = step
+        try:
+            b = chess.Board(st["base_fen"])
+        except Exception:
+            return
+        last = None
+        for u in ucis[:step]:
+            try:
+                mv = chess.Move.from_uci(u)
+                if mv not in b.legal_moves:
+                    break
+                b.push(mv)
+                last = mv
+            except Exception:
+                break
+        next_arrow = None
+        if step < len(ucis):
+            try:
+                cand = chess.Move.from_uci(ucis[step])
+                if cand in b.legal_moves:
+                    next_arrow = cand
+            except Exception:
+                pass
+        self.board.set_position(b, last, "", next_arrow, animate=False)
+        self.pv_step_lbl.setText(f"Line move {step} / {len(ucis)}")
+        self.btn_pv_prev.setEnabled(step > 1)
+        self.btn_pv_next.setEnabled(step < len(ucis))
+        self.pv_bar.setVisible(True)
+
     def show_best(self, row):
-        self.goto(row)
-        b_cur = self.board_at(row)
-        fen = b_cur.fen()
-        self.line_title.setText("Best line from this position (analyzing…)")
+        self.goto(row, animate=False, play_sound=False, _keep_best_panel=True)
+        # Best move is for the player who just moved on `row` (i.e. position BEFORE move row-1)
+        base_row = (row - 1) if row > 0 else 0
+        b_base = self.board_at(base_row)
+        base_fen = b_base.fen()
+        self._best_lines_row = row
+        self._best_lines_base_fen = base_fen
+        self._pv_state = None
+        self.pv_bar.setVisible(False)
         self.line_list.clear()
-        # results[row] holds the PV starting FROM board_at(row) (before move row was played)
-        if 0 <= row < len(self.results) and self.results[row].pv and self.results[row].analysed:
-            r = self.results[row]
+        self.line_list.setVisible(True)
+        side_lbl = "White" if b_base.turn == chess.WHITE else "Black"
+
+        # 1. Check saved best lines cache for this game + row
+        gkey = self._current_game_cache_key()
+        cached_entry = (self._best_lines_store.get(gkey) or {}).get(str(row))
+        if cached_entry and cached_entry.get("fen") == base_fen and cached_entry.get("lines"):
+            self.fill_lines(cached_entry["lines"], base_fen, save_cache=False)
+            return
+
+        self.line_title.setText(f"Best line for {side_lbl} (analyzing…)")
+        # 2. Show already-analyzed PV immediately if available for this exact turn
+        if row > 0 and (row - 1) < len(self.results) and self.results[row - 1].pv and self.results[row - 1].analysed:
+            r = self.results[row - 1]
             if r.pv_uci:
                 try:
                     first_mv = chess.Move.from_uci(r.pv_uci[0])
-                    if first_mv in b_cur.legal_moves:
+                    if first_mv in b_base.legal_moves:
                         self.fill_lines(
                             [(("%+.2f" % (r.eval_before / 100.0)) if r.eval_before is not None else "", r.pv, r.pv_uci)],
-                            fen,
+                            base_fen,
+                            save_cache=False,
                         )
                 except Exception:
                     pass
-        w = LineWorker(self.holder, fen, self.settings)
-        w.done.connect(self.fill_lines)
+        w = LineWorker(self.holder, base_fen, self.settings)
+        w.done.connect(lambda lines, fen: self.fill_lines(lines, fen, save_cache=True))
         w.failed.connect(lambda m: self.line_title.setText("Error: " + m))
         self.line_workers.append(w)
         w.start()
 
-    def fill_lines(self, lines, fen):
-        if self.board_at(self.cur).fen() != fen:
+    def fill_lines(self, lines, fen, save_cache: bool = True):
+        if fen != self._best_lines_base_fen:
             return
-        self.line_title.setText("Best lines (click a move to preview it on the board)")
-        self.line_list.clear()
-        self.current_lines, self.current_fen = [], fen
         try:
             b = chess.Board(fen)
         except Exception:
             return
+        side_lbl = "White" if b.turn == chess.WHITE else "Black"
+        self.line_title.setText(f"Best lines for {side_lbl} (click a line to step through from move 1)")
+        self.line_list.clear()
+        self.line_list.setVisible(True)
+        self.current_lines, self.current_fen = [], fen
         valid_lines = []
         for ev, san, ucis in lines:
             bb = b.copy()
             parts = []
             safe_ucis = []
+            safe_san = []
             if ucis:
                 for u in ucis:
                     try:
@@ -5939,9 +6344,11 @@ class MainWindow(QMainWindow):
                             num = "%d. " % bb.fullmove_number
                         elif not parts:
                             num = "%d… " % bb.fullmove_number
-                        parts.append(num + bb.san(mv))
+                        s_mv = bb.san(mv)
+                        parts.append(num + s_mv)
                         bb.push(mv)
                         safe_ucis.append(u)
+                        safe_san.append(s_mv)
                     except Exception:
                         break
             else:
@@ -5955,48 +6362,54 @@ class MainWindow(QMainWindow):
                             num = "%d. " % bb.fullmove_number
                         elif not parts:
                             num = "%d… " % bb.fullmove_number
-                        parts.append(num + bb.san(mv))
+                        s_mv = bb.san(mv)
+                        parts.append(num + s_mv)
                         bb.push(mv)
                         safe_ucis.append(mv.uci())
+                        safe_san.append(s_mv)
                     except Exception:
                         break
             if parts and safe_ucis:
                 li = len(valid_lines)
-                valid_lines.append((ev, san, safe_ucis))
+                valid_lines.append((ev, safe_san, safe_ucis))
                 it = QListWidgetItem("[%s]  %s" % (ev, " ".join(parts)))
                 it.setData(Qt.UserRole, li)
                 self.line_list.addItem(it)
         self.current_lines = valid_lines
+        if save_cache and valid_lines and self._best_lines_row is not None:
+            gkey = self._current_game_cache_key()
+            if gkey:
+                self._best_lines_store.setdefault(gkey, {})[str(self._best_lines_row)] = {
+                    "fen": fen,
+                    "lines": [[ev, san_l, uci_l] for ev, san_l, uci_l in valid_lines],
+                }
+                self._save_best_lines_store()
         if valid_lines and valid_lines[0][2]:
             try:
                 best_mv = chess.Move.from_uci(valid_lines[0][2][0])
                 if best_mv in b.legal_moves:
+                    # Show alternate best move arrow for the player's turn on the board
                     self.board.alt_move = best_mv
                     self.board.update()
             except Exception:
                 pass
 
     def on_line_clicked(self, item):
-        # preview: show position after full best line (safely guarded against illegal moves)
+        # Start stepping through the chosen best line from move 1!
         li = item.data(Qt.UserRole)
         if li is None or not (0 <= li < len(self.current_lines)):
             return
         ev, san, ucis = self.current_lines[li]
-        try:
-            b = chess.Board(self.current_fen)
-        except Exception:
+        if not ucis:
             return
-        last = None
-        for u in ucis:
-            try:
-                mv = chess.Move.from_uci(u)
-                if mv not in b.legal_moves:
-                    break
-                b.push(mv)
-                last = mv
-            except Exception:
-                break
-        self.board.set_position(b, last, "")
+        self._pv_state = {
+            "row": self._best_lines_row if self._best_lines_row is not None else self.cur,
+            "base_fen": self.current_fen,
+            "ucis": list(ucis),
+            "san": list(san),
+            "step": 1,
+        }
+        self._set_pv_step(1)
 
     def open_settings(self):
         d = SettingsDialog(self.settings, self)

@@ -107,6 +107,42 @@ BUILTIN_BOARDS = [
         "dark_img": "",
         "locked": True,
     },
+    {
+        "id": "space_nebula",
+        "name": "Space Nebula",
+        "light_hex": "#c7d2fe",
+        "dark_hex": "#1e1b4b",
+        "light_img": "",
+        "dark_img": "",
+        "locked": True,
+    },
+    {
+        "id": "emerald_tournament",
+        "name": "Emerald Club",
+        "light_hex": "#eeeed2",
+        "dark_hex": "#769656",
+        "light_img": "",
+        "dark_img": "",
+        "locked": True,
+    },
+    {
+        "id": "sakura_board",
+        "name": "Sakura Blossom",
+        "light_hex": "#fdf2f8",
+        "dark_hex": "#be6b8c",
+        "light_img": "",
+        "dark_img": "",
+        "locked": True,
+    },
+    {
+        "id": "obsidian_gold",
+        "name": "Obsidian & Gold",
+        "light_hex": "#e5dcc5",
+        "dark_hex": "#2c2a29",
+        "light_img": "",
+        "dark_img": "",
+        "locked": True,
+    },
 ]
 
 HOLIDAY_BOARDS = {
@@ -213,13 +249,84 @@ BUILTIN_BACKGROUNDS = [
         "ui_opacity": 55,
         "smart_text_invert": "bw",
     },
+    {
+        "id": "wood_classic",
+        "name": "Classic Walnut Wood",
+        "window_bg": "#2b1d14",
+        "panel_bg": "#382519",
+        "button_bg": "#4b3222",
+        "button_border": "#8c6239",
+        "header_bg": "#3a261a",
+        "text_fg": "#f5e6d3",
+        "grid_fg": "#6b4a2e",
+        "accent_bg": "#d4a359",
+        "image_path": "",
+        "locked": True,
+    },
+    {
+        "id": "space_cosmos",
+        "name": "Deep Space",
+        "window_bg": "#080b18",
+        "panel_bg": "#10162e",
+        "button_bg": "#1a2244",
+        "button_border": "#4f46e5",
+        "header_bg": "#121833",
+        "text_fg": "#e8eeff",
+        "grid_fg": "#312e81",
+        "accent_bg": "#7c3aed",
+        "image_path": "",
+        "locked": True,
+        "starfield": True,
+    },
+    {
+        "id": "emerald_club",
+        "name": "Emerald Club",
+        "window_bg": "#0f2419",
+        "panel_bg": "#163324",
+        "button_bg": "#1e4531",
+        "button_border": "#3b7a57",
+        "header_bg": "#142e20",
+        "text_fg": "#ebf7ee",
+        "grid_fg": "#2c5e43",
+        "accent_bg": "#e2b714",
+        "image_path": "",
+        "locked": True,
+    },
+    {
+        "id": "sakura_blossom",
+        "name": "Sakura Twilight",
+        "window_bg": "#231724",
+        "panel_bg": "#2f1f31",
+        "button_bg": "#412a44",
+        "button_border": "#9d4edd",
+        "header_bg": "#2b1c2d",
+        "text_fg": "#fdf2f8",
+        "grid_fg": "#6d3b6f",
+        "accent_bg": "#f472b6",
+        "image_path": "",
+        "locked": True,
+    },
+    {
+        "id": "midnight_gold",
+        "name": "Midnight Gold",
+        "window_bg": "#101218",
+        "panel_bg": "#181b24",
+        "button_bg": "#222634",
+        "button_border": "#a16207",
+        "header_bg": "#151821",
+        "text_fg": "#f8f4e6",
+        "grid_fg": "#4a3f28",
+        "accent_bg": "#eab308",
+        "image_path": "",
+        "locked": True,
+    },
 ]
 
 BUILTIN_THEME_PRESETS = [
     {
         "id": "inkwell",
         "name": "Inkwell (Default)",
-        "description": "Default Inkwell pieces & annotations, Fluent icon, Brown & Tan board, Dark theme, Original sounds.",
+        "description": "Default Inkwell pieces & annotations, Fluent icon, Brown & Tan board, Dark UI, Original sounds.",
         "locked": True,
         "app_icon": "fluent",
         "board_template": "brown_tan",
@@ -231,13 +338,73 @@ BUILTIN_THEME_PRESETS = [
     {
         "id": "aero",
         "name": "Aero",
-        "description": "Windows 7 Aero glass background & transparent board, Aero icon, Aero pieces, and Aero annotations.",
+        "description": "Windows 7 Aero glass UI & transparent board, Aero icon, Aero pieces, and Aero annotations.",
         "locked": True,
         "app_icon": "aero",
         "board_template": "aero_glass",
         "background_template": "aero_glass",
         "piece_template": "aero",
         "annotation_template": "aero",
+        "sound_template": "original",
+    },
+    {
+        "id": "wooden",
+        "name": "Wooden",
+        "description": "Warm walnut wood UI, classic Brown & Tan board, CBurnett pieces, Skeuomorphism icon, Inkwell annotations.",
+        "locked": True,
+        "app_icon": "skueomorphism",
+        "board_template": "brown_tan",
+        "background_template": "wood_classic",
+        "piece_template": "cburnett",
+        "annotation_template": "inkwell",
+        "sound_template": "original",
+    },
+    {
+        "id": "space",
+        "name": "Space",
+        "description": "Deep Space starfield UI, Space Nebula board, Liquidglass icon, Inkwell pieces & annotations.",
+        "locked": True,
+        "app_icon": "liquidglass",
+        "board_template": "space_nebula",
+        "background_template": "space_cosmos",
+        "piece_template": "inkwell",
+        "annotation_template": "inkwell",
+        "sound_template": "original",
+    },
+    {
+        "id": "emerald_club",
+        "name": "Emerald Club",
+        "description": "Tournament chess club green UI & Emerald Club board, CBurnett pieces, Fluent icon.",
+        "locked": True,
+        "app_icon": "fluent",
+        "board_template": "emerald_tournament",
+        "background_template": "emerald_club",
+        "piece_template": "cburnett",
+        "annotation_template": "inkwell",
+        "sound_template": "original",
+    },
+    {
+        "id": "sakura",
+        "name": "Sakura",
+        "description": "Sakura Twilight plum UI, Sakura Blossom board, Flatdesign icon, Inkwell pieces & annotations.",
+        "locked": True,
+        "app_icon": "flatdesign",
+        "board_template": "sakura_board",
+        "background_template": "sakura_blossom",
+        "piece_template": "inkwell",
+        "annotation_template": "inkwell",
+        "sound_template": "original",
+    },
+    {
+        "id": "midnight_gold",
+        "name": "Midnight Gold",
+        "description": "Obsidian & brushed gold UI, Obsidian & Gold board, Metro icon, CBurnett pieces.",
+        "locked": True,
+        "app_icon": "metro",
+        "board_template": "obsidian_gold",
+        "background_template": "midnight_gold",
+        "piece_template": "cburnett",
+        "annotation_template": "inkwell",
         "sound_template": "original",
     },
 ]
@@ -1006,6 +1173,19 @@ def delete_custom_board_template(template_id: str) -> bool:
     return False
 
 
+def copy_board_template(src_board: dict, new_name: str) -> dict:
+    """Create an editable custom copy of any built-in or custom board template."""
+    return save_custom_board_template(
+        new_name,
+        light_hex=src_board.get("light_hex", "#f0d9b5"),
+        dark_hex=src_board.get("dark_hex", "#b58863"),
+        light_png=src_board.get("light_img", ""),
+        dark_png=src_board.get("dark_img", ""),
+        opacity=int(src_board.get("opacity", 68 if src_board.get("aero_glass") else 100)),
+        aero_glass=bool(src_board.get("aero_glass")),
+    )
+
+
 # ---------------------------------------------------------------- Backgrounds
 def backgrounds_dir() -> str:
     d = os.path.join(data_root(), "backgrounds")
@@ -1152,8 +1332,11 @@ def update_custom_background_options(
     text_color: str = "",
     smart_text_invert: str = "off",
     aero_glass: Optional[bool] = None,
+    ui_color: Optional[str] = None,
+    accent_color: Optional[str] = None,
+    overlay_opacity: Optional[int] = None,
 ) -> bool:
-    """Update UI opacity, text color, and smart invert settings on a custom background template."""
+    """Update UI opacity, colors, smart contrast, and overlay opacity on a custom UI template."""
     if not bg_id or not bg_id.startswith("custom:"):
         return False
     folder = bg_id.split(":", 1)[1]
@@ -1168,14 +1351,100 @@ def update_custom_background_options(
         data["text_color"] = txt_hex
         if txt_hex:
             data["text_fg"] = txt_hex
+        if ui_color is not None:
+            data["ui_color"] = normalize_hex(ui_color)
+        if accent_color is not None:
+            data["accent_color"] = normalize_hex(accent_color)
         data["smart_text_invert"] = smart_text_invert if smart_text_invert in ("off", "invert", "bw") else "off"
         if aero_glass is not None:
             data["aero_glass"] = bool(aero_glass)
+        if overlay_opacity is not None:
+            data["overlay_opacity"] = max(0, min(85, int(overlay_opacity)))
         with open(manifest, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return True
     except Exception:
         return False
+
+
+def set_custom_background_overlay(bg_id: str, overlay_src: str, overlay_opacity: int = 25) -> bool:
+    """Copy or clear an overlay image rendered on top of the UI for a custom UI template."""
+    if not bg_id or not bg_id.startswith("custom:"):
+        return False
+    folder = bg_id.split(":", 1)[1]
+    bdir = os.path.join(backgrounds_dir(), folder)
+    manifest = os.path.join(bdir, "template.json")
+    if not os.path.isfile(manifest):
+        return False
+    try:
+        with open(manifest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if overlay_src and os.path.exists(overlay_src):
+            ext = os.path.splitext(overlay_src)[1].lower() or ".png"
+            dest = os.path.join(bdir, f"overlay{ext}")
+            if os.path.abspath(overlay_src) != os.path.abspath(dest):
+                shutil.copyfile(overlay_src, dest)
+            data["overlay_path"] = dest
+        else:
+            data["overlay_path"] = ""
+        data["overlay_opacity"] = max(0, min(85, int(overlay_opacity)))
+        with open(manifest, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        return True
+    except Exception:
+        return False
+
+
+def copy_background_template(src_bg: dict, new_name: str) -> Optional[dict]:
+    """Create an editable custom copy of any built-in or custom UI/background template."""
+    clean = (new_name or "").strip() or f"{src_bg.get('name', 'UI')} Copy"
+    slug = _slugify(clean, "bg")
+    root = backgrounds_dir()
+    folder = slug
+    idx = 2
+    while os.path.exists(os.path.join(root, folder)):
+        folder = f"{slug}_{idx}"
+        idx += 1
+    bdir = os.path.join(root, folder)
+    os.makedirs(bdir, exist_ok=True)
+    pal = get_theme_palette(src_bg)
+    data = dict(src_bg)
+    data["id"] = f"custom:{folder}"
+    data["name"] = clean
+    data["locked"] = False
+    data.pop("holiday", None)
+    data.setdefault("window_bg", pal["bg"])
+    data.setdefault("panel_bg", pal["panel"])
+    data.setdefault("button_bg", pal["btn_bg"])
+    data.setdefault("button_border", pal["border"])
+    data.setdefault("header_bg", pal["panel"])
+    data.setdefault("text_fg", pal["fg"])
+    data.setdefault("grid_fg", pal["border"])
+    data.setdefault("ui_color", normalize_hex(src_bg.get("ui_color", "")) or pal["bg"])
+    data.setdefault("accent_color", normalize_hex(src_bg.get("accent_color", "")) or pal["accent"])
+    data.setdefault("text_color", normalize_hex(src_bg.get("text_color", "")))
+    data.setdefault("ui_opacity", int(src_bg.get("ui_opacity", 100)))
+    data.setdefault("smart_text_invert", src_bg.get("smart_text_invert", "off") or "off")
+    data.setdefault("overlay_opacity", int(src_bg.get("overlay_opacity", 25)))
+    src_img = src_bg.get("image_path") or ""
+    if src_img and os.path.exists(src_img):
+        ext = os.path.splitext(src_img)[1].lower() or ".png"
+        dest = os.path.join(bdir, f"background{ext}")
+        shutil.copyfile(src_img, dest)
+        data["image_path"] = dest
+    else:
+        data["image_path"] = ""
+    src_ov = src_bg.get("overlay_path") or ""
+    if src_ov and os.path.exists(src_ov):
+        ext = os.path.splitext(src_ov)[1].lower() or ".png"
+        dest_ov = os.path.join(bdir, f"overlay{ext}")
+        shutil.copyfile(src_ov, dest_ov)
+        data["overlay_path"] = dest_ov
+    else:
+        data["overlay_path"] = ""
+    with open(os.path.join(bdir, "template.json"), "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+    return data
 
 
 def delete_custom_background(bg_id: str) -> bool:
@@ -1240,6 +1509,11 @@ def save_custom_theme_preset(name: str, bundle: dict) -> dict:
     with open(os.path.join(root, f"{slug}.json"), "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
     return data
+
+
+def copy_theme_preset(src_preset: dict, new_name: str) -> dict:
+    """Create an editable custom copy of any built-in or custom theme preset bundle."""
+    return save_custom_theme_preset(new_name, dict(src_preset))
 
 
 def delete_custom_theme_preset(preset_id: str) -> bool:
@@ -1470,6 +1744,16 @@ def import_pieces_from_folder(template_id: str, folder_path: str) -> Tuple[int, 
         if fname.lower().endswith(PIECE_IMAGE_EXTS)
     ]
     return import_piece_files(template_id, files)
+
+
+def copy_piece_template(src_tpl: dict, new_name: str) -> dict:
+    """Create an editable custom copy of any built-in or custom piece template."""
+    created = create_piece_template(new_name)
+    tid = created["id"]
+    for key, src_path in (src_tpl.get("pieces") or {}).items():
+        if src_path and os.path.exists(src_path):
+            set_piece_slot(tid, key, src_path)
+    return get_piece_template(tid)
 
 
 def set_piece_slot(template_id: str, piece_key: str, source_path: str) -> bool:
@@ -1902,6 +2186,21 @@ def reset_all_annotation_icon_slots(template_id: str) -> bool:
     return True
 
 
+def copy_annotation_template(src_tpl: dict, new_name: str) -> dict:
+    """Create an editable custom copy of any built-in or custom annotation template."""
+    created = create_annotation_template(new_name)
+    tid = created["id"]
+    for stem, src_path in (src_tpl.get("icons") or {}).items():
+        if src_path and os.path.exists(src_path):
+            set_annotation_icon_slot(tid, stem, src_path)
+    update_annotation_template_styles(
+        tid,
+        src_tpl.get("mode", "icons"),
+        dict(src_tpl.get("styles") or {}),
+    )
+    return get_annotation_template(tid)
+
+
 def update_annotation_template_styles(template_id: str, mode: str, styles_dict: dict) -> bool:
     if not template_id.startswith("custom:"):
         return False
@@ -2252,6 +2551,111 @@ def get_theme_palette(
             "bar_border": "#334155",
             "bar_fg": "#eef2ff",
         }
+    elif bg_id == "wood_classic":
+        base = {
+            "bg": "#2b1d14",
+            "panel": "#382519",
+            "surface": "#322117",
+            "surface_alt": "#3f2a1d",
+            "fg": "#f5e6d3",
+            "muted": "#c9a882",
+            "border": "#8c6239",
+            "accent": "#d4a359",
+            "accent_fg": "#1f130c",
+            "btn_bg": "#4b3222",
+            "btn_hover": "#61412c",
+            "btn_hover_fg": "#fff7ed",
+            "graph_bg": "#241810",
+            "graph_fill": "#e6ccb2",
+            "graph_mid": "#d4a359",
+            "bar_bg": "#382519",
+            "bar_border": "#8c6239",
+            "bar_fg": "#f5e6d3",
+        }
+    elif bg_id == "space_cosmos":
+        base = {
+            "bg": "#080b18",
+            "panel": "#10162e",
+            "surface": "#0e1429",
+            "surface_alt": "#171f3d",
+            "fg": "#e8eeff",
+            "muted": "#93a3d1",
+            "border": "#4338ca",
+            "accent": "#7c3aed",
+            "accent_fg": "#ffffff",
+            "btn_bg": "#1a2244",
+            "btn_hover": "#283366",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#0a0e20",
+            "graph_fill": "#c7d2fe",
+            "graph_mid": "#38bdf8",
+            "bar_bg": "#10162e",
+            "bar_border": "#4338ca",
+            "bar_fg": "#e8eeff",
+        }
+    elif bg_id == "emerald_club":
+        base = {
+            "bg": "#0f2419",
+            "panel": "#163324",
+            "surface": "#132c1f",
+            "surface_alt": "#1b3d2b",
+            "fg": "#ebf7ee",
+            "muted": "#9cc9ad",
+            "border": "#3b7a57",
+            "accent": "#e2b714",
+            "accent_fg": "#0f2419",
+            "btn_bg": "#1e4531",
+            "btn_hover": "#285c41",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#0d1f15",
+            "graph_fill": "#d8f3dc",
+            "graph_mid": "#e2b714",
+            "bar_bg": "#163324",
+            "bar_border": "#3b7a57",
+            "bar_fg": "#ebf7ee",
+        }
+    elif bg_id == "sakura_blossom":
+        base = {
+            "bg": "#231724",
+            "panel": "#2f1f31",
+            "surface": "#2a1b2c",
+            "surface_alt": "#38243a",
+            "fg": "#fdf2f8",
+            "muted": "#d8a8c8",
+            "border": "#9d4edd",
+            "accent": "#f472b6",
+            "accent_fg": "#1f1021",
+            "btn_bg": "#412a44",
+            "btn_hover": "#57375c",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#1c121d",
+            "graph_fill": "#fbcfe8",
+            "graph_mid": "#f472b6",
+            "bar_bg": "#2f1f31",
+            "bar_border": "#9d4edd",
+            "bar_fg": "#fdf2f8",
+        }
+    elif bg_id == "midnight_gold":
+        base = {
+            "bg": "#101218",
+            "panel": "#181b24",
+            "surface": "#151821",
+            "surface_alt": "#1f2330",
+            "fg": "#f8f4e6",
+            "muted": "#c2b693",
+            "border": "#a16207",
+            "accent": "#eab308",
+            "accent_fg": "#101218",
+            "btn_bg": "#222634",
+            "btn_hover": "#30364a",
+            "btn_hover_fg": "#ffffff",
+            "graph_bg": "#0d0f14",
+            "graph_fill": "#e5dcc5",
+            "graph_mid": "#eab308",
+            "bar_bg": "#181b24",
+            "bar_border": "#a16207",
+            "bar_fg": "#f8f4e6",
+        }
     else:
         base = {
             "bg": "#1e1e1e",
@@ -2299,6 +2703,7 @@ def build_app_stylesheet(
     animated_bg = bg.get("animated") or ""
     is_fireworks = animated_bg == "fireworks" and not is_custom_image
     is_aero_glass = bool(bg.get("aero_glass")) and not eff_ui
+    is_starfield = bool(bg.get("starfield")) and not is_custom_image and not eff_ui
     raw_op = ui_opacity if (ui_opacity is not None and 20 <= int(ui_opacity) <= 100) else int(bg.get("ui_opacity", 100))
     eff_op = max(20, min(100, raw_op))
     is_translucent = eff_op < 100
@@ -2312,7 +2717,7 @@ def build_app_stylesheet(
         p["accent"] = "#eab308"
         p["accent_hover"] = "#facc15"
         p["accent_fg"] = "#111827"
-    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass) else p["bg"]
+    main_bg = "transparent" if (is_custom_image or is_fireworks or is_color_shift or is_aero_glass or is_starfield) else p["bg"]
     if is_aero_glass:
         op_scale = eff_op / 55.0
         def _sa(a: int) -> int:
