@@ -70,6 +70,15 @@ BUILTIN_BOARDS = [
         "locked": True,
     },
     {
+        "id": "wood_walnut",
+        "name": "Carved Walnut & Maple",
+        "light_hex": "#ecd0a2",
+        "dark_hex": "#9c683e",
+        "light_img": resource_path(os.path.join("assets", "backgrounds", "wood_board_light.png")),
+        "dark_img": resource_path(os.path.join("assets", "backgrounds", "wood_board_dark.png")),
+        "locked": True,
+    },
+    {
         "id": "black_white",
         "name": "Black & White",
         "light_hex": "#f0f0f0",
@@ -260,8 +269,9 @@ BUILTIN_BACKGROUNDS = [
         "text_fg": "#f5e6d3",
         "grid_fg": "#6b4a2e",
         "accent_bg": "#d4a359",
-        "image_path": "",
+        "image_path": resource_path(os.path.join("assets", "backgrounds", "wood_walnut.jpg")),
         "locked": True,
+        "ui_opacity": 76,
     },
     {
         "id": "space_cosmos",
@@ -276,9 +286,11 @@ BUILTIN_BACKGROUNDS = [
         "accent_bg": "#7c3aed",
         "image_path": "",
         "locked": True,
+        "ui_opacity": 58,
         "bg_effect": "stars",
         "effect_density": 65,
         "effect_speed": 100,
+        "effect_color": "",
     },
     {
         "id": "emerald_club",
@@ -307,9 +319,11 @@ BUILTIN_BACKGROUNDS = [
         "accent_bg": "#f472b6",
         "image_path": "",
         "locked": True,
+        "ui_opacity": 60,
         "bg_effect": "sakura",
         "effect_density": 55,
         "effect_speed": 100,
+        "effect_color": "",
     },
     {
         "id": "midnight_gold",
@@ -355,10 +369,10 @@ BUILTIN_THEME_PRESETS = [
     {
         "id": "wooden",
         "name": "Wooden",
-        "description": "Warm walnut wood UI, classic Brown & Tan board, CBurnett pieces, Skeuomorphism icon, Inkwell annotations.",
+        "description": "Textured walnut wood UI, Carved Walnut & Maple wood-grain board, CBurnett pieces, Skeuomorphism icon, Inkwell annotations.",
         "locked": True,
         "app_icon": "skueomorphism",
-        "board_template": "brown_tan",
+        "board_template": "wood_walnut",
         "background_template": "wood_classic",
         "piece_template": "cburnett",
         "annotation_template": "inkwell",
@@ -1344,6 +1358,7 @@ def update_custom_background_options(
     bg_effect: Optional[str] = None,
     effect_density: Optional[int] = None,
     effect_speed: Optional[int] = None,
+    effect_color: Optional[str] = None,
 ) -> bool:
     """Update UI opacity, colors, smart contrast, overlay opacity, and non-holiday effect modifiers."""
     if not bg_id or not bg_id.startswith("custom:"):
@@ -1377,6 +1392,8 @@ def update_custom_background_options(
             data["effect_density"] = max(10, min(100, int(effect_density)))
         if effect_speed is not None:
             data["effect_speed"] = max(20, min(200, int(effect_speed)))
+        if effect_color is not None:
+            data["effect_color"] = normalize_hex(effect_color)
         with open(manifest, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         return True
@@ -1435,11 +1452,13 @@ def copy_background_template(src_bg: dict, new_name: str) -> Optional[dict]:
         # Limited-time holiday effects cannot be copied into permanent custom UIs
         data.pop("animated", None)
         data["bg_effect"] = "none"
+        data["effect_color"] = ""
     else:
         eff = (src_bg.get("bg_effect") or "none").strip().lower()
         data["bg_effect"] = eff if eff in ("none", "stars", "sakura") else "none"
         data["effect_density"] = max(10, min(100, int(src_bg.get("effect_density", 55))))
         data["effect_speed"] = max(20, min(200, int(src_bg.get("effect_speed", 100))))
+        data["effect_color"] = normalize_hex(src_bg.get("effect_color", ""))
     data.setdefault("window_bg", pal["bg"])
     data.setdefault("panel_bg", pal["panel"])
     data.setdefault("button_bg", pal["btn_bg"])

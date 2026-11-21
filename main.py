@@ -21,7 +21,7 @@ import chess
 import chess.pgn
 from PySide6.QtCore import Qt, QThread, Signal, QSettings, QRect, QRectF, QPoint, QPointF, QSize, QEvent, QTimer, QUrl
 from PySide6.QtGui import (
-    QPainter, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
+    QPainter, QPainterPath, QColor, QFont, QFontMetrics, QPen, QBrush, QShortcut, QKeySequence, QIcon, QPixmap,
     QDesktopServices, QRadialGradient, QLinearGradient, QPolygonF,
 )
 from PySide6.QtWidgets import (
@@ -1653,6 +1653,7 @@ class ProfileDialog(QDialog):
         self._text_color = themes.normalize_hex(getattr(settings, "text_color", ""))
         self._ui_opacity = max(20, min(100, int(getattr(settings, "ui_opacity", 100))))
         self._smart_text_invert = getattr(settings, "smart_text_invert", "") or ""
+        self._effect_color = ""
         self._reloading_bg = False
         self._sel_pieces = getattr(settings, "piece_template", "inkwell")
         if self._sel_pieces == "default":
@@ -2515,6 +2516,20 @@ class ProfileDialog(QDialog):
         self.bg_effect_combo.addItem("None", "none")
         self.bg_effect_combo.addItem("Moving Stars", "stars")
         self.bg_effect_combo.addItem("Falling Sakura Blossoms", "sakura")
+        self.eff_color_swatch = QLabel()
+        self.eff_color_swatch.setFixedSize(24, 20)
+        self.eff_color_swatch.setToolTip("Modifier tint color (Auto uses theme default)")
+        self.btn_eff_color = QPushButton("Color…")
+        self.btn_eff_color_reset = QPushButton("Auto")
+        self.btn_eff_color.clicked.connect(self._pick_effect_color)
+        self.btn_eff_color_reset.clicked.connect(self._reset_effect_color)
+        eff_row.addWidget(self.bg_effect_combo, 1)
+        eff_row.addWidget(self.eff_color_swatch)
+        eff_row.addWidget(self.btn_eff_color)
+        eff_row.addWidget(self.btn_eff_color_reset)
+        col_form.addRow("BG modifier:", eff_row)
+
+        eff_tune_row = QHBoxLayout()
         self.eff_density_slider = QSlider(Qt.Horizontal)
         self.eff_density_slider.setRange(10, 100)
         self.eff_density_slider.setValue(55)
@@ -2527,14 +2542,13 @@ class ProfileDialog(QDialog):
         self.eff_speed_lbl = QLabel("100%")
         self.eff_speed_lbl.setMinimumWidth(38)
         self.eff_speed_slider.valueChanged.connect(lambda v: self.eff_speed_lbl.setText(f"{v}%"))
-        eff_row.addWidget(self.bg_effect_combo)
-        eff_row.addWidget(QLabel("Density:"))
-        eff_row.addWidget(self.eff_density_slider, 1)
-        eff_row.addWidget(self.eff_density_lbl)
-        eff_row.addWidget(QLabel("Speed:"))
-        eff_row.addWidget(self.eff_speed_slider, 1)
-        eff_row.addWidget(self.eff_speed_lbl)
-        col_form.addRow("BG modifier:", eff_row)
+        eff_tune_row.addWidget(QLabel("Density:"))
+        eff_tune_row.addWidget(self.eff_density_slider, 1)
+        eff_tune_row.addWidget(self.eff_density_lbl)
+        eff_tune_row.addWidget(QLabel("Speed:"))
+        eff_tune_row.addWidget(self.eff_speed_slider, 1)
+        eff_tune_row.addWidget(self.eff_speed_lbl)
+        col_form.addRow("Modifier tuning:", eff_tune_row)
 
         act_row = QHBoxLayout()
         self.btn_save_bg_opts = QPushButton("Save Changes")
@@ -2604,15 +2618,17 @@ class ProfileDialog(QDialog):
         self.bg_effect_combo.blockSignals(False)
         ef_dens = max(10, min(100, int(bg.get("effect_density", 55))))
         ef_spd = max(20, min(200, int(bg.get("effect_speed", 100))))
+        self._effect_color = themes.normalize_hex(bg.get("effect_color", ""))
         self.eff_density_slider.setValue(ef_dens)
         self.eff_speed_slider.setValue(ef_spd)
+        self._refresh_effect_color_swatch()
 
         for w in (
             self.btn_del_bg, self.btn_save_bg_opts, self.btn_ui_color, self.btn_ui_color_reset,
             self.btn_accent_color, self.btn_accent_color_reset, self.btn_text_color, self.btn_text_color_reset,
             self.bg_opacity_slider, self.smart_invert_combo, self.btn_overlay_img, self.btn_overlay_clear,
-            self.overlay_opacity_slider, self.bg_effect_combo, self.eff_density_slider, self.eff_speed_slider,
-            self.btn_reset_all_colors,
+            self.overlay_opacity_slider, self.bg_effect_combo, self.btn_eff_color, self.btn_eff_color_reset,
+            self.eff_density_slider, self.eff_speed_slider, self.btn_reset_all_colors,
         ):
             w.setEnabled(not locked)
         bg_id = bg.get("id", "")
@@ -2686,8 +2702,37 @@ class ProfileDialog(QDialog):
             bg_effect=self.bg_effect_combo.currentData() or "none",
             effect_density=self.eff_density_slider.value(),
             effect_speed=self.eff_speed_slider.value(),
+            effect_color=self._effect_color,
         ):
             self._reload_bg_list()
+
+    def _refresh_effect_color_swatch(self):
+        col = self._effect_color
+        if col:
+            self.eff_color_swatch.setStyleSheet(
+                f"background:{col}; border:1px solid #888; border-radius:4px;"
+            )
+            self.eff_color_swatch.setToolTip(f"Modifier color: {col}")
+        else:
+            eff = self.bg_effect_combo.currentData() or "none"
+            preview = "#f472b6" if eff == "sakura" else ("#93c5fd" if eff == "stars" else "#64748b")
+            self.eff_color_swatch.setStyleSheet(
+                f"background:qlineargradient(x1:0,y1:0,x2:1,y2:1,stop:0 #ffffff,stop:1 {preview}); "
+                "border:1px solid #888; border-radius:4px;"
+            )
+            self.eff_color_swatch.setToolTip("Modifier color: Auto (theme default)")
+
+    def _pick_effect_color(self):
+        eff = self.bg_effect_combo.currentData() or "none"
+        default_col = "#f472b6" if eff == "sakura" else "#93c5fd"
+        col = QColorDialog.getColor(QColor(self._effect_color or default_col), self, "Choose Modifier Color")
+        if col.isValid():
+            self._effect_color = col.name(QColor.HexRgb).lower()
+            self._refresh_effect_color_swatch()
+
+    def _reset_effect_color(self):
+        self._effect_color = ""
+        self._refresh_effect_color_swatch()
 
     def _pick_bg_overlay(self):
         if not self._sel_bg.startswith("custom:"):
@@ -4390,7 +4435,10 @@ class MainWindow(QMainWindow):
         self._bg_effect_mode = "none"
         self._bg_effect_density = 55
         self._bg_effect_speed = 100
+        self._bg_effect_color = ""
         self._bg_particles = []
+        self._bg_meteors = []
+        self._bg_meteor_cooldown = 2.2
         self._bg_particle_sprites = {}
         self._bg_effect_last_ts = time.monotonic()
         self._bg_effect_timer = QTimer(self)
@@ -5510,28 +5558,60 @@ class MainWindow(QMainWindow):
         if self._bg_effect_mode in ("stars", "sakura", "snow"):
             p = QPainter(self)
             bg_id = self._cached_bg.get("id", "")
+            w, h = float(self.width()), float(self.height())
             if bg_id == "space_cosmos" and not self._cached_ui_color:
-                w, h = float(self.width()), float(self.height())
                 bg_grad = QLinearGradient(0, 0, w, h)
-                bg_grad.setColorAt(0.0, QColor("#060916"))
-                bg_grad.setColorAt(0.5, QColor("#0e1535"))
-                bg_grad.setColorAt(1.0, QColor("#180c2e"))
+                bg_grad.setColorAt(0.0, QColor("#040610"))
+                bg_grad.setColorAt(0.45, QColor("#0a1026"))
+                bg_grad.setColorAt(0.8, QColor("#110d2a"))
+                bg_grad.setColorAt(1.0, QColor("#170a28"))
                 p.fillRect(e_rect, bg_grad)
+                # Soft cosmic nebula clouds for realistic deep-space depth
+                neb1 = QRadialGradient(w * 0.78, h * 0.24, max(w, h) * 0.45)
+                neb1.setColorAt(0.0, QColor(124, 58, 237, 46))
+                neb1.setColorAt(0.5, QColor(59, 130, 246, 22))
+                neb1.setColorAt(1.0, QColor(0, 0, 0, 0))
+                p.fillRect(e_rect, neb1)
+                neb2 = QRadialGradient(w * 0.22, h * 0.76, max(w, h) * 0.42)
+                neb2.setColorAt(0.0, QColor(14, 165, 233, 34))
+                neb2.setColorAt(0.5, QColor(139, 92, 246, 18))
+                neb2.setColorAt(1.0, QColor(0, 0, 0, 0))
+                p.fillRect(e_rect, neb2)
             elif bg_id == "sakura_blossom" and not self._cached_ui_color:
-                w, h = float(self.width()), float(self.height())
                 bg_grad = QLinearGradient(0, 0, 0, h)
-                bg_grad.setColorAt(0.0, QColor("#2a162d"))
-                bg_grad.setColorAt(0.6, QColor("#201323"))
-                bg_grad.setColorAt(1.0, QColor("#180f1c"))
+                bg_grad.setColorAt(0.0, QColor("#2c1530"))
+                bg_grad.setColorAt(0.45, QColor("#231328"))
+                bg_grad.setColorAt(1.0, QColor("#160d1c"))
                 p.fillRect(e_rect, bg_grad)
+                # Soft twilight moonlit rose glow
+                glow = QRadialGradient(w * 0.76, h * 0.16, max(w, h) * 0.48)
+                glow.setColorAt(0.0, QColor(244, 114, 182, 42))
+                glow.setColorAt(0.55, QColor(192, 132, 252, 18))
+                glow.setColorAt(1.0, QColor(0, 0, 0, 0))
+                p.fillRect(e_rect, glow)
             else:
                 p.fillRect(e_rect, self._cached_anim_bg_color)
             self._draw_bg_particles(p)
             return
         super().paintEvent(e)
 
-    def _get_particle_sprite(self, kind: str, size_key: int) -> QPixmap:
-        ck = (kind, size_key)
+    def _effect_tint_palette(self, kind: str, custom_hex: str):
+        if custom_hex:
+            base = QColor(custom_hex)
+            if base.isValid():
+                hi = base.lighter(145)
+                mid = base
+                deep = base.darker(135)
+                return [hi, mid, deep]
+        if kind == "stars":
+            return [QColor("#dbeafe"), QColor("#ffffff"), QColor("#fef08a"), QColor("#ddd6fe")]
+        if kind == "sakura":
+            return [QColor("#fbcfe8"), QColor("#f9a8d4"), QColor("#f472b6")]
+        return [QColor("#ffffff"), QColor("#e0f2fe")]
+
+    def _get_particle_sprite(self, kind: str, size_key: int, variant: int = 0) -> QPixmap:
+        col_key = self._bg_effect_color if kind in ("stars", "sakura") else ""
+        ck = (kind, size_key, variant, col_key)
         pm = self._bg_particle_sprites.get(ck)
         if pm is not None:
             return pm
@@ -5541,20 +5621,56 @@ class MainWindow(QMainWindow):
         p = QPainter(pm)
         p.setRenderHint(QPainter.Antialiasing)
         c = dim / 2.0
+        pal = self._effect_tint_palette(kind, col_key)
+        tint = pal[variant % len(pal)]
         if kind == "stars":
+            core = QColor(255, 255, 255, 250)
+            halo = QColor(tint.red(), tint.green(), tint.blue(), 175)
+            outer = QColor(tint.red(), tint.green(), tint.blue(), 0)
             grad = QRadialGradient(c, c, c)
-            grad.setColorAt(0.0, QColor(255, 255, 255, 245))
-            grad.setColorAt(0.45, QColor(186, 230, 253, 180))
-            grad.setColorAt(1.0, QColor(124, 58, 237, 0))
+            grad.setColorAt(0.0, core)
+            grad.setColorAt(0.28, QColor(min(255, tint.red() + 40), min(255, tint.green() + 40), min(255, tint.blue() + 40), 220))
+            grad.setColorAt(0.55, halo)
+            grad.setColorAt(1.0, outer)
             p.setPen(Qt.NoPen)
             p.setBrush(grad)
-            p.drawEllipse(QPointF(c, c), c, c)
+            p.drawEllipse(QPointF(c, c), c * 0.85, c * 0.85)
+            # Foreground bright stars get crisp optical 4-point diffraction spikes
+            if dim >= 14:
+                spike_grad_h = QLinearGradient(0, c, dim, c)
+                spike_grad_h.setColorAt(0.0, outer)
+                spike_grad_h.setColorAt(0.5, QColor(255, 255, 255, 215))
+                spike_grad_h.setColorAt(1.0, outer)
+                p.setPen(QPen(QBrush(spike_grad_h), max(1.0, dim * 0.065), Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(QPointF(dim * 0.05, c), QPointF(dim * 0.95, c))
+                spike_grad_v = QLinearGradient(c, 0, c, dim)
+                spike_grad_v.setColorAt(0.0, outer)
+                spike_grad_v.setColorAt(0.5, QColor(255, 255, 255, 215))
+                spike_grad_v.setColorAt(1.0, outer)
+                p.setPen(QPen(QBrush(spike_grad_v), max(1.0, dim * 0.065), Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(QPointF(c, dim * 0.05), QPointF(c, dim * 0.95))
         elif kind == "sakura":
-            p.setPen(Qt.NoPen)
-            p.setBrush(QColor(251, 207, 232, 215))
-            p.drawEllipse(QRectF(dim * 0.12, dim * 0.25, dim * 0.76, dim * 0.48))
-            p.setBrush(QColor(244, 114, 182, 145))
-            p.drawEllipse(QRectF(dim * 0.28, dim * 0.34, dim * 0.44, dim * 0.28))
+            # Realistic notched Japanese cherry blossom petal silhouette
+            path = QPainterPath()
+            path.moveTo(dim * 0.50, dim * 0.92)  # petal stem base
+            path.cubicTo(dim * 0.14, dim * 0.72, dim * 0.10, dim * 0.26, dim * 0.36, dim * 0.08)
+            path.lineTo(dim * 0.50, dim * 0.22)  # signature sakura tip notch
+            path.lineTo(dim * 0.64, dim * 0.08)
+            path.cubicTo(dim * 0.90, dim * 0.26, dim * 0.86, dim * 0.72, dim * 0.50, dim * 0.92)
+            path.closeSubpath()
+            base_c = QColor(min(255, tint.red() + 45), min(255, tint.green() + 45), min(255, tint.blue() + 45), 240)
+            edge_c = QColor(tint.red(), tint.green(), tint.blue(), 225)
+            tip_c = QColor(max(0, tint.red() - 18), max(0, tint.green() - 28), max(0, tint.blue() - 12), 200)
+            grad = QLinearGradient(dim * 0.5, dim * 0.92, dim * 0.5, dim * 0.08)
+            grad.setColorAt(0.0, base_c)
+            grad.setColorAt(0.55, edge_c)
+            grad.setColorAt(1.0, tip_c)
+            p.setPen(QPen(QColor(255, 255, 255, 70), 0.75))
+            p.setBrush(grad)
+            p.drawPath(path)
+            # Subtle inner vein
+            p.setPen(QPen(QColor(255, 255, 255, 90), 0.8))
+            p.drawLine(QPointF(dim * 0.50, dim * 0.84), QPointF(dim * 0.50, dim * 0.34))
         else:  # snow
             grad = QRadialGradient(c, c, c)
             grad.setColorAt(0.0, QColor(255, 255, 255, 245))
@@ -5569,30 +5685,57 @@ class MainWindow(QMainWindow):
 
     def _seed_bg_particles(self, mode: str, density: int, speed: int):
         self._bg_particles.clear()
+        self._bg_meteors.clear()
+        self._bg_meteor_cooldown = random.uniform(1.5, 3.8)
         w = max(800, self.width())
         h = max(600, self.height())
-        count = max(14, min(110, int(round(density * (1.1 if mode == "stars" else 0.75)))))
+        count = max(18, min(140, int(round(density * (1.35 if mode == "stars" else 0.85)))))
         spd_mult = max(0.2, min(2.0, speed / 100.0))
         rng = random.Random()
         for _ in range(count):
             if mode == "stars":
-                sz = rng.choice((6, 8, 10, 12))
-                vx = rng.uniform(-18.0, -5.0) * spd_mult * (sz / 10.0)
-                vy = rng.uniform(2.0, 9.0) * spd_mult * (sz / 10.0)
+                # 3 parallax depth layers: distant pinpoint, mid glowing, foreground bright w/ spikes
+                r = rng.random()
+                if r < 0.48:
+                    sz, depth = rng.choice((4, 6)), 0.38
+                elif r < 0.84:
+                    sz, depth = rng.choice((8, 10, 12)), 0.72
+                else:
+                    sz, depth = rng.choice((14, 16, 18)), 1.15
+                vx = rng.uniform(-16.0, -7.0) * spd_mult * depth
+                vy = rng.uniform(2.5, 8.0) * spd_mult * depth
                 phase = rng.uniform(0, math.tau)
-                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+                twinkle_spd = rng.uniform(1.4, 3.8)
+                variant = rng.randint(0, 3)
+                # [x, y, vx, vy, sz, phase, rot, rot_spd, tumble, tumble_spd, variant]
+                self._bg_particles.append([
+                    rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase,
+                    0.0, twinkle_spd, depth, 0.0, variant
+                ])
             elif mode == "sakura":
-                sz = rng.choice((12, 16, 20))
-                vx = rng.uniform(-14.0, 18.0) * spd_mult
-                vy = rng.uniform(24.0, 52.0) * spd_mult
+                depth = rng.uniform(0.55, 1.25)
+                sz = int(round(rng.choice((14, 18, 22, 26)) * depth))
+                vx = rng.uniform(-12.0, 24.0) * spd_mult * depth
+                vy = rng.uniform(24.0, 56.0) * spd_mult * depth
                 phase = rng.uniform(0, math.tau)
-                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+                rot = rng.uniform(0, 360.0)
+                rot_spd = rng.uniform(-75.0, 75.0) * spd_mult
+                tumble = rng.uniform(0, math.tau)
+                tumble_spd = rng.uniform(1.6, 3.6) * spd_mult
+                variant = rng.randint(0, 2)
+                self._bg_particles.append([
+                    rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase,
+                    rot, rot_spd, tumble, tumble_spd, variant
+                ])
             elif mode == "snow":
                 sz = rng.choice((8, 12, 16))
                 vx = rng.uniform(-10.0, 10.0) * spd_mult
                 vy = rng.uniform(22.0, 56.0) * spd_mult
                 phase = rng.uniform(0, math.tau)
-                self._bg_particles.append([rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase])
+                self._bg_particles.append([
+                    rng.uniform(0, w), rng.uniform(0, h), vx, vy, sz, phase,
+                    0.0, 0.0, 1.0, 0.0, 0
+                ])
         self._bg_effect_last_ts = time.monotonic()
 
     def _tick_bg_particles(self):
@@ -5607,20 +5750,55 @@ class MainWindow(QMainWindow):
         w = max(200.0, float(self.width()))
         h = max(200.0, float(self.height()))
         mode = self._bg_effect_mode
+        spd_mult = max(0.2, min(2.0, self._bg_effect_speed / 100.0))
+        wind_gust = math.sin(now * 0.55) * 26.0 * spd_mult if mode == "sakura" else 0.0
         for pt in self._bg_particles:
-            pt[5] += dt * (2.2 if mode == "stars" else 1.8)
-            sway = math.sin(pt[5]) * (18.0 if mode == "sakura" else (12.0 if mode == "snow" else 0.0))
-            pt[0] += (pt[2] + sway) * dt
-            pt[1] += pt[3] * dt
-            if pt[0] < -24:
-                pt[0] = w + 16
-            elif pt[0] > w + 24:
-                pt[0] = -16
-            if pt[1] > h + 24:
-                pt[1] = -16
+            if mode == "stars":
+                pt[5] += dt * pt[7]
+                pt[0] += pt[2] * dt
+                pt[1] += pt[3] * dt
+            elif mode == "sakura":
+                pt[5] += dt * 1.9
+                pt[6] = (pt[6] + pt[7] * dt) % 360.0
+                pt[8] += pt[9] * dt
+                sway = math.sin(pt[5]) * 26.0 + wind_gust
+                lift = math.cos(pt[8]) * 7.0
+                pt[0] += (pt[2] + sway) * dt
+                pt[1] += max(10.0, pt[3] + lift) * dt
+            else:  # snow
+                pt[5] += dt * 1.8
+                sway = math.sin(pt[5]) * 12.0
+                pt[0] += (pt[2] + sway) * dt
+                pt[1] += pt[3] * dt
+            if pt[0] < -32:
+                pt[0] = w + 24
+            elif pt[0] > w + 32:
+                pt[0] = -24
+            if pt[1] > h + 32:
+                pt[1] = -24
                 pt[0] = random.uniform(0, w)
-            elif pt[1] < -24:
-                pt[1] = h + 16
+            elif pt[1] < -32:
+                pt[1] = h + 24
+
+        # Periodic shooting stars for Space mode
+        if mode == "stars":
+            self._bg_meteor_cooldown -= dt * spd_mult
+            if self._bg_meteor_cooldown <= 0.0 and len(self._bg_meteors) < 2:
+                sx = random.uniform(w * 0.25, w * 1.05)
+                sy = random.uniform(-20.0, h * 0.35)
+                mvx = random.uniform(-520.0, -340.0) * spd_mult
+                mvy = random.uniform(160.0, 290.0) * spd_mult
+                mlen = random.uniform(75.0, 145.0)
+                self._bg_meteors.append([sx, sy, mvx, mvy, mlen, 0.0, random.uniform(0.75, 1.25)])
+                self._bg_meteor_cooldown = random.uniform(2.4, 5.4)
+            alive = []
+            for m in self._bg_meteors:
+                m[0] += m[2] * dt
+                m[1] += m[3] * dt
+                m[5] += dt
+                if m[5] < m[6] and -180 <= m[0] <= w + 180 and -180 <= m[1] <= h + 180:
+                    alive.append(m)
+            self._bg_meteors = alive
         self.update()
 
     def _draw_bg_particles(self, p: QPainter):
@@ -5628,13 +5806,49 @@ class MainWindow(QMainWindow):
         if not self._bg_particles:
             return
         p.save()
-        for x, y, _vx, _vy, sz, phase in self._bg_particles:
-            pm = self._get_particle_sprite(mode, int(sz))
+        p.setRenderHint(QPainter.Antialiasing)
+        for pt in self._bg_particles:
+            x, y, _vx, _vy, sz, phase, rot, _rs, tumble, _ts, variant = pt
+            pm = self._get_particle_sprite(mode, int(sz), int(variant))
             if mode == "stars":
-                p.setOpacity(0.52 + 0.45 * (0.5 + 0.5 * math.sin(phase)))
+                tw = 0.42 + 0.56 * (0.5 + 0.5 * math.sin(phase))
+                p.setOpacity(tw)
+                p.drawPixmap(int(x - sz / 2), int(y - sz / 2), pm)
+            elif mode == "sakura":
+                p.save()
+                p.translate(x, y)
+                p.rotate(rot)
+                # 3D tumbling foreshortening as petal flips in the wind
+                flip_scale = 0.28 + 0.72 * abs(math.cos(tumble))
+                p.scale(1.0, flip_scale)
+                depth_op = 0.62 if sz < 16 else (0.78 if sz < 22 else 0.92)
+                p.setOpacity(depth_op)
+                p.drawPixmap(int(-sz / 2), int(-sz / 2), pm)
+                p.restore()
             else:
-                p.setOpacity(0.85)
-            p.drawPixmap(int(x - sz / 2), int(y - sz / 2), pm)
+                p.setOpacity(0.86)
+                p.drawPixmap(int(x - sz / 2), int(y - sz / 2), pm)
+
+        # Draw shooting stars / meteors in Space mode
+        if mode == "stars" and self._bg_meteors:
+            pal = self._effect_tint_palette("stars", self._bg_effect_color)
+            tail_tint = pal[0]
+            for sx, sy, mvx, mvy, mlen, age, life in self._bg_meteors:
+                prog = age / max(0.01, life)
+                alpha = math.sin(prog * math.pi)
+                spd = math.hypot(mvx, mvy) or 1.0
+                tx = sx - (mvx / spd) * mlen
+                ty = sy - (mvy / spd) * mlen
+                grad = QLinearGradient(sx, sy, tx, ty)
+                grad.setColorAt(0.0, QColor(255, 255, 255, int(245 * alpha)))
+                grad.setColorAt(0.35, QColor(tail_tint.red(), tail_tint.green(), tail_tint.blue(), int(170 * alpha)))
+                grad.setColorAt(1.0, QColor(tail_tint.red(), tail_tint.green(), tail_tint.blue(), 0))
+                p.setOpacity(1.0)
+                p.setPen(QPen(QBrush(grad), 2.2, Qt.SolidLine, Qt.RoundCap))
+                p.drawLine(QPointF(sx, sy), QPointF(tx, ty))
+                p.setPen(Qt.NoPen)
+                p.setBrush(QColor(255, 255, 255, int(250 * alpha)))
+                p.drawEllipse(QPointF(sx, sy), 2.2, 2.2)
         p.restore()
 
     def _sync_toolbar_elevations(self):
@@ -5715,7 +5929,8 @@ class MainWindow(QMainWindow):
             bar_border = pal["bar_border"]
             hover_bg = pal["btn_hover"]
             accent_use = pal["accent"]
-            graph_bg = pal["graph_bg"]
+            g_hex = pal["graph_bg"].lstrip("#")
+            graph_bg = f"#{a_bar:02x}{g_hex}" if len(g_hex) == 6 else pal["graph_bg"]
         else:
             bar_bg = pal["bar_bg"]
             bar_border = pal["bar_border"]
@@ -5958,6 +6173,10 @@ class MainWindow(QMainWindow):
         bg_eff = (bg.get("bg_effect") or "none").strip().lower()
         ef_dens = max(10, min(100, int(bg.get("effect_density", 55))))
         ef_spd = max(20, min(200, int(bg.get("effect_speed", 100))))
+        ef_col = themes.normalize_hex(bg.get("effect_color", ""))
+        if ef_col != self._bg_effect_color:
+            self._bg_effect_color = ef_col
+            self._bg_particle_sprites.clear()
         if bg_eff in ("stars", "sakura", "snow"):
             if (
                 self._bg_effect_mode != bg_eff
@@ -5975,6 +6194,7 @@ class MainWindow(QMainWindow):
             self._bg_effect_mode = "none"
             self._bg_effect_timer.stop()
             self._bg_particles.clear()
+            self._bg_meteors.clear()
 
         self._apply_theme_only(bg, has_img, phase=self._christmas_phase)
         if hasattr(self, "ui_overlay") and self.ui_overlay is not None:
