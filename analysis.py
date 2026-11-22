@@ -11,6 +11,7 @@ import chess.engine
 
 import classify as C
 import explanations as EX
+import skills as SK
 from openings import OpeningBook, resource_path
 from accuracy import phase_of
 
@@ -221,6 +222,7 @@ class Settings:
     lenient_brilliant: bool = False
     eval_formula: str = "improved"      # improved | win_prob
     annotation_system: str = "modern"   # modern | legacy
+    enable_skills: bool = True
     auto_update: bool = True            # check GitHub newest stable release on startup
     auto_install_prereleases: bool = True  # auto-install newer pre-releases when running a pre-release build
     app_icon: str = "fluent"
@@ -319,6 +321,23 @@ class MoveResult:
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
     explanation: str = ""
+    skills: List[str] = field(default_factory=list)
+
+
+def extract_average_elo(headers) -> int:
+    """Return average valid WhiteElo/BlackElo from PGN headers, defaulting to 2000."""
+    if not headers:
+        return 2000
+    vals = []
+    for key in ("WhiteElo", "BlackElo"):
+        raw = str(headers.get(key, "") or "").strip()
+        if raw.isdigit():
+            v = int(raw)
+            if 400 <= v <= 3500:
+                vals.append(v)
+    if not vals:
+        return 2000
+    return int(round(sum(vals) / len(vals)))
 
 
 def format_cp_text(cp: Optional[int], score: Optional[chess.engine.PovScore] = None) -> str:
@@ -439,6 +458,13 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         return all_scope or boards[i].turn in tracked
 
     full_cache = {}
+    game_elo = extract_average_elo(game.headers)
+    prob_fn = (
+        (lambda cp: C.expected_points_pct(cp, game_elo))
+        if settings.annotation_system == "modern"
+        else C.win_pct
+    )
+    book_counts = {chess.WHITE: 0, chess.BLACK: 0}
 
     def is_full(i):
         if i >= n:
@@ -506,7 +532,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
 
         after_pv = []
         # Prefer the direct evaluation of boards[i + 1] (`after[0]`) so every position has a
-        # single consistent score across consecutive plies, matching Chess.com Game Review.
+        # single consistent score across consecutive plies.
         if after:
             after_score = after[0]["score"]
             after_pv = after[0].get("pv") or []
@@ -569,11 +595,11 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             ):
                 is_best = True
                 after_cp = best_cp
-            best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
+            best_wp, after_wp = prob_fn(best_cp), prob_fn(after_cp)
             loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
             second_cp = _norm_cp(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
             r.second_cp = second_cp
-            second_wp = C.win_pct(second_cp) if second_cp is not None else None
+            second_wp = prob_fn(second_cp) if second_cp is not None else None
 
             if i == 0 and C.is_standard_start(b):
                 before_cp = 0
@@ -581,7 +607,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             elif i > 0 and results[i - 1].eval_before is not None:
                 prev_w = results[i - 1].eval_before
                 before_cp = prev_w if mover == chess.WHITE else -prev_w
-                wp_before = C.win_pct(before_cp)
+                wp_before = prob_fn(before_cp)
             else:
                 before_cp = best_cp
                 wp_before = best_wp
@@ -656,7 +682,7 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             else:
                 r.symbol = ""
 
-            # Chess.com Game Review continuity: when a non-book move is the engine's top move
+            # Continuity: when a non-book move is the engine's top move
             # (Best, Great, or Brilliant), the position's evaluation remains unchanged from the
             # evaluation entering the move.
             if (
@@ -675,7 +701,30 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             r.analysed = bool(in_scope)
             r.symbol = "/" if in_scope else ""
 
+        if r.book:
+            book_counts[mover] += 1
+
         if r.analysed or r.book or r.symbol:
+            eb_m = None
+            ea_m = None
+            if r.eval_before is not None:
+                eb_m = r.eval_before if mover == chess.WHITE else -r.eval_before
+            if r.eval_after is not None:
+                ea_m = r.eval_after if mover == chess.WHITE else -r.eval_after
+            r.skills = SK.detect_move_skills(
+                b,
+                mv,
+                symbol=r.symbol,
+                phase=r.phase,
+                is_book=r.book,
+                book_count_for_side=book_counts[mover],
+                prev_move=(moves[i - 1] if i > 0 else None),
+                prev_was_capture=(boards[i - 1].is_capture(moves[i - 1]) if i > 0 else False),
+                brilliant_type=r.brilliant_type,
+                second_cp=r.second_cp,
+                eval_before_mover=eb_m,
+                eval_after_mover=ea_m,
+            )
             r.explanation = EX.explain_move(
                 r.fen_before, r.uci, r.symbol,
                 eval_before=r.eval_before,
@@ -722,6 +771,12 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
     sac_threshold = 1 if settings.lenient_brilliant else 2
     max_loss = 5.0 if settings.lenient_brilliant else 2.5
     tracked = settings.tracked_colors(game.headers)
+    game_elo = extract_average_elo(game.headers)
+    prob_fn = (
+        (lambda cp: C.expected_points_pct(cp, game_elo))
+        if settings.annotation_system == "modern"
+        else C.win_pct
+    )
 
     b = game.board()
     boards_hist = [b.copy()]
@@ -771,16 +826,16 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
             )
             if is_best:
                 after_cp = best_cp
-            after_wp = C.win_pct(after_cp)
-            best_wp = max(after_wp + r.loss, C.win_pct(best_cp))
-            second_wp = C.win_pct(r.second_cp) if r.second_cp is not None else None
+            after_wp = prob_fn(after_cp)
+            best_wp = min(100.0, max(after_wp + r.loss, prob_fn(best_cp)))
+            second_wp = prob_fn(r.second_cp) if r.second_cp is not None else None
             if i == 0 and C.is_standard_start(b):
                 before_cp = 0
                 wp_before = 50.0
             elif i > 0 and results[i - 1].eval_before is not None:
                 prev_w = results[i - 1].eval_before
                 before_cp = prev_w if mover == chess.WHITE else -prev_w
-                wp_before = C.win_pct(before_cp)
+                wp_before = prob_fn(before_cp)
             else:
                 before_cp = best_cp
                 wp_before = best_wp
@@ -861,6 +916,7 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
         moves_hist.append(mv)
         b.push(mv)
         boards_hist.append(b.copy())
+    SK.detect_game_skills(game, results)
 
 
 def analyse_single_move(
@@ -878,6 +934,7 @@ def analyse_single_move(
     prev_symbol: str = "",
     book_active: bool = True,
     ply: int = 1,
+    elo: int = 2000,
 ) -> Tuple[MoveResult, list]:
     """Evaluate a single manual move on `board_before` and classify + explain it live.
 
@@ -993,18 +1050,23 @@ def analyse_single_move(
             is_best = True
             after_cp = best_cp
 
-        best_wp, after_wp = C.win_pct(best_cp), C.win_pct(after_cp)
+        prob_fn = (
+            (lambda cp: C.expected_points_pct(cp, elo))
+            if settings.annotation_system == "modern"
+            else C.win_pct
+        )
+        best_wp, after_wp = prob_fn(best_cp), prob_fn(after_cp)
         loss = 0.0 if is_best else max(0.0, best_wp - after_wp)
         second_cp = _norm_cp(C.cp_of(before[1]["score"].pov(mover))) if len(before) > 1 else None
         r.second_cp = second_cp
-        second_wp = C.win_pct(second_cp) if second_cp is not None else None
+        second_wp = prob_fn(second_cp) if second_cp is not None else None
 
         if C.is_standard_start(b):
             before_cp = 0
             wp_before = 50.0
         elif prev_eval_before_white is not None:
             before_cp = prev_eval_before_white if mover == chess.WHITE else -prev_eval_before_white
-            wp_before = C.win_pct(before_cp)
+            wp_before = prob_fn(before_cp)
         else:
             before_cp = best_cp
             wp_before = best_wp
@@ -1057,6 +1119,26 @@ def analyse_single_move(
             if prev_eval_after_text:
                 r.eval_after_text = prev_eval_after_text
 
+    eb_m = None
+    ea_m = None
+    if r.eval_before is not None:
+        eb_m = r.eval_before if mover == chess.WHITE else -r.eval_before
+    if r.eval_after is not None:
+        ea_m = r.eval_after if mover == chess.WHITE else -r.eval_after
+    r.skills = SK.detect_move_skills(
+        b,
+        move,
+        symbol=r.symbol,
+        phase=r.phase,
+        is_book=r.book,
+        book_count_for_side=1 if r.book else 0,
+        prev_move=prev_move,
+        prev_was_capture=prev_was_capture,
+        brilliant_type=r.brilliant_type,
+        second_cp=r.second_cp,
+        eval_before_mover=eb_m,
+        eval_after_mover=ea_m,
+    )
     r.explanation = EX.explain_move(
         r.fen_before, r.uci, r.symbol,
         eval_before=r.eval_before,

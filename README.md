@@ -6,7 +6,7 @@
 
   **Modern chess analysis workstation powered by Stockfish 19, Lichess opening classification, custom annotations, sound effects, and an in-app game library with advanced Brilliant (`!!`) tracking.**
 
-  ![Version](https://img.shields.io/badge/Version-v1.11.0-4caf50?style=for-the-badge)
+  ![Version](https://img.shields.io/badge/Version-v1.12.0-4caf50?style=for-the-badge)
   ![Platform](https://img.shields.io/badge/Platform-Windows%20.EXE-0078D6?style=for-the-badge)
   ![Engine](https://img.shields.io/badge/Stockfish-19%20Universal-d32f2f?style=for-the-badge)
   ![UI](https://img.shields.io/badge/GUI-PySide6-41cd52?style=for-the-badge)
@@ -28,7 +28,7 @@
   <tr>
     <td width="50%">
       <h3>🎯 Precision Move Classification</h3>
-      Features the <b>Modern Expected-Points Annotation System</b> (default) alongside the <b>Legacy Annotation System</b> in Settings—detecting tactical turnarounds, piece sacrifices, brilliant underpromotions, misses, and book moves with smooth slide animations and sound effects.
+      Features an upgraded <b>Rating-Aware Expected-Points Annotation Engine</b> (default) alongside the <b>Legacy Annotation System</b> in Settings—calibrating tactical turnarounds, piece sacrifices, brilliant underpromotions, misses, and book moves with smooth slide animations and sound effects.
     </td>
     <td width="50%">
       <h3>📚 In-App Saved Games Library</h3>
@@ -42,27 +42,27 @@
     </td>
     <td width="50%">
       <h3>📈 Dynamic Evaluation &amp; Accuracy</h3>
-      Smooth live graph and dual-color POV eval bar starting strictly at <code>0.0</code> on move 0, with selectable <b>Improved Eval Determination</b> (default) or <b>Win Probability (Legacy)</b> formulas and phase-by-phase accuracy.
+      Smooth live graph and linear <code>[-4.0, +4.0]</code> POV eval bar starting strictly at <code>0.0</code> on move 0, paired with calibrated expected-points move scoring, phase accuracy, and per-piece (<code>P/N/B/R/Q/K</code>) accuracy breakdowns.
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <h3>🎨 Hot-Reloadable MS Paint Customizer</h3>
-      Switch between Icons and Legacy styles or edit any annotation badge directly in Microsoft Paint with live in-app preview—all without re-analyzing the current game.
+      <h3>🏆 Skills &amp; Habits Progression</h3>
+      Demonstrate sound moves in game review to master <b>72 chess skills</b> across <b>Fundamentals, Openings, Tactics, Strategy, and Endgames</b>—complete with unlock prerequisite chains, in-game skill badges, move quick-jumps, and a dedicated progress dialog.
+    </td>
+    <td width="50%">
+      <h3>💡 Move Explanations &amp; Live Routes</h3>
+      Every analysed move displays board-aware explanations detailing forks, pins, skewers, hanging pieces, and stronger alternatives—plus interactive board dragging to test manual alternate routes with live Stockfish evaluation.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3>🎨 Live Visual Theme Customizer</h3>
+      Switch app icons, sound packs, board tiles, backgrounds, piece sets, and editable annotation styles with instant preview—all without re-analyzing the current game.
     </td>
     <td width="50%">
       <h3>⚡ Unthrottled Background Queue</h3>
       Windows PowerThrottling bypass ensures Stockfish 19 continues calculating at maximum CPU speed even when tabbed out or minimized.
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <h3>💡 Move Explanations</h3>
-      Every analysed move displays a clear, board-aware tactical explanation detailing forks, hanging pieces, checks, sacrifices, book lines, and stronger alternatives.
-    </td>
-    <td width="50%">
-      <h3>🔀 Manual Alternate Routes with Live Annotation</h3>
-      Drag or click pieces directly on the board at any position to test alternate variations—with instant Stockfish evaluation, live annotation badges, arrows, sounds, and move explanations.
     </td>
   </tr>
 </table>
@@ -100,6 +100,7 @@
 | <kbd>Ctrl</kbd> + <kbd>O</kbd> | Open PGN file |
 | <kbd>Ctrl</kbd> + <kbd>S</kbd> | Save analysed game to Library |
 | <kbd>Ctrl</kbd> + <kbd>L</kbd> | Open Saved Games Library |
+| <kbd>Ctrl</kbd> + <kbd>K</kbd> | Open Skills &amp; Habits Progress |
 
 ---
 
@@ -131,9 +132,10 @@ If you encounter an unexpected crash, error, or bug, please let us know:
 
 ## 🗺️ Roadmap
 
-- [ ] **Manual alternate routes with live annotation** — Explore branching what-if lines on the board with real-time Stockfish evaluation and instant move classification badges.
+- [x] **Manual alternate routes with live annotation** — Explore branching what-if lines on the board with real-time Stockfish evaluation and instant move classification badges.
 - [ ] **Custom chess bots with live annotation** — Practice against configurable bot personalities and ELO tiers with live eval feedback and move analysis.
-- [ ] **Move feedback** — Natural language explanations detailing why a move is a blunder, mistake, or best move (e.g. tactics, pins, forks, and hanging pieces).
+- [x] **Move feedback** — Natural language explanations detailing why a move is a blunder, mistake, or best move (e.g. tactics, pins, forks, and hanging pieces).
+- [x] **Skills &amp; Habits progression system** — Track 72 chess skills across 5 categories with tier unlocks and game quick-jumps.
 - [x] **Advanced brilliant tracking** — Detailed breakdowns of brilliant (`!!`) moves, categorizing specific archetypes (Queen, Rook, Bishop, Knight sacrifices, and Underpromotions).
 - [x] **Fix brilliant tracking and best move route** — Improve multi-ply depth validation for brilliant move detection and ensure optimal continuity along the best move path.
 

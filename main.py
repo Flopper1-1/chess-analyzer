@@ -13,6 +13,7 @@ import threading
 import time
 import traceback
 import webbrowser
+from typing import Optional
 try:
     import winsound
 except ImportError:
@@ -45,6 +46,7 @@ import library as LIB
 import themes
 import updater
 import explanations as EX
+import skills as SK
 
 APP_TITLE = "Holly's Chess Analyzer"
 APP_VERSION = updater.APP_VERSION
@@ -215,6 +217,7 @@ DEFAULT_KEYBINDS = [
     ("open_pgn", "Open / Paste PGN", "Ctrl+O"),
     ("save_library", "Save to library", "Ctrl+S"),
     ("open_library", "Open library", "Ctrl+L"),
+    ("open_skills", "Open Skills progress", "Ctrl+K"),
 ]
 
 
@@ -3809,6 +3812,8 @@ class SettingsDialog(QDialog):
         )
         self.lenient = QCheckBox("Lenient brilliants (smaller sacrifices and near-best moves count)")
         self.lenient.setChecked(s.lenient_brilliant)
+        self.enable_skills = QCheckBox("Track Skills & Habits progression during game review")
+        self.enable_skills.setChecked(bool(getattr(s, "enable_skills", True)))
         self.preset = QComboBox()
         for t, d in self.PRESETS:
             self.preset.addItem(t, d)
@@ -3829,6 +3834,7 @@ class SettingsDialog(QDialog):
         f.addRow("Eval bar formula", self.eval_formula)
         f.addRow("Annotation system", self.annotation_system)
         f.addRow("", self.lenient)
+        f.addRow("", self.enable_skills)
         f.addRow("Preset", self.preset)
         f.addRow("Depth (slider)", srow)
         f.addRow("Threads", self.threads)
@@ -4144,6 +4150,7 @@ class SettingsDialog(QDialog):
             self.lenient.isChecked(),
             eval_formula=self.eval_formula.currentData(),
             annotation_system=self.annotation_system.currentData(),
+            enable_skills=self.enable_skills.isChecked(),
             auto_update=self.auto_update.isChecked(),
             auto_install_prereleases=self.auto_install_prereleases.isChecked(),
             app_icon=getattr(cur_s, "app_icon", "fluent"),
@@ -4172,6 +4179,362 @@ class SettingsDialog(QDialog):
             ui_opacity=getattr(cur_s, "ui_opacity", 100),
             smart_text_invert=getattr(cur_s, "smart_text_invert", ""),
         )
+
+
+class SkillsDialog(QDialog):
+    """Categorized chess Skills & Habits tracker with tier unlocks and game quick-jumps."""
+
+    def __init__(self, store: SK.SkillsStore, parent=None, initial_category: Optional[str] = None):
+        super().__init__(parent)
+        self.store = store
+        self.main_win = parent
+        self.setWindowTitle(f"{APP_TITLE} — Skills & Habits Progress")
+        self.resize(960, 680)
+        self._active_category = initial_category if initial_category in SK.SKILL_CATEGORIES else "All"
+        self._cat_buttons = {}
+        self._game_skill_plies = self._collect_game_skills()
+
+        theme = getattr(parent, "_cached_card_theme", None) if parent else None
+        if theme and len(theme) >= 7:
+            self._bar_bg, self._fg, self._border, self._muted, self._hover_bg, self._accent, self._accent_fg = theme[:7]
+        else:
+            self._bar_bg, self._fg, self._border, self._muted, self._hover_bg, self._accent, self._accent_fg = (
+                "#252526", "#e6e6e6", "#444444", "#9ca3af", "#333333", "#26c6da", "#0f172a"
+            )
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+
+        # ---- Header Summary ----
+        hdr = QFrame()
+        hdr.setObjectName("SkillsHeader")
+        hdr.setStyleSheet(
+            f"QFrame#SkillsHeader {{ background:{self._bar_bg}; border:1px solid {self._border}; border-radius:6px; }}"
+        )
+        hl = QVBoxLayout(hdr)
+        hl.setContentsMargins(12, 10, 12, 10)
+        hl.setSpacing(6)
+        top_row = QHBoxLayout()
+        title_col = QVBoxLayout()
+        title_col.setSpacing(2)
+        title_lbl = QLabel("<b style='font-size:15px;'>Skills &amp; Habits Progression</b>")
+        title_lbl.setTextFormat(Qt.RichText)
+        title_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._fg};")
+        self.summary_lbl = QLabel("")
+        self.summary_lbl.setTextFormat(Qt.RichText)
+        self.summary_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:12px;")
+        title_col.addWidget(title_lbl)
+        title_col.addWidget(self.summary_lbl)
+        top_row.addLayout(title_col, 1)
+
+        self.btn_reset_skills = QPushButton("Reset Progress…")
+        self.btn_reset_skills.setProperty("compactBtn", True)
+        self.btn_reset_skills.clicked.connect(self._reset_progress)
+        top_row.addWidget(self.btn_reset_skills)
+        hl.addLayout(top_row)
+
+        self.overall_bar = QProgressBar()
+        self.overall_bar.setTextVisible(False)
+        self.overall_bar.setFixedHeight(8)
+        self.overall_bar.setStyleSheet(
+            f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:4px; }}"
+            f"QProgressBar::chunk {{ background:#eab308; border-radius:4px; }}"
+        )
+        hl.addWidget(self.overall_bar)
+        lay.addWidget(hdr)
+
+        # ---- Demonstrated in Current Game strip ----
+        self.game_strip = QFrame()
+        self.game_strip.setObjectName("SkillsGameStrip")
+        self.game_strip.setStyleSheet(
+            f"QFrame#SkillsGameStrip {{ background:{self._bar_bg}; border:1px solid {self._border}; border-radius:6px; }}"
+        )
+        gsl = QVBoxLayout(self.game_strip)
+        gsl.setContentsMargins(10, 6, 10, 6)
+        gsl.setSpacing(4)
+        gs_hdr = QLabel("<b>Demonstrated in Current Game</b> <span style='opacity:0.75;'>(click a move to jump)</span>")
+        gs_hdr.setTextFormat(Qt.RichText)
+        gs_hdr.setStyleSheet(f"border:none; background:transparent; color:{self._fg}; font-size:12px;")
+        gsl.addWidget(gs_hdr)
+
+        strip_scroll = QScrollArea()
+        strip_scroll.setWidgetResizable(True)
+        strip_scroll.setFrameShape(QFrame.NoFrame)
+        strip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        strip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        strip_scroll.setFixedHeight(50)
+        strip_host = QWidget()
+        strip_host.setStyleSheet("background:transparent; border:none;")
+        strip_lay = QHBoxLayout(strip_host)
+        strip_lay.setContentsMargins(0, 2, 0, 6)
+        strip_lay.setSpacing(6)
+        any_game_chips = False
+        for ply, num_san, sids in self._game_skill_plies["moves"]:
+            sid = sids[0]
+            sd = SK.SKILL_BY_ID.get(sid)
+            if sd is None:
+                continue
+            any_game_chips = True
+            btn = QPushButton(f"★ {num_san} · {sd.name}")
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setProperty("compactBtn", True)
+            all_names = ", ".join(SK.SKILL_BY_ID[s].name for s in sids if s in SK.SKILL_BY_ID)
+            btn.setToolTip(f"Jump to {num_san}\nSkills: {all_names}")
+            btn.setStyleSheet(
+                f"background:{self._hover_bg}; color:{self._fg}; border:1px solid #eab308; "
+                f"border-radius:11px; padding:2px 9px; font-size:11px; font-weight:600;"
+            )
+            btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
+            strip_lay.addWidget(btn)
+        strip_lay.addStretch(1)
+        strip_scroll.setWidget(strip_host)
+        gsl.addWidget(strip_scroll)
+        self.game_strip.setVisible(any_game_chips)
+        lay.addWidget(self.game_strip)
+
+        # ---- Category Tabs + Search Filter ----
+        ctrl = QHBoxLayout()
+        ctrl.setSpacing(6)
+        self._cat_group = QButtonGroup(self)
+        self._cat_group.setExclusive(True)
+        for cat in ("All",) + SK.SKILL_CATEGORIES:
+            cnt = len(SK.SKILLS) if cat == "All" else len(SK.SKILLS_BY_CATEGORY.get(cat, []))
+            b = QPushButton(f"{cat} ({cnt})")
+            b.setCheckable(True)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setChecked(cat == self._active_category)
+            b.setStyleSheet(
+                f"QPushButton {{ background:{self._bar_bg}; color:{self._fg}; border:1px solid {self._border}; "
+                f"border-radius:12px; padding:4px 10px; font-size:12px; font-weight:600; }}"
+                f"QPushButton:hover {{ border-color:{self._accent}; background:{self._hover_bg}; }}"
+                f"QPushButton:checked {{ background:{self._accent}; color:{self._accent_fg}; border-color:{self._accent}; }}"
+            )
+            b.clicked.connect(lambda _=False, c=cat: self._select_category(c))
+            self._cat_group.addButton(b)
+            ctrl.addWidget(b)
+            self._cat_buttons[cat] = b
+
+        ctrl.addStretch(1)
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Search skills…")
+        self.search_edit.setMinimumWidth(160)
+        self.search_edit.textChanged.connect(self._rebuild_cards)
+        ctrl.addWidget(self.search_edit)
+
+        self.show_locked_chk = QCheckBox("Show Locked")
+        self.show_locked_chk.setChecked(True)
+        self.show_locked_chk.toggled.connect(self._rebuild_cards)
+        ctrl.addWidget(self.show_locked_chk)
+        lay.addLayout(ctrl)
+
+        # ---- Cards Scroll Grid ----
+        self.scroll = QScrollArea()
+        self.scroll.setWidgetResizable(True)
+        self.scroll.setFrameShape(QFrame.NoFrame)
+        self.cards_host = QWidget()
+        cards_outer = QVBoxLayout(self.cards_host)
+        cards_outer.setContentsMargins(2, 2, 6, 2)
+        cards_outer.setSpacing(0)
+        self.cards_grid = QGridLayout()
+        self.cards_grid.setContentsMargins(0, 0, 0, 0)
+        self.cards_grid.setSpacing(8)
+        self.cards_grid.setColumnStretch(0, 1)
+        self.cards_grid.setColumnStretch(1, 1)
+        cards_outer.addLayout(self.cards_grid)
+        cards_outer.addStretch(1)
+        self.scroll.setWidget(self.cards_host)
+        lay.addWidget(self.scroll, 1)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Close)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.refresh()
+
+    def _collect_game_skills(self) -> dict:
+        moves = []
+        first_ply_by_skill = {}
+        results = getattr(self.main_win, "results", None) or []
+        for r in results:
+            if not (r.analysed or r.book or r.symbol):
+                continue
+            if r.symbol in SK.UNSOUND_SYMBOLS:
+                continue
+            sids = getattr(r, "skills", None) or []
+            if not sids:
+                continue
+            num_san = f"{(r.ply + 1) // 2}{'.' if r.color else '…'} {r.san}"
+            moves.append((r.ply, num_san, list(sids)))
+            for sid in sids:
+                if sid not in first_ply_by_skill:
+                    first_ply_by_skill[sid] = (r.ply, num_san)
+        return {"moves": moves, "by_skill": first_ply_by_skill}
+
+    def _select_category(self, cat: str):
+        self._active_category = cat
+        self._rebuild_cards()
+
+    def _jump_to_ply(self, ply: int):
+        if self.main_win and hasattr(self.main_win, "goto"):
+            self.accept()
+            self.main_win.goto(ply)
+
+    def _reset_progress(self):
+        if _shift_held() or QMessageBox.question(
+            self,
+            "Reset Skills Progress",
+            "Reset all earned Skills points and unlocked tiers back to zero?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        ) == QMessageBox.Yes:
+            self.store.reset()
+            if self.main_win:
+                self.main_win.goto(self.main_win.cur, animate=False, play_sound=False)
+            self.refresh()
+
+    def refresh(self):
+        summ = self.store.summary()
+        tot = max(1, summ["total"])
+        self.summary_lbl.setText(
+            f"Mastered <b>{summ['mastered']} / {summ['total']}</b>  •  "
+            f"Unlocked <b>{summ['unlocked']}</b>  •  "
+            f"Locked <b>{summ['locked']}</b>  •  "
+            f"Points Earned <b>{summ['total_points']}</b>"
+        )
+        self.overall_bar.setRange(0, tot)
+        self.overall_bar.setValue(summ["mastered"])
+        for cat, btn in self._cat_buttons.items():
+            if cat == "All":
+                btn.setText(f"All ({summ['mastered']}/{summ['total']})")
+            else:
+                cs = summ["by_category"].get(cat, {})
+                btn.setText(f"{cat} ({cs.get('mastered', 0)}/{cs.get('total', 0)})")
+        self._rebuild_cards()
+
+    def _rebuild_cards(self):
+        while self.cards_grid.count():
+            item = self.cards_grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+
+        q = (self.search_edit.text() or "").strip().lower()
+        show_locked = self.show_locked_chk.isChecked()
+        items = self.store.list_skills(self._active_category)
+        shown = []
+        for st in items:
+            if not show_locked and st["state"] == "locked":
+                continue
+            if q and q not in st["name"].lower() and q not in st["description"].lower() and q not in st["category"].lower():
+                continue
+            shown.append(st)
+
+        if not shown:
+            empty = QLabel("No skills match the current filter.")
+            empty.setAlignment(Qt.AlignCenter)
+            empty.setStyleSheet(f"color:{self._muted}; padding:24px;")
+            self.cards_grid.addWidget(empty, 0, 0, 1, 2)
+            return
+
+        by_skill_game = self._game_skill_plies["by_skill"]
+        for idx, st in enumerate(shown):
+            card = QFrame()
+            card.setObjectName("SkillCard")
+            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            card.setMinimumHeight(88)
+            state = st["state"]
+            if state == "mastered":
+                border_col = "#eab308"
+                badge_bg, badge_fg, badge_txt = "#eab308", "#111827", "★ Mastered"
+                bar_col = "#eab308"
+            elif state == "unlocked":
+                border_col = self._accent
+                badge_bg, badge_fg, badge_txt = self._accent, self._accent_fg, "Unlocked"
+                bar_col = self._accent
+            else:
+                border_col = self._border
+                badge_bg, badge_fg, badge_txt = self._hover_bg, self._muted, "Locked"
+                bar_col = self._muted
+
+            card.setStyleSheet(
+                f"QFrame#SkillCard {{ background:{self._bar_bg}; border:1px solid {self._border}; "
+                f"border-left:3px solid {border_col}; border-radius:6px; }}"
+            )
+            cl = QVBoxLayout(card)
+            cl.setContentsMargins(10, 8, 10, 8)
+            cl.setSpacing(4)
+
+            row1 = QHBoxLayout()
+            row1.setContentsMargins(0, 0, 0, 0)
+            row1.setSpacing(6)
+            nm_lbl = QLabel(f"<b>{st['name']}</b>")
+            nm_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._fg}; font-size:13px;")
+            row1.addWidget(nm_lbl, 1)
+
+            cat_lbl = QLabel(st["category"])
+            cat_lbl.setStyleSheet(
+                f"border:none; background:{self._hover_bg}; color:{self._muted}; "
+                f"border-radius:8px; padding:1px 7px; font-size:10px;"
+            )
+            row1.addWidget(cat_lbl)
+
+            st_lbl = QLabel(badge_txt)
+            st_lbl.setStyleSheet(
+                f"border:none; background:{badge_bg}; color:{badge_fg}; "
+                f"border-radius:8px; padding:1px 8px; font-size:10px; font-weight:bold;"
+            )
+            row1.addWidget(st_lbl)
+            cl.addLayout(row1)
+
+            desc_lbl = QLabel(st["description"])
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:11px;")
+            cl.addWidget(desc_lbl)
+
+            row3 = QHBoxLayout()
+            row3.setContentsMargins(0, 2, 0, 0)
+            row3.setSpacing(8)
+            pb = QProgressBar()
+            pb.setTextVisible(False)
+            pb.setFixedHeight(6)
+            pb.setRange(0, max(1, st["target"]))
+            pb.setValue(st["points"])
+            pb.setStyleSheet(
+                f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:3px; }}"
+                f"QProgressBar::chunk {{ background:{bar_col}; border-radius:3px; }}"
+            )
+            row3.addWidget(pb, 1)
+
+            cnt_lbl = QLabel(f"{st['points']} / {st['target']}")
+            cnt_lbl.setStyleSheet(
+                f"border:none; background:transparent; color:{self._fg}; font-size:11px; font-weight:600;"
+            )
+            row3.addWidget(cnt_lbl)
+
+            if st["id"] in by_skill_game:
+                ply, num_san = by_skill_game[st["id"]]
+                j_btn = QPushButton(f"Move {num_san.split()[0]}")
+                j_btn.setProperty("compactBtn", True)
+                j_btn.setCursor(Qt.PointingHandCursor)
+                j_btn.setToolTip(f"Jump to {num_san} in current game")
+                j_btn.setStyleSheet(
+                    f"background:{self._hover_bg}; color:#eab308; border:1px solid #eab308; "
+                    f"border-radius:4px; padding:1px 6px; font-size:10px; font-weight:bold;"
+                )
+                j_btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
+                row3.addWidget(j_btn)
+            cl.addLayout(row3)
+
+            if state == "locked" and st["unlocked_by_names"]:
+                req_lbl = QLabel(f"Unlock by mastering: {', '.join(st['unlocked_by_names'])}")
+                req_lbl.setWordWrap(True)
+                req_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:10px; font-style:italic;")
+                cl.addWidget(req_lbl)
+
+            self.cards_grid.addWidget(card, idx // 2, idx % 2)
+
+        self.cards_host.adjustSize()
 
 
 class OpenOrPasteDialog(QDialog):
@@ -4649,7 +5012,7 @@ def parse_input(text):
 
 # ---------------------------------------------------------------- main window
 class MainWindow(QMainWindow):
-    COLS = ["#", "Move", "", "Eval", "Time", "Opening", ""]
+    COLS = ["#", "Move", "", "Eval", "Time", "Opening / Skill", ""]
 
     def __init__(self):
         super().__init__()
@@ -4671,6 +5034,7 @@ class MainWindow(QMainWindow):
             qs.value("lenient", False, type=bool),
             eval_formula=qs.value("eval_formula", "improved"),
             annotation_system=qs.value("annotation_system", "modern"),
+            enable_skills=qs.value("enable_skills", True, type=bool),
             auto_update=qs.value("auto_update", True, type=bool),
             auto_install_prereleases=qs.value("auto_install_prereleases", True, type=bool),
             app_icon=qs.value("app_icon", "fluent"),
@@ -4740,6 +5104,7 @@ class MainWindow(QMainWindow):
         self.sound = SoundPlayer()
         self.holder = EngineHolder()
         self.library = LIB.GameLibrary()
+        self.skills_store = SK.SkillsStore()
         self.book = None
         self.games, self.game, self.results = [], None, []
         self.jobs, self.job = [], None
@@ -4855,6 +5220,13 @@ class MainWindow(QMainWindow):
         self.explain_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.explain_body.setMinimumHeight(34)
         ex_lay.addWidget(self.explain_body)
+        self.explain_skills_bar = QWidget()
+        self.explain_skills_lay = QHBoxLayout(self.explain_skills_bar)
+        self.explain_skills_lay.setContentsMargins(0, 2, 0, 0)
+        self.explain_skills_lay.setSpacing(5)
+        self.explain_skills_lay.addStretch(1)
+        self.explain_skills_bar.setVisible(False)
+        ex_lay.addWidget(self.explain_skills_bar)
         right.addWidget(self.explain_card)
 
         # Manual alternate route bar (active variation + resume prompt)
@@ -4984,7 +5356,8 @@ class MainWindow(QMainWindow):
         for t, fn in (("File", self.open_or_paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
-                      ("Library…", self.open_library), ("Settings…", self.open_settings)):
+                      ("Library…", self.open_library), ("Skills…", self.open_skills),
+                      ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
             if t == "Save Game":
                 self.save_act = act
@@ -5051,6 +5424,7 @@ class MainWindow(QMainWindow):
             "open_pgn": self.open_or_paste,
             "save_library": self.save_to_library,
             "open_library": self.open_library,
+            "open_skills": self.open_skills,
         }
 
     def load_keybinds(self) -> dict:
@@ -5406,8 +5780,10 @@ class MainWindow(QMainWindow):
     def on_job_done(self, job, ok):
         job.running = False
         job.done = ok
+        claimed_res = {"newly_mastered": []}
         if ok:
             self._analyzed_game_this_session = True
+            claimed_res = self._ensure_and_claim_game_skills(job)
         self.refresh_combo(job)
         if job is self.job:
             self.progress.setVisible(any(j.running for j in self.jobs))
@@ -5419,6 +5795,12 @@ class MainWindow(QMainWindow):
                 if self._alt_route is None and self._pv_state is None:
                     self.goto(self.cur, animate=False, play_sound=False)
             self.update_status()
+            if ok and claimed_res.get("newly_mastered"):
+                names = ", ".join(
+                    SK.SKILL_BY_ID[s].name for s in claimed_res["newly_mastered"] if s in SK.SKILL_BY_ID
+                )
+                if names:
+                    self.status.setText(f"Analysis complete ({len(job.results)} moves) · ★ Mastered: {names}")
         if not any(not j.done for j in self.jobs):
             self.progress.setVisible(False)
             winutil.keep_awake(False)
@@ -5454,20 +5836,33 @@ class MainWindow(QMainWindow):
 
     def update_accuracy(self, final):
         if not self.results:
-            self.acc_label.setText(""); return
-        summ = ACC.summarize(self.results)
+            self.acc_label.setText("")
+            self.acc_label.setToolTip("")
+            return
         h = self.game.headers if self.game else {}
+        elo = A.extract_average_elo(h)
+        summ = ACC.summarize(self.results, elo=elo)
         fmt = lambda v: "–" if v is None else "%.1f%%" % v
         rows = ""
+        tip_lines = []
         for color, nm in ((chess.WHITE, h.get("White", "White")), (chess.BLACK, h.get("Black", "Black"))):
             d = summ[color]
             rating = "–" if d["rating"] is None else str(d["rating"])
             rows += ("<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td><b>%s</b></td></tr>"
                      % (nm, fmt(d["opening"]), fmt(d["middlegame"]), fmt(d["endgame"]), fmt(d["overall"]), rating))
+            bp = d.get("by_piece") or {}
+            piece_parts = [
+                f"{lbl} {bp[lbl]:.0f}%"
+                for lbl in ("P", "N", "B", "R", "Q", "K")
+                if bp.get(lbl) is not None
+            ]
+            if piece_parts:
+                tip_lines.append(f"{nm} by piece: {' · '.join(piece_parts)}")
         title = "Final accuracy" if final else "Accuracy (live…)"
         self.acc_label.setText(
             "<b>%s</b><table cellspacing='6'><tr><th align='left'>Player</th><th>Opening</th><th>Middlegame</th>"
             "<th>Endgame</th><th>Overall</th><th>Est. rating</th></tr>%s</table>" % (title, rows))
+        self.acc_label.setToolTip("\n".join(tip_lines))
 
     def fill_table(self):
         rows = self.basic
@@ -5499,6 +5894,8 @@ class MainWindow(QMainWindow):
         sym = r.symbol if r else ""
         it = QTableWidgetItem("")
         it.setTextAlignment(Qt.AlignCenter)
+        skill_ids = (getattr(r, "skills", None) or []) if r else []
+        skill_names = [SK.SKILL_BY_ID[s].name for s in skill_ids if s in SK.SKILL_BY_ID]
         if sym:
             pm = icons.pixmap_for_key(sym, 22) if styles.mode == "icons" else None
             if pm is not None:
@@ -5514,6 +5911,8 @@ class MainWindow(QMainWindow):
                 tip += f" ({bt_label})"
             if r.best_san and self.alt_for(r):
                 tip += " – best was " + r.best_san
+            if skill_names and getattr(self.settings, "enable_skills", True):
+                tip += "\nSkills: " + ", ".join(skill_names)
             it.setToolTip(tip)
         self.table.setItem(row, 2, it)
         self.table.setItem(row, 3, QTableWidgetItem(r.eval_after_text if r else ""))
@@ -5524,7 +5923,17 @@ class MainWindow(QMainWindow):
         tit.setTextAlignment(Qt.AlignCenter)
         tit.setForeground(QColor("#aaaaaa"))
         self.table.setItem(row, 4, tit)
-        self.table.setItem(row, 5, QTableWidgetItem((r.opening if r and r.book else "")))
+        if r and r.book and r.opening:
+            col5_it = QTableWidgetItem(r.opening)
+            if skill_names and getattr(self.settings, "enable_skills", True):
+                col5_it.setToolTip(f"{r.eco} {r.opening}\nSkills: {', '.join(skill_names)}")
+        elif skill_names and getattr(self.settings, "enable_skills", True):
+            col5_it = QTableWidgetItem(f"★ {skill_names[0]}")
+            col5_it.setForeground(QColor("#eab308"))
+            col5_it.setToolTip("Skills: " + ", ".join(skill_names))
+        else:
+            col5_it = QTableWidgetItem("")
+        self.table.setItem(row, 5, col5_it)
 
     # ------------------------------------------------------------ saving
     NAGS = {"!!": chess.pgn.NAG_BRILLIANT_MOVE, "!": chess.pgn.NAG_GOOD_MOVE, "?!": chess.pgn.NAG_DUBIOUS_MOVE,
@@ -5674,6 +6083,7 @@ class MainWindow(QMainWindow):
         self.game_combo_act.setVisible(False)
         self.game_combo.blockSignals(False)
         self._sync_toolbar_elevations()
+        self._ensure_and_claim_game_skills(job)
         self.pick_game(0)
         if hasattr(self, "sound"):
             self.sound.play("Game_load")
@@ -5734,6 +6144,40 @@ class MainWindow(QMainWindow):
             f"font-size:11px; font-weight:bold;"
         )
 
+    def _update_explain_skills(self, skill_ids: Optional[list] = None):
+        if not hasattr(self, "explain_skills_lay") or not hasattr(self, "explain_skills_bar"):
+            return
+        while self.explain_skills_lay.count():
+            it = self.explain_skills_lay.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        if not getattr(self.settings, "enable_skills", True) or not skill_ids:
+            self.explain_skills_bar.setVisible(False)
+            return
+        shown = 0
+        for sid in skill_ids[:3]:
+            if sid not in SK.SKILL_BY_ID:
+                continue
+            st = self.skills_store.get_skill_state(sid)
+            if st["is_mastered"]:
+                label = f"★ {st['name']} (Mastered)"
+            elif st["is_unlocked"]:
+                label = f"★ {st['name']} ({st['points']}/{st['target']})"
+            else:
+                label = f"★ {st['name']}"
+            btn = QPushButton(label)
+            btn.setProperty("skillChip", True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setToolTip(f"{st['category']}: {st['description']}\nClick to view Skills progress")
+            btn.clicked.connect(lambda _=False, c=st["category"]: self.open_skills(category=c))
+            self.explain_skills_lay.addWidget(btn)
+            shown += 1
+        self.explain_skills_lay.addStretch(1)
+        self.explain_skills_bar.setVisible(shown > 0)
+
     def _update_explanation_card(
         self,
         san: str = "",
@@ -5744,6 +6188,7 @@ class MainWindow(QMainWindow):
         brilliant_type: str = "",
         is_manual: bool = False,
         pending: bool = False,
+        skill_ids: Optional[list] = None,
     ):
         if not hasattr(self, "explain_title"):
             return
@@ -5755,6 +6200,7 @@ class MainWindow(QMainWindow):
             self.explain_eval.setVisible(True)
             self.explain_eval.adjustSize()
             self.explain_body.setText(explanation or "Analyzing move with Stockfish for live evaluation and explanation…")
+            self._update_explain_skills(None)
             return
         if not san:
             self.explain_title.setText("<b>Start Position</b>")
@@ -5765,6 +6211,7 @@ class MainWindow(QMainWindow):
             self.explain_body.setText(
                 explanation or "Select a move in the table or play any legal move on the board to inspect an alternate route."
             )
+            self._update_explain_skills(None)
             return
         sym_name = styles.name(symbol) if symbol else "Move"
         if symbol == "!!" and brilliant_type:
@@ -5783,6 +6230,7 @@ class MainWindow(QMainWindow):
         self.explain_eval.setVisible(bool(eval_text))
         self.explain_eval.adjustSize()
         self.explain_body.setText(explanation or "No explanation available for this move.")
+        self._update_explain_skills(skill_ids)
 
     def goto(self, idx, animate=True, play_sound=True, _keep_best_panel=False):
         if self._alt_route is not None:
@@ -5851,6 +6299,7 @@ class MainWindow(QMainWindow):
                     brilliant_type=getattr(r, "brilliant_type", ""),
                     is_manual=False,
                     pending=False,
+                    skill_ids=getattr(r, "skills", None),
                 )
             elif r is not None and not r.analysed and not r.book:
                 self._update_explanation_card(
@@ -7083,6 +7532,9 @@ class MainWindow(QMainWindow):
             self.explain_card.setStyleSheet(
                 f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
                 f"QFrame#ExplainCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:12px; }}"
+                f"QFrame#ExplainCard QPushButton[skillChip='true'] {{ background:{hover_bg}; color:#eab308; "
+                f"border:1px solid #eab308; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:bold; }}"
+                f"QFrame#ExplainCard QPushButton[skillChip='true']:hover {{ background:#eab308; color:#111827; }}"
             )
         if hasattr(self, "explain_eval"):
             self.explain_eval.setStyleSheet(
@@ -7502,6 +7954,7 @@ class MainWindow(QMainWindow):
                     brilliant_type=getattr(ar, "brilliant_type", ""),
                     is_manual=False,
                     pending=False,
+                    skill_ids=getattr(ar, "skills", None),
                 )
             else:
                 self._update_explanation_card(
@@ -7547,6 +8000,7 @@ class MainWindow(QMainWindow):
                     brilliant_type=getattr(r, "brilliant_type", ""),
                     is_manual=True,
                     pending=False,
+                    skill_ids=getattr(r, "skills", None),
                 )
             elif st.get("error"):
                 self._update_explanation_card(
@@ -7981,6 +8435,29 @@ class MainWindow(QMainWindow):
         }
         self._set_pv_step(1)
 
+    def _ensure_and_claim_game_skills(self, job) -> dict:
+        empty = {"awarded": [], "newly_mastered": [], "newly_unlocked": []}
+        if not job or not job.game or not job.results:
+            return empty
+        needs_detect = any(
+            (r.analysed or r.book or r.symbol) and not getattr(r, "skills", None)
+            for r in job.results
+        )
+        if needs_detect:
+            SK.detect_game_skills(job.game, job.results)
+        if not getattr(self.settings, "enable_skills", True) or not job.done:
+            return empty
+        tracked = self.settings.tracked_colors(job.game.headers)
+        gkey = LIB.game_key(job.game)
+        return self.skills_store.claim_game_skills(gkey, job.results, tracked_colors=tracked)
+
+    def open_skills(self, category=None):
+        cat = category if isinstance(category, str) else None
+        if self.job and self.job.game and self.job.results:
+            self._ensure_and_claim_game_skills(self.job)
+        d = SkillsDialog(self.skills_store, self, initial_category=cat)
+        d.exec()
+
     def open_settings(self):
         d = SettingsDialog(self.settings, self)
         if d.exec():
@@ -7990,7 +8467,9 @@ class MainWindow(QMainWindow):
             for k, v in (("scope", s.scope), ("side", s.side), ("name", s.player_name), ("depth", s.depth),
                          ("threads", s.threads), ("hash", s.hash_mb), ("engine", s.engine_path),
                          ("preset", s.preset), ("eval_formula", s.eval_formula),
-                         ("annotation_system", s.annotation_system), ("auto_update", s.auto_update),
+                         ("annotation_system", s.annotation_system),
+                         ("enable_skills", s.enable_skills),
+                         ("auto_update", s.auto_update),
                          ("auto_install_prereleases", s.auto_install_prereleases),
                          ("disable_holiday_events", s.disable_holiday_events),
                          ("prerelease_holiday_override", s.prerelease_holiday_override),
@@ -8029,6 +8508,11 @@ class MainWindow(QMainWindow):
                 for j in self.jobs:
                     if j.results:
                         A.reclassify_results(j.game, j.results, s)
+                        self._ensure_and_claim_game_skills(j)
+            elif old.enable_skills != s.enable_skills and s.enable_skills:
+                for j in self.jobs:
+                    if j.results:
+                        self._ensure_and_claim_game_skills(j)
             if self._alt_route is not None:
                 self._render_alt_route(animate=False, play_sound=False)
             elif self.game:

@@ -199,13 +199,13 @@ def test_eval_bar_formulas_and_start_of_game_zero():
     b_after.push_san("e4")
     assert C.is_standard_start(b_after) is False
 
-    # Improved formula dampens tiny engine noise (<=15cp -> 50.0%) and clamps non-mate to [2.5, 97.5]
+    # Improved formula dampens tiny engine noise (<=15cp -> 50.0%) and maps [-4.0, +4.0] pawns linearly to [5.0, 95.0]
     assert C.eval_bar_pct(12, mode="improved", board=b_after) == 50.0
     assert C.eval_bar_pct(-12, mode="improved", board=b_after) == 50.0
     assert C.eval_bar_pct(12, mode="win_prob", board=b_after) > 50.5
-    assert 50.0 < C.eval_bar_pct(200, mode="improved", board=b_after) < 97.5
-    assert C.eval_bar_pct(2500, mode="improved", board=b_after) == 97.5
-    assert C.eval_bar_pct(-2500, mode="improved", board=b_after) == 2.5
+    assert C.eval_bar_pct(200, mode="improved", board=b_after) == 72.5
+    assert C.eval_bar_pct(2500, mode="improved", board=b_after) == 95.0
+    assert C.eval_bar_pct(-2500, mode="improved", board=b_after) == 5.0
 
     # Mate scores reach 100% / 0%
     assert C.eval_bar_pct(10000, mode="improved", board=b_after) == 100.0
