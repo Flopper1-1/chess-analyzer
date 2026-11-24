@@ -1044,27 +1044,16 @@ class EvalBar(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
         h, w = self.height(), self.width()
-        clip = QPainterPath()
-        clip.addRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 4.0, 4.0)
-        p.save()
-        p.setClipPath(clip)
         pct = C.eval_bar_pct(self.cp, mode=self.formula, is_start=self.is_start)
         white_h = h * pct / 100.0
-        p.fillRect(0, 0, w, h, QColor("#2a2a2e"))
-        p.fillRect(0, int(round(h - white_h)), w, int(round(white_h)) + 1, QColor("#f1f5f9"))
-        # Subtle 50% equality tick mark
-        p.setPen(QPen(QColor(128, 128, 128, 110), 1))
-        p.drawLine(0, h // 2, w, h // 2)
-        p.restore()
-        p.setPen(QPen(QColor(90, 90, 98, 135), 1))
-        p.setBrush(Qt.NoBrush)
-        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 4.0, 4.0)
-        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
+        p.fillRect(0, 0, w, h, QColor("#333"))
+        p.fillRect(0, int(round(h - white_h)), w, int(round(white_h)) + 1, QColor("#eee"))
+        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
         white_ahead = self.cp >= 0
-        r = QRectF(0, h - 21, w, 19) if white_ahead else QRectF(0, 2, w, 19)
-        p.setPen(QColor("#1e293b") if white_ahead else QColor("#f1f5f9"))
+        # number sits on the side of whoever is ahead: bottom for white, top for black
+        r = QRectF(0, h - 22, w, 20) if white_ahead else QRectF(0, 2, w, 20)
+        p.setPen(QColor("#222") if white_ahead else QColor("#eee"))
         p.drawText(r, Qt.AlignCenter, self.text)
 
 
@@ -5667,54 +5656,39 @@ class MainWindow(QMainWindow):
         left.addWidget(self.graph)
         root.addLayout(left, 3)
 
-        right_panel = QWidget()
-        right_panel.setMinimumWidth(0)
-        right_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        right = QVBoxLayout(right_panel)
-        right.setContentsMargins(0, 0, 0, 0)
-        right.setSpacing(6)
+        right = QVBoxLayout()
         self.table = QTableWidget(0, len(self.COLS))
-        self.table.setMinimumWidth(0)
         self.table.setHorizontalHeaderLabels(self.COLS)
-        self.table.setIconSize(QSize(18, 18))
-        self.table.setTextElideMode(Qt.ElideRight)
-        self.table.verticalHeader().setDefaultSectionSize(26)
+        self.table.setIconSize(QSize(22, 22))
+        self.table.verticalHeader().setDefaultSectionSize(30)
         self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         hh = self.table.horizontalHeader()
-        hh.setMinimumSectionSize(28)
         hh.setSectionResizeMode(QHeaderView.Stretch)
-        for i, w in ((0, 34), (1, 68), (2, 34), (3, 52), (4, 50), (6, 48)):
+        for i, w in ((0, 36), (2, 40), (3, 56), (4, 54), (6, 54)):
             hh.setSectionResizeMode(i, QHeaderView.Fixed); self.table.setColumnWidth(i, w)
         self.table.cellClicked.connect(lambda r, _c: self.goto(r))
         right.addWidget(self.table, 3)
 
-        # Move explanation card (locked size policy so skills NEVER expand MainWindow)
+        # Move explanation card
         self.explain_card = QFrame()
         self.explain_card.setObjectName("ExplainCard")
-        self.explain_card.setMinimumWidth(0)
-        self.explain_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.explain_card.setFixedHeight(76)
-        self._explain_accent_col = ""
         ex_lay = QVBoxLayout(self.explain_card)
-        ex_lay.setContentsMargins(10, 6, 10, 6)
-        ex_lay.setSpacing(3)
+        ex_lay.setContentsMargins(10, 7, 10, 8)
+        ex_lay.setSpacing(4)
         ex_top = QHBoxLayout()
         ex_top.setContentsMargins(0, 0, 0, 0)
-        ex_top.setSpacing(6)
+        ex_top.setSpacing(7)
         self.explain_icon = QLabel()
-        self.explain_icon.setFixedSize(20, 20)
+        self.explain_icon.setFixedSize(22, 22)
         self.explain_icon.setAlignment(Qt.AlignCenter)
         ex_top.addWidget(self.explain_icon)
         self.explain_title = QLabel("Move Explanation")
         self.explain_title.setTextFormat(Qt.RichText)
         self.explain_title.setMinimumWidth(0)
-        self.explain_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.explain_title.setFixedHeight(20)
+        self.explain_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         ex_top.addWidget(self.explain_title, 1)
         self.explain_skills_bar = QWidget()
         self.explain_skills_bar.setMinimumWidth(0)
@@ -5726,8 +5700,8 @@ class MainWindow(QMainWindow):
         ex_top.addWidget(self.explain_skills_bar)
         self.explain_eval = QLabel("")
         self.explain_eval.setAlignment(Qt.AlignCenter)
-        self.explain_eval.setMinimumWidth(44)
-        self.explain_eval.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.explain_eval.setMinimumWidth(46)
+        self.explain_eval.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         self.explain_eval.setVisible(False)
         ex_top.addWidget(self.explain_eval)
         ex_lay.addLayout(ex_top)
@@ -5735,11 +5709,9 @@ class MainWindow(QMainWindow):
             "Open a PGN/FEN or move any piece on the board to see move explanations and live analysis."
         )
         self.explain_body.setWordWrap(True)
-        self.explain_body.setMinimumWidth(0)
-        self.explain_body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
-        self.explain_body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.explain_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        ex_lay.addWidget(self.explain_body, 1)
+        self.explain_body.setMinimumHeight(34)
+        ex_lay.addWidget(self.explain_body)
         right.addWidget(self.explain_card)
 
         # Manual alternate route bar (active variation + resume prompt)
@@ -5850,28 +5822,14 @@ class MainWindow(QMainWindow):
         pv_lay.addWidget(self.btn_pv_exit)
         self.pv_bar.setVisible(False)
         right.addWidget(self.pv_bar)
-        self.acc_card = QFrame()
-        self.acc_card.setObjectName("AccuracyCard")
-        self.acc_card.setMinimumWidth(0)
-        self.acc_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        acc_lay = QVBoxLayout(self.acc_card)
-        acc_lay.setContentsMargins(10, 5, 10, 5)
-        acc_lay.setSpacing(2)
         self.acc_label = QLabel("")
         self.acc_label.setTextFormat(Qt.RichText)
-        self.acc_label.setMinimumWidth(0)
-        self.acc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        acc_lay.addWidget(self.acc_label)
-        self.acc_card.setVisible(False)
-        right.addWidget(self.acc_card)
-        self.progress = QProgressBar(); self.progress.setFixedHeight(8); self.progress.setTextVisible(False); self.progress.setVisible(False)
+        right.addWidget(self.acc_label)
+        self.progress = QProgressBar(); self.progress.setVisible(False)
         right.addWidget(self.progress)
         self.status = QLabel("Open a PGN or paste a PGN/FEN to begin.")
-        self.status.setMinimumWidth(0)
-        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        self.status.setStyleSheet("font-size:11.5px;")
         right.addWidget(self.status)
-        root.addWidget(right_panel, 2)
+        root.addLayout(right, 2)
 
         tb = QToolBar()
         tb.setMovable(False)
@@ -5883,16 +5841,11 @@ class MainWindow(QMainWindow):
         for t, fn in (("File", self.open_or_paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
-                      ("Library…", self.open_library), ("Skills", self.open_skills),
+                      ("Library…", self.open_library), ("Skills…", self.open_skills),
                       ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
             if t == "Save Game":
                 self.save_act = act
-            elif t == "Skills":
-                act.setIcon(_make_skill_cat_icon("Tactics", 15))
-                w_sk = tb.widgetForAction(act)
-                if isinstance(w_sk, QToolButton):
-                    w_sk.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.game_combo = QComboBox()
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         self.game_combo_act = tb.addWidget(self.game_combo)
@@ -6370,87 +6323,36 @@ class MainWindow(QMainWindow):
         if not self.results:
             self.acc_label.setText("")
             self.acc_label.setToolTip("")
-            if hasattr(self, "acc_card"):
-                self.acc_card.setVisible(False)
             return
-        if hasattr(self, "acc_card"):
-            self.acc_card.setVisible(True)
         h = self.game.headers if self.game else {}
         elo = A.extract_average_elo(h)
         summ = ACC.summarize(self.results, elo=elo)
-        theme = getattr(self, "_cached_card_theme", None)
-        muted_c = theme[3] if (theme and len(theme) >= 4) else "#9ca3af"
         fmt = lambda v: "–" if v is None else "%.1f%%" % v
-
-        def _acc_col(v):
-            if v is None:
-                return muted_c
-            if v >= 90.0:
-                return "#22c55e"
-            if v >= 75.0:
-                return "#84cc16"
-            if v >= 60.0:
-                return "#eab308"
-            return "#f97316"
-
-        piece_glyphs = {"P": "♙", "N": "♘", "B": "♗", "R": "♖", "Q": "♕", "K": "♔"}
         rows = ""
         tip_lines = []
-        piece_footers = []
         for color, nm in ((chess.WHITE, h.get("White", "White")), (chess.BLACK, h.get("Black", "Black"))):
             d = summ[color]
             rating = "–" if d["rating"] is None else str(d["rating"])
-            ov = d["overall"]
-            ov_col = _acc_col(ov)
-            chip = "⬜" if color == chess.WHITE else "⬛"
-            nm_short = nm if len(nm) <= 16 else (nm[:14].rstrip() + "…")
-            rows += (
-                f"<tr>"
-                f"<td style='padding-right:8px;'>{chip} <b>{nm_short}</b></td>"
-                f"<td align='center' style='padding:0 5px;'>{fmt(d['opening'])}</td>"
-                f"<td align='center' style='padding:0 5px;'>{fmt(d['middlegame'])}</td>"
-                f"<td align='center' style='padding:0 5px;'>{fmt(d['endgame'])}</td>"
-                f"<td align='center' style='padding:0 6px;'><b style='color:{ov_col};'>{fmt(ov)}</b></td>"
-                f"<td align='right' style='padding-left:6px;'><b>{rating}</b></td>"
-                f"</tr>"
-            )
+            rows += ("<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td><b>%s</b></td></tr>"
+                     % (nm, fmt(d["opening"]), fmt(d["middlegame"]), fmt(d["endgame"]), fmt(d["overall"]), rating))
             bp = d.get("by_piece") or {}
             piece_parts = [
                 f"{lbl} {bp[lbl]:.0f}%"
                 for lbl in ("P", "N", "B", "R", "Q", "K")
                 if bp.get(lbl) is not None
             ]
-            glyph_parts = [
-                f"{piece_glyphs[lbl]} {bp[lbl]:.0f}%"
-                for lbl in ("P", "N", "B", "R", "Q", "K")
-                if bp.get(lbl) is not None
-            ]
             if piece_parts:
                 tip_lines.append(f"{nm} by piece: {' · '.join(piece_parts)}")
-            if final and glyph_parts:
-                piece_footers.append(f"<b>{nm_short}:</b> {' · '.join(glyph_parts)}")
-        title = "Game Review Summary" if final else "Accuracy (analyzing…)"
-        piece_html = ""
-        if piece_footers:
-            piece_html = (
-                f"<div style='margin-top:2px; color:{muted_c}; font-size:10px;'>"
-                + "<br>".join(piece_footers)
-                + "</div>"
-            )
+        title = "Final accuracy" if final else "Accuracy (live…)"
         self.acc_label.setText(
-            f"<div style='font-size:11.5px;'><b>{title}</b></div>"
-            f"<table width='100%' cellspacing='2' style='font-size:11.5px;'>"
-            f"<tr style='color:{muted_c}; font-size:10.5px;'>"
-            f"<th align='left'>Player</th><th>Open</th><th>Mid</th>"
-            f"<th>End</th><th>Overall</th><th align='right'>Rating</th></tr>{rows}</table>"
-            f"{piece_html}"
-        )
+            "<b>%s</b><table cellspacing='6'><tr><th align='left'>Player</th><th>Opening</th><th>Middlegame</th>"
+            "<th>Endgame</th><th>Overall</th><th>Est. rating</th></tr>%s</table>" % (title, rows))
         self.acc_label.setToolTip("\n".join(tip_lines))
 
     def fill_table(self):
         rows = self.basic
         self.table.setRowCount(len(rows) + 1)
-        self.table.setItem(0, 1, QTableWidgetItem("Start"))
+        self.table.setItem(0, 1, QTableWidgetItem("Start position"))
         for c in (0, 2, 3, 4, 5):
             self.table.setItem(0, c, QTableWidgetItem(""))
         self.table.setCellWidget(0, 6, self.best_button(0))
@@ -6477,21 +6379,15 @@ class MainWindow(QMainWindow):
         row = k + 1
         r = self.results[k] if k < len(self.results) else None
         num = "%d%s" % ((ply + 1) // 2, "." if color else "…")
-        num_it = QTableWidgetItem(num)
-        num_it.setTextAlignment(Qt.AlignCenter)
-        num_it.setForeground(QColor("#9ca3af"))
-        self.table.setItem(row, 0, num_it)
-        san_it = QTableWidgetItem(san)
-        sf = san_it.font(); sf.setBold(True); san_it.setFont(sf)
-        self.table.setItem(row, 1, san_it)
+        self.table.setItem(row, 0, QTableWidgetItem(num))
+        self.table.setItem(row, 1, QTableWidgetItem(san))
         sym = r.symbol if r else ""
         it = QTableWidgetItem("")
         it.setTextAlignment(Qt.AlignCenter)
         skill_ids = (getattr(r, "skills", None) or []) if r else []
         skill_names = [SK.SKILL_BY_ID[s].name for s in skill_ids if s in SK.SKILL_BY_ID]
-        notable_skill_ids = [s for s in skill_ids if s in SK.SKILL_BY_ID and s not in self._TABLE_QUIET_SKILLS]
         if sym:
-            pm = icons.pixmap_for_key(sym, 20) if styles.mode == "icons" else None
+            pm = icons.pixmap_for_key(sym, 22) if styles.mode == "icons" else None
             if pm is not None:
                 it.setIcon(QIcon(pm))
             else:
@@ -6509,15 +6405,13 @@ class MainWindow(QMainWindow):
                 tip += "\nSkills: " + ", ".join(skill_names)
             it.setToolTip(tip)
         self.table.setItem(row, 2, it)
-        ev_it = QTableWidgetItem(r.eval_after_text if r else "")
-        ev_it.setTextAlignment(Qt.AlignCenter)
-        self.table.setItem(row, 3, ev_it)
+        self.table.setItem(row, 3, QTableWidgetItem(r.eval_after_text if r else ""))
         plies = self.clock_data.get("plies", [])
         mt = (r.move_time_text if r and r.move_time_text else "") or (
             plies[k]["move_time_text"] if k < len(plies) else "")
         tit = QTableWidgetItem(mt)
         tit.setTextAlignment(Qt.AlignCenter)
-        tit.setForeground(QColor("#9ca3af"))
+        tit.setForeground(QColor("#aaaaaa"))
         self.table.setItem(row, 4, tit)
         if r and r.book and r.opening:
             col5_it = QTableWidgetItem(r.opening)
@@ -6685,9 +6579,6 @@ class MainWindow(QMainWindow):
 
     def best_button(self, row):
         b = QPushButton("Best")
-        b.setProperty("compactBtn", True)
-        b.setCursor(Qt.PointingHandCursor)
-        b.setStyleSheet("padding:1px 6px; font-size:11px; border-radius:4px;")
         b.clicked.connect(lambda _=False, r=row: self.show_best(r))
         return b
 
@@ -6785,14 +6676,6 @@ class MainWindow(QMainWindow):
         self.explain_skills_lay.addWidget(btn)
         self.explain_skills_bar.setVisible(True)
 
-    def _set_explain_accent(self, accent_col: str = ""):
-        if getattr(self, "_explain_accent_col", None) == accent_col:
-            return
-        self._explain_accent_col = accent_col
-        theme = getattr(self, "_cached_card_theme", None)
-        if theme and len(theme) >= 8:
-            self._apply_explain_alt_theme(*theme[:8])
-
     def _update_explanation_card(
         self,
         san: str = "",
@@ -6807,9 +6690,8 @@ class MainWindow(QMainWindow):
     ):
         if not hasattr(self, "explain_title"):
             return
-        self._apply_badge_to_label(self.explain_icon, symbol, 19)
+        self._apply_badge_to_label(self.explain_icon, symbol, 20)
         if pending:
-            self._set_explain_accent("")
             title_core = f"{move_num_label} {san}".strip()
             self.explain_title.setText(f"<b>{title_core}</b> &nbsp; <span style='opacity:0.75;'>Analyzing…</span>")
             self.explain_eval.setText("…")
@@ -6819,7 +6701,6 @@ class MainWindow(QMainWindow):
             self._update_explain_skills(None)
             return
         if not san:
-            self._set_explain_accent("")
             self.explain_title.setText("<b>Start Position</b>")
             ev = eval_text or "0.0"
             self.explain_eval.setText(ev)
@@ -6835,7 +6716,6 @@ class MainWindow(QMainWindow):
             bt_label = "Underpromotion" if brilliant_type == "underpromotion" else f"{brilliant_type.title()} Sacrifice"
             sym_name = f"{sym_name} · {bt_label}"
         tag_col = styles.color(symbol) if symbol else ""
-        self._set_explain_accent(tag_col)
         move_hdr = f"{move_num_label} {san}".strip()
         prefix = "Alternate · " if is_manual else ""
         if tag_col:
@@ -6848,8 +6728,7 @@ class MainWindow(QMainWindow):
         self.explain_eval.setVisible(bool(eval_text))
         self.explain_eval.adjustSize()
         self.explain_body.setText(explanation or "No explanation available for this move.")
-        chip_cap = 1 if (len(sym_name) >= 16 or is_manual) else 2
-        self._update_explain_skills(skill_ids, max_chips=chip_cap)
+        self._update_explain_skills(skill_ids)
 
     def goto(self, idx, animate=True, play_sound=True, _keep_best_panel=False):
         if self._alt_route is not None:
@@ -7631,8 +7510,9 @@ class MainWindow(QMainWindow):
         labels = [
             (self.players, ""),
             (self.opening_label, "font-size:15px;font-weight:bold;"),
-            (self.line_title, "font-size:11.5px;"),
-            (self.status, "font-size:11.5px;"),
+            (self.line_title, ""),
+            (self.acc_label, ""),
+            (self.status, ""),
         ]
         if mode not in ("invert", "bw"):
             for lbl, extra in labels:
@@ -8147,24 +8027,17 @@ class MainWindow(QMainWindow):
                                  hover_bg: str, accent: str, accent_fg: str, border_w: str = "1px"):
         self._cached_card_theme = (bar_bg, fg, border, muted, hover_bg, accent, accent_fg, border_w)
         if hasattr(self, "explain_card"):
-            ex_acc = getattr(self, "_explain_accent_col", "") or ""
-            left_rule = f"border-left:3px solid {ex_acc};" if ex_acc else ""
             self.explain_card.setStyleSheet(
-                f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; {left_rule} border-radius:6px; }}"
+                f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
                 f"QFrame#ExplainCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:12px; }}"
                 f"QFrame#ExplainCard QPushButton[skillChip='true'] {{ background:{hover_bg}; color:#eab308; "
                 f"border:1px solid #eab308; border-radius:9px; padding:1px 7px; font-size:10px; font-weight:bold; }}"
                 f"QFrame#ExplainCard QPushButton[skillChip='true']:hover {{ background:#eab308; color:#111827; }}"
             )
-        if hasattr(self, "acc_card"):
-            self.acc_card.setStyleSheet(
-                f"QFrame#AccuracyCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
-                f"QFrame#AccuracyCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:11.5px; }}"
-            )
         if hasattr(self, "explain_eval"):
             self.explain_eval.setStyleSheet(
                 f"background:{hover_bg}; color:{fg}; border:1px solid {border}; border-radius:4px; "
-                f"padding:1px 6px; font-family:'Consolas','Segoe UI',monospace; font-size:11.5px; font-weight:bold;"
+                f"padding:1px 6px; font-family:'Consolas','Segoe UI',monospace; font-size:12px; font-weight:bold;"
             )
         if hasattr(self, "alt_route_frame"):
             self.alt_route_frame.setStyleSheet(
