@@ -1044,16 +1044,27 @@ class EvalBar(QWidget):
 
     def paintEvent(self, _):
         p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
         h, w = self.height(), self.width()
+        clip = QPainterPath()
+        clip.addRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 4.0, 4.0)
+        p.save()
+        p.setClipPath(clip)
         pct = C.eval_bar_pct(self.cp, mode=self.formula, is_start=self.is_start)
         white_h = h * pct / 100.0
-        p.fillRect(0, 0, w, h, QColor("#333"))
-        p.fillRect(0, int(round(h - white_h)), w, int(round(white_h)) + 1, QColor("#eee"))
-        p.setFont(QFont("Segoe UI", 9, QFont.Bold))
+        p.fillRect(0, 0, w, h, QColor("#2a2a2e"))
+        p.fillRect(0, int(round(h - white_h)), w, int(round(white_h)) + 1, QColor("#f1f5f9"))
+        # Subtle 50% equality tick mark
+        p.setPen(QPen(QColor(128, 128, 128, 110), 1))
+        p.drawLine(0, h // 2, w, h // 2)
+        p.restore()
+        p.setPen(QPen(QColor(90, 90, 98, 135), 1))
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1.0, h - 1.0), 4.0, 4.0)
+        p.setFont(QFont("Segoe UI", 8, QFont.Bold))
         white_ahead = self.cp >= 0
-        # number sits on the side of whoever is ahead: bottom for white, top for black
-        r = QRectF(0, h - 22, w, 20) if white_ahead else QRectF(0, 2, w, 20)
-        p.setPen(QColor("#222") if white_ahead else QColor("#eee"))
+        r = QRectF(0, h - 21, w, 19) if white_ahead else QRectF(0, 2, w, 19)
+        p.setPen(QColor("#1e293b") if white_ahead else QColor("#f1f5f9"))
         p.drawText(r, Qt.AlignCenter, self.text)
 
 
@@ -4181,15 +4192,361 @@ class SettingsDialog(QDialog):
         )
 
 
+_SKILL_CAT_COLORS = {
+    "All": "#38bdf8",
+    "Fundamentals": "#38bdf8",
+    "Openings": "#a78bfa",
+    "Tactics": "#f59e0b",
+    "Strategy": "#10b981",
+    "Endgames": "#f472b6",
+}
+_SKILL_ICON_CACHE = {}
+
+
+def _draw_skill_glyph(p: QPainter, sid: str, cat: str, s: float, fg: QColor):
+    """Draw a crisp antialiased geometric chess-skill motif inside `[0..s, 0..s]`."""
+    lw = max(1.35, s * 0.075)
+    pen = QPen(fg, lw, Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin)
+    p.setPen(pen)
+    p.setBrush(Qt.NoBrush)
+
+    def dot(cx, cy, r_f):
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(fg)
+        p.drawEllipse(QPointF(s * cx, s * cy), s * r_f, s * r_f)
+        p.restore()
+
+    def arrow_head(tx, ty, fx, fy, sz_f=0.11):
+        ang = math.atan2(ty - fy, tx - fx)
+        d = s * sz_f
+        p.save()
+        p.setPen(Qt.NoPen)
+        p.setBrush(fg)
+        p.drawPolygon(QPolygonF([
+            QPointF(s * tx, s * ty),
+            QPointF(s * tx - math.cos(ang - 0.55) * d, s * ty - math.sin(ang - 0.55) * d),
+            QPointF(s * tx - math.cos(ang + 0.55) * d, s * ty - math.sin(ang + 0.55) * d),
+        ]))
+        p.restore()
+
+    if sid in ("fork", "knight_fork", "royal_fork"):
+        p.drawLine(QPointF(s * 0.50, s * 0.80), QPointF(s * 0.50, s * 0.54))
+        p.drawLine(QPointF(s * 0.50, s * 0.54), QPointF(s * 0.27, s * 0.30))
+        p.drawLine(QPointF(s * 0.50, s * 0.54), QPointF(s * 0.73, s * 0.30))
+        arrow_head(0.25, 0.28, 0.50, 0.54, 0.13)
+        arrow_head(0.75, 0.28, 0.50, 0.54, 0.13)
+        dot(0.50, 0.78, 0.065)
+        if sid == "royal_fork":
+            p.drawLine(QPointF(s * 0.38, s * 0.20), QPointF(s * 0.62, s * 0.20))
+            dot(0.50, 0.15, 0.045)
+        elif sid == "knight_fork":
+            p.drawLine(QPointF(s * 0.36, s * 0.80), QPointF(s * 0.50, s * 0.80))
+    elif sid in ("pin", "absolute_pin", "exploits_pin", "attacking_pinned_piece"):
+        p.drawLine(QPointF(s * 0.22, s * 0.78), QPointF(s * 0.74, s * 0.26))
+        arrow_head(0.78, 0.22, 0.22, 0.78, 0.13)
+        p.drawEllipse(QPointF(s * 0.48, s * 0.52), s * 0.10, s * 0.10)
+        if sid == "absolute_pin":
+            p.drawLine(QPointF(s * 0.76, s * 0.15), QPointF(s * 0.76, s * 0.27))
+            p.drawLine(QPointF(s * 0.70, s * 0.20), QPointF(s * 0.82, s * 0.20))
+        elif sid in ("exploits_pin", "attacking_pinned_piece"):
+            p.drawLine(QPointF(s * 0.24, s * 0.52), QPointF(s * 0.36, s * 0.52))
+    elif sid == "skewer":
+        p.drawLine(QPointF(s * 0.20, s * 0.80), QPointF(s * 0.76, s * 0.24))
+        arrow_head(0.80, 0.20, 0.20, 0.80, 0.13)
+        p.save()
+        p.setBrush(fg)
+        p.drawPolygon(QPolygonF([
+            QPointF(s * 0.46, s * 0.42), QPointF(s * 0.58, s * 0.54),
+            QPointF(s * 0.46, s * 0.66), QPointF(s * 0.34, s * 0.54),
+        ]))
+        p.restore()
+        dot(0.76, 0.24, 0.06)
+    elif sid in ("discovered_attack", "discovered_check", "double_check"):
+        dash_pen = QPen(fg, lw, Qt.DashLine, Qt.RoundCap)
+        p.setPen(dash_pen)
+        p.drawLine(QPointF(s * 0.34, s * 0.80), QPointF(s * 0.34, s * 0.24))
+        p.setPen(pen)
+        arrow_head(0.34, 0.20, 0.34, 0.80, 0.13)
+        path = QPainterPath()
+        path.moveTo(s * 0.36, s * 0.54)
+        path.quadTo(s * 0.58, s * 0.54, s * 0.74, s * 0.38)
+        p.drawPath(path)
+        arrow_head(0.77, 0.35, 0.58, 0.54, 0.12)
+        if sid == "double_check":
+            p.drawLine(QPointF(s * 0.74, s * 0.36), QPointF(s * 0.40, s * 0.22))
+    elif "sacrifice" in sid:
+        # 4-point brilliant star
+        star = QPolygonF([
+            QPointF(s * 0.50, s * 0.16), QPointF(s * 0.59, s * 0.41),
+            QPointF(s * 0.84, s * 0.50), QPointF(s * 0.59, s * 0.59),
+            QPointF(s * 0.50, s * 0.84), QPointF(s * 0.41, s * 0.59),
+            QPointF(s * 0.16, s * 0.50), QPointF(s * 0.41, s * 0.41),
+        ])
+        p.save()
+        fill = QColor(fg); fill.setAlpha(75)
+        p.setBrush(fill)
+        p.drawPolygon(star)
+        p.restore()
+        dot(0.75, 0.25, 0.045)
+    elif sid in ("promotion", "underpromotion"):
+        p.drawLine(QPointF(s * 0.24, s * 0.22), QPointF(s * 0.76, s * 0.22))
+        p.drawLine(QPointF(s * 0.50, s * 0.78), QPointF(s * 0.50, s * 0.34))
+        arrow_head(0.50, 0.28, 0.50, 0.78, 0.14)
+        if sid == "underpromotion":
+            p.drawLine(QPointF(s * 0.50, s * 0.56), QPointF(s * 0.70, s * 0.56))
+            dot(0.70, 0.56, 0.05)
+        else:
+            dot(0.50, 0.80, 0.065)
+    elif "book_move" in sid:
+        # Open book
+        p.drawRoundedRect(QRectF(s * 0.18, s * 0.28, s * 0.31, s * 0.48), 2.0, 2.0)
+        p.drawRoundedRect(QRectF(s * 0.51, s * 0.28, s * 0.31, s * 0.48), 2.0, 2.0)
+        cnt = 1 if "one" in sid else (2 if "two" in sid else (3 if "three" in sid else 4))
+        for i in range(cnt):
+            dot(0.30 + i * (0.40 / max(1, cnt - 1)) if cnt > 1 else 0.50, 0.19, 0.038)
+    elif sid in ("castle", "prevent_castling"):
+        # Battlement tower
+        p.drawLine(QPointF(s * 0.28, s * 0.78), QPointF(s * 0.72, s * 0.78))
+        p.drawRect(QRectF(s * 0.33, s * 0.38, s * 0.34, s * 0.40))
+        for fx in (0.31, 0.46, 0.61):
+            p.drawRect(QRectF(s * fx, s * 0.24, s * 0.08, s * 0.14))
+        if sid == "prevent_castling":
+            p.drawLine(QPointF(s * 0.20, s * 0.80), QPointF(s * 0.80, s * 0.20))
+    elif sid in ("check",):
+        bolt = QPolygonF([
+            QPointF(s * 0.56, s * 0.16), QPointF(s * 0.30, s * 0.52),
+            QPointF(s * 0.49, s * 0.52), QPointF(s * 0.42, s * 0.84),
+            QPointF(s * 0.70, s * 0.46), QPointF(s * 0.51, s * 0.46),
+        ])
+        p.save(); fill = QColor(fg); fill.setAlpha(80); p.setBrush(fill); p.drawPolygon(bolt); p.restore()
+    elif "mate" in sid and "defend" not in sid:
+        if sid == "backrank_mate":
+            p.drawLine(QPointF(s * 0.18, s * 0.24), QPointF(s * 0.82, s * 0.24))
+            p.drawLine(QPointF(s * 0.32, s * 0.78), QPointF(s * 0.32, s * 0.32))
+            arrow_head(0.32, 0.26, 0.32, 0.78, 0.13)
+            dot(0.66, 0.24, 0.07)
+        elif sid == "ladder_mate":
+            p.drawLine(QPointF(s * 0.18, s * 0.34), QPointF(s * 0.74, s * 0.34))
+            arrow_head(0.80, 0.34, 0.18, 0.34, 0.12)
+            p.drawLine(QPointF(s * 0.18, s * 0.58), QPointF(s * 0.74, s * 0.58))
+            arrow_head(0.80, 0.58, 0.18, 0.58, 0.12)
+        else:
+            crown = QPolygonF([
+                QPointF(s * 0.22, s * 0.72), QPointF(s * 0.20, s * 0.36),
+                QPointF(s * 0.38, s * 0.52), QPointF(s * 0.50, s * 0.26),
+                QPointF(s * 0.62, s * 0.52), QPointF(s * 0.80, s * 0.36),
+                QPointF(s * 0.78, s * 0.72),
+            ])
+            p.drawPolygon(crown)
+            p.drawLine(QPointF(s * 0.50, s * 0.15), QPointF(s * 0.50, s * 0.25))
+    elif sid in ("defend_piece", "defend_checkmate", "defend_tactic", "blocks_attack"):
+        sh = QPainterPath()
+        sh.moveTo(s * 0.50, s * 0.18)
+        sh.lineTo(s * 0.78, s * 0.29)
+        sh.quadTo(s * 0.78, s * 0.64, s * 0.50, s * 0.83)
+        sh.quadTo(s * 0.22, s * 0.64, s * 0.22, s * 0.29)
+        sh.closeSubpath()
+        p.drawPath(sh)
+        if sid == "blocks_attack":
+            p.drawLine(QPointF(s * 0.34, s * 0.50), QPointF(s * 0.66, s * 0.50))
+        else:
+            p.drawLine(QPointF(s * 0.38, s * 0.51), QPointF(s * 0.47, s * 0.60))
+            p.drawLine(QPointF(s * 0.47, s * 0.60), QPointF(s * 0.63, s * 0.41))
+    elif sid in ("capture", "free_piece", "winning_capture", "removes_defender", "trapped_piece"):
+        if sid == "trapped_piece":
+            p.drawRect(QRectF(s * 0.24, s * 0.24, s * 0.52, s * 0.52))
+            dot(0.50, 0.50, 0.09)
+        else:
+            p.drawEllipse(QPointF(s * 0.50, s * 0.50), s * 0.24, s * 0.24)
+            for a, b, c, d in ((0.50, 0.17, 0.50, 0.30), (0.50, 0.70, 0.50, 0.83),
+                               (0.17, 0.50, 0.30, 0.50), (0.70, 0.50, 0.83, 0.50)):
+                p.drawLine(QPointF(s * a, s * b), QPointF(s * c, s * d))
+            if sid == "winning_capture":
+                dot(0.50, 0.50, 0.06)
+    elif sid in ("recapture", "equal_trade", "trading_to_simplify", "avoids_trade", "retreat"):
+        if sid in ("retreat", "avoids_trade"):
+            path = QPainterPath()
+            path.moveTo(s * 0.66, s * 0.26)
+            path.quadTo(s * 0.26, s * 0.32, s * 0.38, s * 0.72)
+            p.drawPath(path)
+            arrow_head(0.40, 0.77, 0.32, 0.52, 0.13)
+        else:
+            p.drawLine(QPointF(s * 0.24, s * 0.38), QPointF(s * 0.72, s * 0.38))
+            arrow_head(0.77, 0.38, 0.24, 0.38, 0.12)
+            p.drawLine(QPointF(s * 0.76, s * 0.62), QPointF(s * 0.28, s * 0.62))
+            arrow_head(0.23, 0.62, 0.76, 0.62, 0.12)
+    elif "rook" in sid or sid in ("creates_battery", "double_rooks"):
+        if sid == "connect_rooks":
+            p.drawRect(QRectF(s * 0.18, s * 0.38, s * 0.18, s * 0.24))
+            p.drawRect(QRectF(s * 0.64, s * 0.38, s * 0.18, s * 0.24))
+            p.drawLine(QPointF(s * 0.36, s * 0.50), QPointF(s * 0.64, s * 0.50))
+        elif sid == "creates_battery":
+            p.drawLine(QPointF(s * 0.22, s * 0.78), QPointF(s * 0.74, s * 0.26))
+            arrow_head(0.79, 0.21, 0.22, 0.78, 0.13)
+            dot(0.35, 0.65, 0.065)
+            dot(0.54, 0.46, 0.065)
+        elif "seventh" in sid:
+            p.drawLine(QPointF(s * 0.18, s * 0.28), QPointF(s * 0.82, s * 0.28))
+            p.drawLine(QPointF(s * 0.50, s * 0.80), QPointF(s * 0.50, s * 0.34))
+            arrow_head(0.50, 0.28, 0.50, 0.80, 0.13)
+        elif "double" in sid:
+            for cy in (0.64, 0.40):
+                p.drawLine(QPointF(s * 0.34, s * (cy + 0.12)), QPointF(s * 0.50, s * cy))
+                p.drawLine(QPointF(s * 0.66, s * (cy + 0.12)), QPointF(s * 0.50, s * cy))
+        else:
+            p.drawLine(QPointF(s * 0.30, s * 0.20), QPointF(s * 0.30, s * 0.80))
+            p.drawLine(QPointF(s * 0.70, s * 0.20), QPointF(s * 0.70, s * 0.80))
+            p.drawLine(QPointF(s * 0.50, s * 0.78), QPointF(s * 0.50, s * 0.28))
+            arrow_head(0.50, 0.22, 0.50, 0.78, 0.13)
+    elif sid in ("pawns_in_center", "strikes_at_center"):
+        p.drawRect(QRectF(s * 0.24, s * 0.24, s * 0.24, s * 0.24))
+        p.drawRect(QRectF(s * 0.52, s * 0.24, s * 0.24, s * 0.24))
+        p.drawRect(QRectF(s * 0.24, s * 0.52, s * 0.24, s * 0.24))
+        p.drawRect(QRectF(s * 0.52, s * 0.52, s * 0.24, s * 0.24))
+        dot(0.36, 0.64, 0.05)
+        dot(0.64, 0.36, 0.05)
+    elif sid in ("fianchetto", "powerful_bishop"):
+        p.drawEllipse(QPointF(s * 0.28, s * 0.72), s * 0.08, s * 0.08)
+        p.drawLine(QPointF(s * 0.34, s * 0.66), QPointF(s * 0.74, s * 0.26))
+        arrow_head(0.79, 0.21, 0.34, 0.66, 0.13)
+    elif sid == "outpost":
+        p.drawLine(QPointF(s * 0.28, s * 0.74), QPointF(s * 0.50, s * 0.52))
+        p.drawLine(QPointF(s * 0.72, s * 0.74), QPointF(s * 0.50, s * 0.52))
+        dot(0.50, 0.36, 0.10)
+    elif "passed_pawn" in sid or sid == "pawn_storm":
+        xs = (0.30, 0.50, 0.70) if sid == "pawn_storm" else (0.50,)
+        for fx in xs:
+            p.drawLine(QPointF(s * fx, s * 0.76), QPointF(s * fx, s * 0.32))
+            arrow_head(fx, 0.25, fx, 0.76, 0.12)
+            dot(fx, 0.78, 0.055)
+    elif sid in ("activate_king", "opposition"):
+        if sid == "opposition":
+            dot(0.50, 0.26, 0.085)
+            dot(0.50, 0.74, 0.085)
+            p.drawLine(QPointF(s * 0.26, s * 0.50), QPointF(s * 0.74, s * 0.50))
+        else:
+            dot(0.50, 0.50, 0.09)
+            for dx, dy in ((0, -0.28), (0, 0.28), (-0.28, 0), (0.28, 0)):
+                p.drawLine(QPointF(s * 0.50, s * 0.50), QPointF(s * (0.50 + dx), s * (0.50 + dy)))
+    else:
+        # Clean compass / tempo / development motif
+        p.drawEllipse(QPointF(s * 0.50, s * 0.50), s * 0.27, s * 0.27)
+        p.drawLine(QPointF(s * 0.38, s * 0.62), QPointF(s * 0.60, s * 0.40))
+        arrow_head(0.64, 0.36, 0.38, 0.62, 0.12)
+
+
+def _make_skill_icon(sid: str, category: str, state: str = "unlocked", size: int = 30, badge: bool = True) -> QPixmap:
+    """Render a crisp antialiased vector icon tile for any of the 72 skills."""
+    ck = (sid, category, state, size, badge)
+    cached = _SKILL_ICON_CACHE.get(ck)
+    if cached is not None:
+        return cached
+
+    dpr = 2
+    px = size * dpr
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+
+    base_hex = "#eab308" if state == "mastered" else _SKILL_CAT_COLORS.get(category, "#38bdf8")
+    if state == "locked":
+        fg = QColor("#94a3b8")
+        bg = QColor(100, 116, 139, 34)
+        brd = QColor(100, 116, 139, 75)
+    elif state == "mastered":
+        fg = QColor("#facc15")
+        bg = QColor(234, 179, 8, 48)
+        brd = QColor(234, 179, 8, 175)
+    else:
+        fg = QColor(base_hex)
+        bg = QColor(fg.red(), fg.green(), fg.blue(), 38)
+        brd = QColor(fg.red(), fg.green(), fg.blue(), 125)
+
+    if badge:
+        rad = px * 0.22
+        p.setPen(QPen(brd, max(1.0, px * 0.04)))
+        p.setBrush(bg)
+        p.drawRoundedRect(QRectF(1.0, 1.0, px - 2.0, px - 2.0), rad, rad)
+        p.save()
+        pad = px * 0.06
+        p.translate(pad, pad)
+        _draw_skill_glyph(p, sid, category, px - 2.0 * pad, fg)
+        p.restore()
+        # Corner micro-status indicator (crisp vector lock or gold mastery check)
+        if state == "locked" and size >= 24:
+            bx, by, bs = px * 0.64, px * 0.64, px * 0.32
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#1e293b"))
+            p.drawEllipse(QRectF(bx - 1, by - 1, bs + 2, bs + 2))
+            p.setPen(QPen(QColor("#94a3b8"), max(1.4, bs * 0.12)))
+            p.setBrush(Qt.NoBrush)
+            p.drawArc(QRectF(bx + bs * 0.24, by + bs * 0.10, bs * 0.52, bs * 0.50), 0, 180 * 16)
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#94a3b8"))
+            p.drawRoundedRect(QRectF(bx + bs * 0.16, by + bs * 0.42, bs * 0.68, bs * 0.46), 2.0, 2.0)
+        elif state == "mastered" and size >= 24:
+            bx, by, bs = px * 0.64, px * 0.64, px * 0.32
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#eab308"))
+            p.drawEllipse(QRectF(bx, by, bs, bs))
+            p.setPen(QPen(QColor("#111827"), max(1.8, bs * 0.16), Qt.SolidLine, Qt.RoundCap, Qt.RoundJoin))
+            p.drawLine(QPointF(bx + bs * 0.25, by + bs * 0.52), QPointF(bx + bs * 0.44, by + bs * 0.70))
+            p.drawLine(QPointF(bx + bs * 0.44, by + bs * 0.70), QPointF(bx + bs * 0.76, by + bs * 0.32))
+    else:
+        _draw_skill_glyph(p, sid, category, float(px), fg)
+
+    p.end()
+    pm.setDevicePixelRatio(dpr)
+    _SKILL_ICON_CACHE[ck] = pm
+    return pm
+
+
+def _make_skill_cat_icon(cat: str, size: int = 15, active: bool = False, fg_override: str = "") -> QIcon:
+    """Render a crisp 15px vector category icon for Skills tabs and section headers."""
+    col_hex = fg_override or _SKILL_CAT_COLORS.get(cat, "#38bdf8")
+    ck = ("cat_ic", cat, size, active, col_hex)
+    cached = _SKILL_ICON_CACHE.get(ck)
+    if cached is not None:
+        return cached
+    rep_sid = {
+        "All": "pawns_in_center",
+        "Fundamentals": "defend_piece",
+        "Openings": "two_book_moves",
+        "Tactics": "check",
+        "Strategy": "outpost",
+        "Endgames": "checkmate",
+    }.get(cat, "develops_piece")
+    dpr = 2
+    px = size * dpr
+    pm = QPixmap(px, px)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    _draw_skill_glyph(p, rep_sid, cat, float(px), QColor(col_hex))
+    p.end()
+    pm.setDevicePixelRatio(dpr)
+    ic = QIcon(pm)
+    _SKILL_ICON_CACHE[ck] = ic
+    return ic
+
+
 class SkillsDialog(QDialog):
-    """Categorized chess Skills & Habits tracker with tier unlocks and game quick-jumps."""
+    """Organized, icon-rich chess Skills & Habits tracker with category/tier sections and game quick-jumps."""
+
+    _QUIET_FILLER_SKILLS = frozenset({
+        "capture", "check", "one_book_move",
+        "king_and_pawn_endgames", "rook_endgames", "queen_endgames", "knight_and_bishop_endgames",
+    })
 
     def __init__(self, store: SK.SkillsStore, parent=None, initial_category: Optional[str] = None):
         super().__init__(parent)
         self.store = store
         self.main_win = parent
-        self.setWindowTitle(f"{APP_TITLE} — Skills & Habits Progress")
-        self.resize(960, 680)
+        self.setWindowTitle(f"{APP_TITLE} — Skills & Habits")
+        self.resize(740, 470)
+        self.setMinimumSize(600, 360)
         self._active_category = initial_category if initial_category in SK.SKILL_CATEGORIES else "All"
         self._cat_buttons = {}
         self._game_skill_plies = self._collect_game_skills()
@@ -4203,109 +4560,74 @@ class SkillsDialog(QDialog):
             )
 
         lay = QVBoxLayout(self)
-        lay.setSpacing(8)
+        lay.setContentsMargins(10, 8, 10, 8)
+        lay.setSpacing(6)
 
-        # ---- Header Summary ----
+        # ---- 1. Sleek Header Summary Bar ----
         hdr = QFrame()
         hdr.setObjectName("SkillsHeader")
         hdr.setStyleSheet(
             f"QFrame#SkillsHeader {{ background:{self._bar_bg}; border:1px solid {self._border}; border-radius:6px; }}"
         )
-        hl = QVBoxLayout(hdr)
-        hl.setContentsMargins(12, 10, 12, 10)
-        hl.setSpacing(6)
-        top_row = QHBoxLayout()
-        title_col = QVBoxLayout()
-        title_col.setSpacing(2)
-        title_lbl = QLabel("<b style='font-size:15px;'>Skills &amp; Habits Progression</b>")
+        hl = QHBoxLayout(hdr)
+        hl.setContentsMargins(10, 6, 10, 6)
+        hl.setSpacing(8)
+        hdr_icon = QLabel()
+        hdr_icon.setFixedSize(22, 22)
+        hdr_icon.setPixmap(_make_skill_icon("brilliant_sacrifice", "Tactics", "mastered", 22, badge=True))
+        hdr_icon.setStyleSheet("border:none; background:transparent;")
+        hl.addWidget(hdr_icon)
+
+        title_lbl = QLabel("<b style='font-size:13.5px;'>Skills &amp; Habits</b>")
         title_lbl.setTextFormat(Qt.RichText)
         title_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._fg};")
+        hl.addWidget(title_lbl)
+
         self.summary_lbl = QLabel("")
         self.summary_lbl.setTextFormat(Qt.RichText)
-        self.summary_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:12px;")
-        title_col.addWidget(title_lbl)
-        title_col.addWidget(self.summary_lbl)
-        top_row.addLayout(title_col, 1)
-
-        self.btn_reset_skills = QPushButton("Reset Progress…")
-        self.btn_reset_skills.setProperty("compactBtn", True)
-        self.btn_reset_skills.clicked.connect(self._reset_progress)
-        top_row.addWidget(self.btn_reset_skills)
-        hl.addLayout(top_row)
+        self.summary_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:11px;")
+        hl.addWidget(self.summary_lbl, 1)
 
         self.overall_bar = QProgressBar()
         self.overall_bar.setTextVisible(False)
-        self.overall_bar.setFixedHeight(8)
+        self.overall_bar.setFixedSize(104, 6)
         self.overall_bar.setStyleSheet(
-            f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:4px; }}"
-            f"QProgressBar::chunk {{ background:#eab308; border-radius:4px; }}"
+            f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:3px; }}"
+            f"QProgressBar::chunk {{ background:#eab308; border-radius:3px; }}"
         )
         hl.addWidget(self.overall_bar)
+
+        self.btn_reset_skills = QPushButton("Reset")
+        self.btn_reset_skills.setProperty("compactBtn", True)
+        self.btn_reset_skills.setToolTip("Reset all earned skill points and unlocked tiers")
+        self.btn_reset_skills.setStyleSheet("padding:2px 8px; font-size:11px;")
+        self.btn_reset_skills.clicked.connect(self._reset_progress)
+        hl.addWidget(self.btn_reset_skills)
+
+        btn_close_top = QPushButton("Close")
+        btn_close_top.setProperty("compactBtn", True)
+        btn_close_top.setStyleSheet("padding:2px 10px; font-size:11px;")
+        btn_close_top.clicked.connect(self.reject)
+        hl.addWidget(btn_close_top)
         lay.addWidget(hdr)
 
-        # ---- Demonstrated in Current Game strip ----
-        self.game_strip = QFrame()
-        self.game_strip.setObjectName("SkillsGameStrip")
-        self.game_strip.setStyleSheet(
-            f"QFrame#SkillsGameStrip {{ background:{self._bar_bg}; border:1px solid {self._border}; border-radius:6px; }}"
-        )
-        gsl = QVBoxLayout(self.game_strip)
-        gsl.setContentsMargins(10, 6, 10, 6)
-        gsl.setSpacing(4)
-        gs_hdr = QLabel("<b>Demonstrated in Current Game</b> <span style='opacity:0.75;'>(click a move to jump)</span>")
-        gs_hdr.setTextFormat(Qt.RichText)
-        gs_hdr.setStyleSheet(f"border:none; background:transparent; color:{self._fg}; font-size:12px;")
-        gsl.addWidget(gs_hdr)
-
-        strip_scroll = QScrollArea()
-        strip_scroll.setWidgetResizable(True)
-        strip_scroll.setFrameShape(QFrame.NoFrame)
-        strip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        strip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        strip_scroll.setFixedHeight(50)
-        strip_host = QWidget()
-        strip_host.setStyleSheet("background:transparent; border:none;")
-        strip_lay = QHBoxLayout(strip_host)
-        strip_lay.setContentsMargins(0, 2, 0, 6)
-        strip_lay.setSpacing(6)
-        any_game_chips = False
-        for ply, num_san, sids in self._game_skill_plies["moves"]:
-            sid = sids[0]
-            sd = SK.SKILL_BY_ID.get(sid)
-            if sd is None:
-                continue
-            any_game_chips = True
-            btn = QPushButton(f"★ {num_san} · {sd.name}")
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setProperty("compactBtn", True)
-            all_names = ", ".join(SK.SKILL_BY_ID[s].name for s in sids if s in SK.SKILL_BY_ID)
-            btn.setToolTip(f"Jump to {num_san}\nSkills: {all_names}")
-            btn.setStyleSheet(
-                f"background:{self._hover_bg}; color:{self._fg}; border:1px solid #eab308; "
-                f"border-radius:11px; padding:2px 9px; font-size:11px; font-weight:600;"
-            )
-            btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
-            strip_lay.addWidget(btn)
-        strip_lay.addStretch(1)
-        strip_scroll.setWidget(strip_host)
-        gsl.addWidget(strip_scroll)
-        self.game_strip.setVisible(any_game_chips)
-        lay.addWidget(self.game_strip)
-
-        # ---- Category Tabs + Search Filter ----
+        # ---- 2. Category Tabs (with Vector Icons) + State Filter + Search ----
         ctrl = QHBoxLayout()
-        ctrl.setSpacing(6)
+        ctrl.setContentsMargins(0, 0, 0, 0)
+        ctrl.setSpacing(4)
         self._cat_group = QButtonGroup(self)
         self._cat_group.setExclusive(True)
         for cat in ("All",) + SK.SKILL_CATEGORIES:
-            cnt = len(SK.SKILLS) if cat == "All" else len(SK.SKILLS_BY_CATEGORY.get(cat, []))
-            b = QPushButton(f"{cat} ({cnt})")
+            b = QPushButton(cat)
             b.setCheckable(True)
             b.setCursor(Qt.PointingHandCursor)
             b.setChecked(cat == self._active_category)
+            b.setIcon(_make_skill_cat_icon(cat, 14, active=(cat == self._active_category)))
+            b.setIconSize(QSize(14, 14))
+            b.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
             b.setStyleSheet(
                 f"QPushButton {{ background:{self._bar_bg}; color:{self._fg}; border:1px solid {self._border}; "
-                f"border-radius:12px; padding:4px 10px; font-size:12px; font-weight:600; }}"
+                f"border-radius:11px; padding:3px 9px; min-width:0px; font-size:11px; font-weight:600; }}"
                 f"QPushButton:hover {{ border-color:{self._accent}; background:{self._hover_bg}; }}"
                 f"QPushButton:checked {{ background:{self._accent}; color:{self._accent_fg}; border-color:{self._accent}; }}"
             )
@@ -4315,43 +4637,112 @@ class SkillsDialog(QDialog):
             self._cat_buttons[cat] = b
 
         ctrl.addStretch(1)
+        self.state_filter = QComboBox()
+        self.state_filter.addItem("All States", "all")
+        self.state_filter.addItem("Active Only", "unlocked")
+        self.state_filter.addItem("Mastered", "mastered")
+        self.state_filter.addItem("In This Game", "in_game")
+        self.state_filter.addItem("Hide Locked", "no_locked")
+        self.state_filter.setFixedWidth(104)
+        self.state_filter.setStyleSheet("padding:2px 6px; font-size:11px;")
+        self.state_filter.currentIndexChanged.connect(self._rebuild_cards)
+        ctrl.addWidget(self.state_filter)
+
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Search skills…")
-        self.search_edit.setMinimumWidth(160)
+        self.search_edit.setFixedWidth(118)
+        self.search_edit.setStyleSheet("padding:2px 7px; font-size:11px;")
         self.search_edit.textChanged.connect(self._rebuild_cards)
         ctrl.addWidget(self.search_edit)
-
-        self.show_locked_chk = QCheckBox("Show Locked")
-        self.show_locked_chk.setChecked(True)
-        self.show_locked_chk.toggled.connect(self._rebuild_cards)
-        ctrl.addWidget(self.show_locked_chk)
         lay.addLayout(ctrl)
 
-        # ---- Cards Scroll Grid ----
+        # ---- 3. Current-Game Quick-Jump Strip (Icon Chips) ----
+        self.game_strip = QFrame()
+        self.game_strip.setObjectName("SkillsGameStrip")
+        self.game_strip.setStyleSheet(
+            f"QFrame#SkillsGameStrip {{ background:{self._bar_bg}; border:1px solid {self._border}; border-radius:6px; }}"
+        )
+        gsl = QHBoxLayout(self.game_strip)
+        gsl.setContentsMargins(8, 3, 8, 3)
+        gsl.setSpacing(6)
+        n_gm = len(self._game_skill_plies["moves"])
+        gs_hdr = QLabel(f"<b>This Game ({n_gm}):</b>")
+        gs_hdr.setTextFormat(Qt.RichText)
+        gs_hdr.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:10.5px;")
+        gsl.addWidget(gs_hdr)
+
+        strip_scroll = QScrollArea()
+        strip_scroll.setWidgetResizable(True)
+        strip_scroll.setFrameShape(QFrame.NoFrame)
+        strip_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        strip_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        strip_scroll.setFixedHeight(32)
+        strip_scroll.setStyleSheet(
+            f"QScrollArea {{ background:transparent; border:none; }}"
+            f"QScrollBar:horizontal {{ height:5px; background:transparent; margin:0px; }}"
+            f"QScrollBar::handle:horizontal {{ background:{self._border}; border-radius:2px; min-width:24px; }}"
+            f"QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {{ width:0px; height:0px; }}"
+        )
+        strip_host = QWidget()
+        strip_host.setSizePolicy(QSizePolicy.MinimumExpanding, QSizePolicy.Fixed)
+        strip_host.setStyleSheet("background:transparent; border:none;")
+        strip_lay = QHBoxLayout(strip_host)
+        strip_lay.setSizeConstraint(QLayout.SetMinAndMaxSize)
+        strip_lay.setContentsMargins(0, 1, 0, 3)
+        strip_lay.setSpacing(5)
+        any_game_chips = False
+        for ply, num_san, sids in self._game_skill_plies["moves"]:
+            sid = sids[0]
+            sd = SK.SKILL_BY_ID.get(sid)
+            if sd is None:
+                continue
+            any_game_chips = True
+            btn = QPushButton(f"{num_san} · {sd.name}")
+            btn.setIcon(QIcon(_make_skill_icon(sid, sd.category, "unlocked", 14, badge=False)))
+            btn.setIconSize(QSize(13, 13))
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            all_names = ", ".join(SK.SKILL_BY_ID[s].name for s in sids if s in SK.SKILL_BY_ID)
+            btn.setToolTip(f"Jump to {num_san}\nSkills: {all_names}")
+            cat_c = _SKILL_CAT_COLORS.get(sd.category, "#eab308")
+            btn.setStyleSheet(
+                f"background:{self._hover_bg}; color:{self._fg}; border:1px solid {cat_c}; "
+                f"border-radius:9px; padding:2px 8px; font-size:10px; font-weight:600;"
+            )
+            btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
+            strip_lay.addWidget(btn)
+        strip_lay.addStretch(1)
+        strip_scroll.setWidget(strip_host)
+        gsl.addWidget(strip_scroll, 1)
+        self.game_strip.setVisible(any_game_chips)
+        lay.addWidget(self.game_strip)
+
+        # ---- 4. Organized Sectioned Scroll Area ----
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setFrameShape(QFrame.NoFrame)
         self.cards_host = QWidget()
         cards_outer = QVBoxLayout(self.cards_host)
-        cards_outer.setContentsMargins(2, 2, 6, 2)
+        cards_outer.setSizeConstraint(QLayout.SetMinimumSize)
+        cards_outer.setContentsMargins(2, 2, 6, 4)
         cards_outer.setSpacing(0)
         self.cards_grid = QGridLayout()
         self.cards_grid.setContentsMargins(0, 0, 0, 0)
-        self.cards_grid.setSpacing(8)
-        self.cards_grid.setColumnStretch(0, 1)
-        self.cards_grid.setColumnStretch(1, 1)
+        self.cards_grid.setHorizontalSpacing(6)
+        self.cards_grid.setVerticalSpacing(6)
+        self.column_count = 3
+        for c_i in range(self.column_count):
+            self.cards_grid.setColumnStretch(c_i, 1)
         cards_outer.addLayout(self.cards_grid)
         cards_outer.addStretch(1)
         self.scroll.setWidget(self.cards_host)
         lay.addWidget(self.scroll, 1)
 
-        bb = QDialogButtonBox(QDialogButtonBox.Close)
-        bb.rejected.connect(self.reject)
-        lay.addWidget(bb)
         self.refresh()
 
     def _collect_game_skills(self) -> dict:
-        moves = []
+        all_moves = []
+        notable_moves = []
         first_ply_by_skill = {}
         results = getattr(self.main_win, "results", None) or []
         for r in results:
@@ -4363,14 +4754,21 @@ class SkillsDialog(QDialog):
             if not sids:
                 continue
             num_san = f"{(r.ply + 1) // 2}{'.' if r.color else '…'} {r.san}"
-            moves.append((r.ply, num_san, list(sids)))
+            all_moves.append((r.ply, num_san, list(sids)))
+            non_filler = [s for s in sids if s not in self._QUIET_FILLER_SKILLS]
+            if non_filler:
+                notable_moves.append((r.ply, num_san, non_filler + [s for s in sids if s in self._QUIET_FILLER_SKILLS]))
             for sid in sids:
                 if sid not in first_ply_by_skill:
                     first_ply_by_skill[sid] = (r.ply, num_san)
-        return {"moves": moves, "by_skill": first_ply_by_skill}
+        chosen = notable_moves if notable_moves else all_moves
+        return {"moves": chosen, "by_skill": first_ply_by_skill}
 
     def _select_category(self, cat: str):
         self._active_category = cat
+        for cname, b in self._cat_buttons.items():
+            fg_ov = self._accent_fg if cname == cat else ""
+            b.setIcon(_make_skill_cat_icon(cname, 14, active=(cname == cat), fg_override=fg_ov))
         self._rebuild_cards()
 
     def _jump_to_ply(self, ply: int):
@@ -4395,20 +4793,174 @@ class SkillsDialog(QDialog):
         summ = self.store.summary()
         tot = max(1, summ["total"])
         self.summary_lbl.setText(
-            f"Mastered <b>{summ['mastered']} / {summ['total']}</b>  •  "
-            f"Unlocked <b>{summ['unlocked']}</b>  •  "
-            f"Locked <b>{summ['locked']}</b>  •  "
-            f"Points Earned <b>{summ['total_points']}</b>"
+            f"<span style='color:#eab308;'>★ <b>{summ['mastered']}/{summ['total']}</b> Mastered</span> &nbsp;·&nbsp; "
+            f"Active <b>{summ['unlocked']}</b> &nbsp;·&nbsp; "
+            f"<b>{summ['total_points']}</b> pts"
         )
         self.overall_bar.setRange(0, tot)
         self.overall_bar.setValue(summ["mastered"])
+        self.overall_bar.setToolTip(f"{summ['mastered']} of {summ['total']} skills mastered")
         for cat, btn in self._cat_buttons.items():
+            fg_ov = self._accent_fg if cat == self._active_category else ""
+            btn.setIcon(_make_skill_cat_icon(cat, 14, active=(cat == self._active_category), fg_override=fg_ov))
             if cat == "All":
-                btn.setText(f"All ({summ['mastered']}/{summ['total']})")
+                btn.setToolTip(f"All Categories ({summ['mastered']}/{summ['total']} mastered)")
             else:
                 cs = summ["by_category"].get(cat, {})
-                btn.setText(f"{cat} ({cs.get('mastered', 0)}/{cs.get('total', 0)})")
+                btn.setToolTip(f"{cat}: {cs.get('mastered', 0)}/{cs.get('total', 0)} mastered")
         self._rebuild_cards()
+
+    def _make_card_widget(self, st: dict, by_skill_game: dict) -> QFrame:
+        card = QFrame()
+        card.setObjectName("SkillCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        card.setFixedHeight(56)
+        state = st["state"]
+        cat = st["category"]
+        cat_col = _SKILL_CAT_COLORS.get(cat, self._accent)
+        if state == "mastered":
+            border_col = "#eab308"
+            cnt_txt = f"<span style='color:#eab308;'>★ {st['points']}/{st['target']}</span>"
+            bar_col = "#eab308"
+            state_label = "Mastered"
+        elif state == "unlocked":
+            border_col = cat_col
+            cnt_txt = f"<b>{st['points']}/{st['target']}</b>"
+            bar_col = cat_col
+            state_label = "Active"
+        else:
+            border_col = self._border
+            cnt_txt = f"0/{st['target']}"
+            bar_col = self._muted
+            state_label = "Locked"
+
+        card.setStyleSheet(
+            f"QFrame#SkillCard {{ background:{self._bar_bg}; border:1px solid {self._border}; "
+            f"border-left:3px solid {border_col}; border-radius:6px; }}"
+            f"QFrame#SkillCard:hover {{ border-color:{border_col}; }}"
+        )
+        tip_lines = [
+            f"<b>{st['name']}</b> ({cat} · {state_label})",
+            st["description"],
+            f"Progress: {st['points']} / {st['target']}",
+        ]
+        if state == "locked" and st["unlocked_by_names"]:
+            tip_lines.append(f"Unlock by mastering: {', '.join(st['unlocked_by_names'])}")
+        card.setToolTip("<br>".join(tip_lines))
+
+        outer = QHBoxLayout(card)
+        outer.setContentsMargins(7, 5, 8, 5)
+        outer.setSpacing(7)
+
+        ic_lbl = QLabel()
+        ic_lbl.setFixedSize(32, 32)
+        ic_lbl.setAlignment(Qt.AlignCenter)
+        ic_lbl.setStyleSheet("border:none; background:transparent;")
+        ic_lbl.setPixmap(_make_skill_icon(st["id"], cat, state, 32, badge=True))
+        outer.addWidget(ic_lbl)
+
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
+        row1.setSpacing(4)
+        nm_disp = st["name"] if len(st["name"]) <= 20 else (st["name"][:18].rstrip() + "…")
+        nm_col = self._fg if state != "locked" else self._muted
+        nm_lbl = QLabel(f"<b>{nm_disp}</b>")
+        nm_lbl.setTextFormat(Qt.RichText)
+        nm_lbl.setStyleSheet(f"border:none; background:transparent; color:{nm_col}; font-size:11px;")
+        row1.addWidget(nm_lbl, 1)
+
+        if st["id"] in by_skill_game:
+            ply, num_san = by_skill_game[st["id"]]
+            j_btn = QPushButton(num_san.split()[0])
+            j_btn.setCursor(Qt.PointingHandCursor)
+            j_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            j_btn.setToolTip(f"Jump to {num_san} in current game")
+            j_btn.setStyleSheet(
+                f"background:{self._hover_bg}; color:#eab308; border:1px solid #eab308; "
+                f"border-radius:3px; padding:0px 4px; font-size:9px; font-weight:bold;"
+            )
+            j_btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
+            row1.addWidget(j_btn)
+
+        cnt_lbl = QLabel(cnt_txt)
+        cnt_lbl.setTextFormat(Qt.RichText)
+        cnt_lbl.setStyleSheet(
+            f"border:none; background:transparent; color:{self._muted}; font-size:10px;"
+        )
+        row1.addWidget(cnt_lbl)
+        col.addLayout(row1)
+
+        if state == "locked" and st["unlocked_by_names"]:
+            sub_raw = "Req: " + ", ".join(st["unlocked_by_names"])
+        else:
+            sub_raw = st["description"]
+        sub_disp = sub_raw if len(sub_raw) <= 30 else (sub_raw[:28].rstrip() + "…")
+        sub_lbl = QLabel(sub_disp)
+        sub_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:9.5px;")
+        col.addWidget(sub_lbl)
+
+        pb = QProgressBar()
+        pb.setTextVisible(False)
+        pb.setFixedHeight(3)
+        pb.setRange(0, max(1, st["target"]))
+        pb.setValue(st["points"])
+        pb.setStyleSheet(
+            f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:1px; }}"
+            f"QProgressBar::chunk {{ background:{bar_col}; border-radius:1px; }}"
+        )
+        col.addWidget(pb)
+        outer.addLayout(col, 1)
+        return card
+
+    def _add_section_block(self, row_cursor: int, title_html: str, sub_txt: str, icon_cat: str, items: list,
+                           by_skill_game: dict, prog_val: int = -1, prog_max: int = 0) -> int:
+        hdr_box = QWidget()
+        hdr_box.setFixedHeight(24 if row_cursor == 0 else 30)
+        hdr_box.setStyleSheet("background:transparent; border:none;")
+        hdr_row = QHBoxLayout(hdr_box)
+        hdr_row.setContentsMargins(2, 0 if row_cursor == 0 else 6, 2, 1)
+        hdr_row.setSpacing(6)
+        if icon_cat:
+            ic_lbl = QLabel()
+            ic_lbl.setFixedSize(15, 15)
+            ic_lbl.setPixmap(_make_skill_cat_icon(icon_cat, 15).pixmap(15, 15))
+            ic_lbl.setStyleSheet("border:none; background:transparent;")
+            hdr_row.addWidget(ic_lbl)
+        t_lbl = QLabel(title_html)
+        t_lbl.setTextFormat(Qt.RichText)
+        t_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._fg}; font-size:12px;")
+        hdr_row.addWidget(t_lbl)
+        if sub_txt:
+            s_lbl = QLabel(sub_txt)
+            s_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:10.5px;")
+            hdr_row.addWidget(s_lbl)
+        hdr_row.addStretch(1)
+        if prog_val >= 0 and prog_max > 0:
+            sbar = QProgressBar()
+            sbar.setTextVisible(False)
+            sbar.setFixedSize(68, 4)
+            sbar.setRange(0, prog_max)
+            sbar.setValue(prog_val)
+            bar_c = _SKILL_CAT_COLORS.get(icon_cat, "#eab308")
+            sbar.setStyleSheet(
+                f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:2px; }}"
+                f"QProgressBar::chunk {{ background:{bar_c}; border-radius:2px; }}"
+            )
+            hdr_row.addWidget(sbar)
+
+        cols = self.column_count
+        self.cards_grid.addWidget(hdr_box, row_cursor, 0, 1, cols)
+        row_cursor += 1
+        for idx, st in enumerate(items):
+            r_off = idx // cols
+            c_off = idx % cols
+            self.cards_grid.addWidget(self._make_card_widget(st, by_skill_game), row_cursor + r_off, c_off)
+        row_cursor += (len(items) + cols - 1) // cols
+        return row_cursor
 
     def _rebuild_cards(self):
         while self.cards_grid.count():
@@ -4420,11 +4972,18 @@ class SkillsDialog(QDialog):
                 w.deleteLater()
 
         q = (self.search_edit.text() or "").strip().lower()
-        show_locked = self.show_locked_chk.isChecked()
+        st_mode = self.state_filter.currentData() if hasattr(self, "state_filter") else "all"
+        by_skill_game = self._game_skill_plies["by_skill"]
         items = self.store.list_skills(self._active_category)
         shown = []
         for st in items:
-            if not show_locked and st["state"] == "locked":
+            if st_mode == "unlocked" and st["state"] != "unlocked":
+                continue
+            if st_mode == "mastered" and st["state"] != "mastered":
+                continue
+            if st_mode == "no_locked" and st["state"] == "locked":
+                continue
+            if st_mode == "in_game" and st["id"] not in by_skill_game:
                 continue
             if q and q not in st["name"].lower() and q not in st["description"].lower() and q not in st["category"].lower():
                 continue
@@ -4433,106 +4992,40 @@ class SkillsDialog(QDialog):
         if not shown:
             empty = QLabel("No skills match the current filter.")
             empty.setAlignment(Qt.AlignCenter)
-            empty.setStyleSheet(f"color:{self._muted}; padding:24px;")
-            self.cards_grid.addWidget(empty, 0, 0, 1, 2)
+            empty.setStyleSheet(f"color:{self._muted}; padding:24px; font-size:11.5px;")
+            self.cards_grid.addWidget(empty, 0, 0, 1, self.column_count)
             return
 
-        by_skill_game = self._game_skill_plies["by_skill"]
-        for idx, st in enumerate(shown):
-            card = QFrame()
-            card.setObjectName("SkillCard")
-            card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
-            card.setMinimumHeight(88)
-            state = st["state"]
-            if state == "mastered":
-                border_col = "#eab308"
-                badge_bg, badge_fg, badge_txt = "#eab308", "#111827", "★ Mastered"
-                bar_col = "#eab308"
-            elif state == "unlocked":
-                border_col = self._accent
-                badge_bg, badge_fg, badge_txt = self._accent, self._accent_fg, "Unlocked"
-                bar_col = self._accent
-            else:
-                border_col = self._border
-                badge_bg, badge_fg, badge_txt = self._hover_bg, self._muted, "Locked"
-                bar_col = self._muted
-
-            card.setStyleSheet(
-                f"QFrame#SkillCard {{ background:{self._bar_bg}; border:1px solid {self._border}; "
-                f"border-left:3px solid {border_col}; border-radius:6px; }}"
-            )
-            cl = QVBoxLayout(card)
-            cl.setContentsMargins(10, 8, 10, 8)
-            cl.setSpacing(4)
-
-            row1 = QHBoxLayout()
-            row1.setContentsMargins(0, 0, 0, 0)
-            row1.setSpacing(6)
-            nm_lbl = QLabel(f"<b>{st['name']}</b>")
-            nm_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._fg}; font-size:13px;")
-            row1.addWidget(nm_lbl, 1)
-
-            cat_lbl = QLabel(st["category"])
-            cat_lbl.setStyleSheet(
-                f"border:none; background:{self._hover_bg}; color:{self._muted}; "
-                f"border-radius:8px; padding:1px 7px; font-size:10px;"
-            )
-            row1.addWidget(cat_lbl)
-
-            st_lbl = QLabel(badge_txt)
-            st_lbl.setStyleSheet(
-                f"border:none; background:{badge_bg}; color:{badge_fg}; "
-                f"border-radius:8px; padding:1px 8px; font-size:10px; font-weight:bold;"
-            )
-            row1.addWidget(st_lbl)
-            cl.addLayout(row1)
-
-            desc_lbl = QLabel(st["description"])
-            desc_lbl.setWordWrap(True)
-            desc_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:11px;")
-            cl.addWidget(desc_lbl)
-
-            row3 = QHBoxLayout()
-            row3.setContentsMargins(0, 2, 0, 0)
-            row3.setSpacing(8)
-            pb = QProgressBar()
-            pb.setTextVisible(False)
-            pb.setFixedHeight(6)
-            pb.setRange(0, max(1, st["target"]))
-            pb.setValue(st["points"])
-            pb.setStyleSheet(
-                f"QProgressBar {{ background:{self._hover_bg}; border:none; border-radius:3px; }}"
-                f"QProgressBar::chunk {{ background:{bar_col}; border-radius:3px; }}"
-            )
-            row3.addWidget(pb, 1)
-
-            cnt_lbl = QLabel(f"{st['points']} / {st['target']}")
-            cnt_lbl.setStyleSheet(
-                f"border:none; background:transparent; color:{self._fg}; font-size:11px; font-weight:600;"
-            )
-            row3.addWidget(cnt_lbl)
-
-            if st["id"] in by_skill_game:
-                ply, num_san = by_skill_game[st["id"]]
-                j_btn = QPushButton(f"Move {num_san.split()[0]}")
-                j_btn.setProperty("compactBtn", True)
-                j_btn.setCursor(Qt.PointingHandCursor)
-                j_btn.setToolTip(f"Jump to {num_san} in current game")
-                j_btn.setStyleSheet(
-                    f"background:{self._hover_bg}; color:#eab308; border:1px solid #eab308; "
-                    f"border-radius:4px; padding:1px 6px; font-size:10px; font-weight:bold;"
+        row_cursor = 0
+        state_order = {"mastered": 0, "unlocked": 1, "locked": 2}
+        if self._active_category == "All" and not q:
+            for cat in SK.SKILL_CATEGORIES:
+                cat_items = [s for s in shown if s["category"] == cat]
+                if not cat_items:
+                    continue
+                cat_items.sort(key=lambda d: (state_order.get(d["state"], 9), d["name"]))
+                m_cnt = sum(1 for s in cat_items if s["state"] == "mastered")
+                u_cnt = sum(1 for s in cat_items if s["state"] == "unlocked")
+                tot_c = len(SK.SKILLS_BY_CATEGORY.get(cat, cat_items))
+                sub = f"·  {m_cnt}/{tot_c} mastered  ·  {u_cnt} active"
+                row_cursor = self._add_section_block(
+                    row_cursor, f"<b>{cat}</b>", sub, cat, cat_items, by_skill_game,
+                    prog_val=m_cnt, prog_max=tot_c,
                 )
-                j_btn.clicked.connect(lambda _=False, p=ply: self._jump_to_ply(p))
-                row3.addWidget(j_btn)
-            cl.addLayout(row3)
-
-            if state == "locked" and st["unlocked_by_names"]:
-                req_lbl = QLabel(f"Unlock by mastering: {', '.join(st['unlocked_by_names'])}")
-                req_lbl.setWordWrap(True)
-                req_lbl.setStyleSheet(f"border:none; background:transparent; color:{self._muted}; font-size:10px; font-style:italic;")
-                cl.addWidget(req_lbl)
-
-            self.cards_grid.addWidget(card, idx // 2, idx % 2)
+        else:
+            tier_groups = [
+                ("mastered", "★ Mastered Skills", "Completed tiers"),
+                ("unlocked", "Active Skills", "Available to earn points in games"),
+                ("locked", "Locked Higher Tiers", "Master prerequisite skills to unlock"),
+            ]
+            for st_key, label, sub_desc in tier_groups:
+                grp = [s for s in shown if s["state"] == st_key]
+                if not grp:
+                    continue
+                icon_cat = self._active_category if self._active_category != "All" else ""
+                row_cursor = self._add_section_block(
+                    row_cursor, f"<b>{label}</b> ({len(grp)})", f"·  {sub_desc}", icon_cat, grp, by_skill_game,
+                )
 
         self.cards_host.adjustSize()
 
@@ -5012,7 +5505,7 @@ def parse_input(text):
 
 # ---------------------------------------------------------------- main window
 class MainWindow(QMainWindow):
-    COLS = ["#", "Move", "", "Eval", "Time", "Opening / Skill", ""]
+    COLS = ["#", "Move", "", "Eval", "Time", "Opening", ""]
 
     def __init__(self):
         super().__init__()
@@ -5174,42 +5667,67 @@ class MainWindow(QMainWindow):
         left.addWidget(self.graph)
         root.addLayout(left, 3)
 
-        right = QVBoxLayout()
+        right_panel = QWidget()
+        right_panel.setMinimumWidth(0)
+        right_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        right = QVBoxLayout(right_panel)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(6)
         self.table = QTableWidget(0, len(self.COLS))
+        self.table.setMinimumWidth(0)
         self.table.setHorizontalHeaderLabels(self.COLS)
-        self.table.setIconSize(QSize(22, 22))
-        self.table.verticalHeader().setDefaultSectionSize(30)
+        self.table.setIconSize(QSize(18, 18))
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.verticalHeader().setDefaultSectionSize(26)
         self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setShowGrid(False)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         hh = self.table.horizontalHeader()
+        hh.setMinimumSectionSize(28)
         hh.setSectionResizeMode(QHeaderView.Stretch)
-        for i, w in ((0, 36), (2, 40), (3, 56), (4, 54), (6, 54)):
+        for i, w in ((0, 34), (1, 68), (2, 34), (3, 52), (4, 50), (6, 48)):
             hh.setSectionResizeMode(i, QHeaderView.Fixed); self.table.setColumnWidth(i, w)
         self.table.cellClicked.connect(lambda r, _c: self.goto(r))
         right.addWidget(self.table, 3)
 
-        # Move explanation card
+        # Move explanation card (locked size policy so skills NEVER expand MainWindow)
         self.explain_card = QFrame()
         self.explain_card.setObjectName("ExplainCard")
+        self.explain_card.setMinimumWidth(0)
+        self.explain_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.explain_card.setFixedHeight(76)
+        self._explain_accent_col = ""
         ex_lay = QVBoxLayout(self.explain_card)
-        ex_lay.setContentsMargins(10, 7, 10, 8)
-        ex_lay.setSpacing(4)
+        ex_lay.setContentsMargins(10, 6, 10, 6)
+        ex_lay.setSpacing(3)
         ex_top = QHBoxLayout()
         ex_top.setContentsMargins(0, 0, 0, 0)
-        ex_top.setSpacing(7)
+        ex_top.setSpacing(6)
         self.explain_icon = QLabel()
-        self.explain_icon.setFixedSize(22, 22)
+        self.explain_icon.setFixedSize(20, 20)
         self.explain_icon.setAlignment(Qt.AlignCenter)
         ex_top.addWidget(self.explain_icon)
         self.explain_title = QLabel("Move Explanation")
         self.explain_title.setTextFormat(Qt.RichText)
+        self.explain_title.setMinimumWidth(0)
+        self.explain_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.explain_title.setFixedHeight(20)
         ex_top.addWidget(self.explain_title, 1)
+        self.explain_skills_bar = QWidget()
+        self.explain_skills_bar.setMinimumWidth(0)
+        self.explain_skills_bar.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.explain_skills_lay = QHBoxLayout(self.explain_skills_bar)
+        self.explain_skills_lay.setContentsMargins(0, 0, 0, 0)
+        self.explain_skills_lay.setSpacing(3)
+        self.explain_skills_bar.setVisible(False)
+        ex_top.addWidget(self.explain_skills_bar)
         self.explain_eval = QLabel("")
         self.explain_eval.setAlignment(Qt.AlignCenter)
-        self.explain_eval.setMinimumWidth(46)
-        self.explain_eval.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
+        self.explain_eval.setMinimumWidth(44)
+        self.explain_eval.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.explain_eval.setVisible(False)
         ex_top.addWidget(self.explain_eval)
         ex_lay.addLayout(ex_top)
@@ -5217,16 +5735,11 @@ class MainWindow(QMainWindow):
             "Open a PGN/FEN or move any piece on the board to see move explanations and live analysis."
         )
         self.explain_body.setWordWrap(True)
+        self.explain_body.setMinimumWidth(0)
+        self.explain_body.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Expanding)
+        self.explain_body.setAlignment(Qt.AlignTop | Qt.AlignLeft)
         self.explain_body.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.explain_body.setMinimumHeight(34)
-        ex_lay.addWidget(self.explain_body)
-        self.explain_skills_bar = QWidget()
-        self.explain_skills_lay = QHBoxLayout(self.explain_skills_bar)
-        self.explain_skills_lay.setContentsMargins(0, 2, 0, 0)
-        self.explain_skills_lay.setSpacing(5)
-        self.explain_skills_lay.addStretch(1)
-        self.explain_skills_bar.setVisible(False)
-        ex_lay.addWidget(self.explain_skills_bar)
+        ex_lay.addWidget(self.explain_body, 1)
         right.addWidget(self.explain_card)
 
         # Manual alternate route bar (active variation + resume prompt)
@@ -5337,14 +5850,28 @@ class MainWindow(QMainWindow):
         pv_lay.addWidget(self.btn_pv_exit)
         self.pv_bar.setVisible(False)
         right.addWidget(self.pv_bar)
+        self.acc_card = QFrame()
+        self.acc_card.setObjectName("AccuracyCard")
+        self.acc_card.setMinimumWidth(0)
+        self.acc_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        acc_lay = QVBoxLayout(self.acc_card)
+        acc_lay.setContentsMargins(10, 5, 10, 5)
+        acc_lay.setSpacing(2)
         self.acc_label = QLabel("")
         self.acc_label.setTextFormat(Qt.RichText)
-        right.addWidget(self.acc_label)
-        self.progress = QProgressBar(); self.progress.setVisible(False)
+        self.acc_label.setMinimumWidth(0)
+        self.acc_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        acc_lay.addWidget(self.acc_label)
+        self.acc_card.setVisible(False)
+        right.addWidget(self.acc_card)
+        self.progress = QProgressBar(); self.progress.setFixedHeight(8); self.progress.setTextVisible(False); self.progress.setVisible(False)
         right.addWidget(self.progress)
         self.status = QLabel("Open a PGN or paste a PGN/FEN to begin.")
+        self.status.setMinimumWidth(0)
+        self.status.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.status.setStyleSheet("font-size:11.5px;")
         right.addWidget(self.status)
-        root.addLayout(right, 2)
+        root.addWidget(right_panel, 2)
 
         tb = QToolBar()
         tb.setMovable(False)
@@ -5356,11 +5883,16 @@ class MainWindow(QMainWindow):
         for t, fn in (("File", self.open_or_paste),
                       ("Re-analyze", self.restart_all), ("Stop", self.stop),
                       ("Save Game", self.save_to_library), ("Rename Game…", self.rename_current_game),
-                      ("Library…", self.open_library), ("Skills…", self.open_skills),
+                      ("Library…", self.open_library), ("Skills", self.open_skills),
                       ("Settings…", self.open_settings)):
             act = tb.addAction(t, fn)
             if t == "Save Game":
                 self.save_act = act
+            elif t == "Skills":
+                act.setIcon(_make_skill_cat_icon("Tactics", 15))
+                w_sk = tb.widgetForAction(act)
+                if isinstance(w_sk, QToolButton):
+                    w_sk.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
         self.game_combo = QComboBox()
         self.game_combo.currentIndexChanged.connect(self.pick_game)
         self.game_combo_act = tb.addWidget(self.game_combo)
@@ -5838,36 +6370,87 @@ class MainWindow(QMainWindow):
         if not self.results:
             self.acc_label.setText("")
             self.acc_label.setToolTip("")
+            if hasattr(self, "acc_card"):
+                self.acc_card.setVisible(False)
             return
+        if hasattr(self, "acc_card"):
+            self.acc_card.setVisible(True)
         h = self.game.headers if self.game else {}
         elo = A.extract_average_elo(h)
         summ = ACC.summarize(self.results, elo=elo)
+        theme = getattr(self, "_cached_card_theme", None)
+        muted_c = theme[3] if (theme and len(theme) >= 4) else "#9ca3af"
         fmt = lambda v: "–" if v is None else "%.1f%%" % v
+
+        def _acc_col(v):
+            if v is None:
+                return muted_c
+            if v >= 90.0:
+                return "#22c55e"
+            if v >= 75.0:
+                return "#84cc16"
+            if v >= 60.0:
+                return "#eab308"
+            return "#f97316"
+
+        piece_glyphs = {"P": "♙", "N": "♘", "B": "♗", "R": "♖", "Q": "♕", "K": "♔"}
         rows = ""
         tip_lines = []
+        piece_footers = []
         for color, nm in ((chess.WHITE, h.get("White", "White")), (chess.BLACK, h.get("Black", "Black"))):
             d = summ[color]
             rating = "–" if d["rating"] is None else str(d["rating"])
-            rows += ("<tr><td><b>%s</b></td><td>%s</td><td>%s</td><td>%s</td><td><b>%s</b></td><td><b>%s</b></td></tr>"
-                     % (nm, fmt(d["opening"]), fmt(d["middlegame"]), fmt(d["endgame"]), fmt(d["overall"]), rating))
+            ov = d["overall"]
+            ov_col = _acc_col(ov)
+            chip = "⬜" if color == chess.WHITE else "⬛"
+            nm_short = nm if len(nm) <= 16 else (nm[:14].rstrip() + "…")
+            rows += (
+                f"<tr>"
+                f"<td style='padding-right:8px;'>{chip} <b>{nm_short}</b></td>"
+                f"<td align='center' style='padding:0 5px;'>{fmt(d['opening'])}</td>"
+                f"<td align='center' style='padding:0 5px;'>{fmt(d['middlegame'])}</td>"
+                f"<td align='center' style='padding:0 5px;'>{fmt(d['endgame'])}</td>"
+                f"<td align='center' style='padding:0 6px;'><b style='color:{ov_col};'>{fmt(ov)}</b></td>"
+                f"<td align='right' style='padding-left:6px;'><b>{rating}</b></td>"
+                f"</tr>"
+            )
             bp = d.get("by_piece") or {}
             piece_parts = [
                 f"{lbl} {bp[lbl]:.0f}%"
                 for lbl in ("P", "N", "B", "R", "Q", "K")
                 if bp.get(lbl) is not None
             ]
+            glyph_parts = [
+                f"{piece_glyphs[lbl]} {bp[lbl]:.0f}%"
+                for lbl in ("P", "N", "B", "R", "Q", "K")
+                if bp.get(lbl) is not None
+            ]
             if piece_parts:
                 tip_lines.append(f"{nm} by piece: {' · '.join(piece_parts)}")
-        title = "Final accuracy" if final else "Accuracy (live…)"
+            if final and glyph_parts:
+                piece_footers.append(f"<b>{nm_short}:</b> {' · '.join(glyph_parts)}")
+        title = "Game Review Summary" if final else "Accuracy (analyzing…)"
+        piece_html = ""
+        if piece_footers:
+            piece_html = (
+                f"<div style='margin-top:2px; color:{muted_c}; font-size:10px;'>"
+                + "<br>".join(piece_footers)
+                + "</div>"
+            )
         self.acc_label.setText(
-            "<b>%s</b><table cellspacing='6'><tr><th align='left'>Player</th><th>Opening</th><th>Middlegame</th>"
-            "<th>Endgame</th><th>Overall</th><th>Est. rating</th></tr>%s</table>" % (title, rows))
+            f"<div style='font-size:11.5px;'><b>{title}</b></div>"
+            f"<table width='100%' cellspacing='2' style='font-size:11.5px;'>"
+            f"<tr style='color:{muted_c}; font-size:10.5px;'>"
+            f"<th align='left'>Player</th><th>Open</th><th>Mid</th>"
+            f"<th>End</th><th>Overall</th><th align='right'>Rating</th></tr>{rows}</table>"
+            f"{piece_html}"
+        )
         self.acc_label.setToolTip("\n".join(tip_lines))
 
     def fill_table(self):
         rows = self.basic
         self.table.setRowCount(len(rows) + 1)
-        self.table.setItem(0, 1, QTableWidgetItem("Start position"))
+        self.table.setItem(0, 1, QTableWidgetItem("Start"))
         for c in (0, 2, 3, 4, 5):
             self.table.setItem(0, c, QTableWidgetItem(""))
         self.table.setCellWidget(0, 6, self.best_button(0))
@@ -5884,20 +6467,31 @@ class MainWindow(QMainWindow):
                 return None
         return None
 
+    _TABLE_QUIET_SKILLS = frozenset({
+        "capture", "check", "one_book_move",
+        "king_and_pawn_endgames", "rook_endgames", "queen_endgames", "knight_and_bishop_endgames",
+    })
+
     def set_row(self, k):
         ply, color, san, mv, fen = self.basic[k]
         row = k + 1
         r = self.results[k] if k < len(self.results) else None
         num = "%d%s" % ((ply + 1) // 2, "." if color else "…")
-        self.table.setItem(row, 0, QTableWidgetItem(num))
-        self.table.setItem(row, 1, QTableWidgetItem(san))
+        num_it = QTableWidgetItem(num)
+        num_it.setTextAlignment(Qt.AlignCenter)
+        num_it.setForeground(QColor("#9ca3af"))
+        self.table.setItem(row, 0, num_it)
+        san_it = QTableWidgetItem(san)
+        sf = san_it.font(); sf.setBold(True); san_it.setFont(sf)
+        self.table.setItem(row, 1, san_it)
         sym = r.symbol if r else ""
         it = QTableWidgetItem("")
         it.setTextAlignment(Qt.AlignCenter)
         skill_ids = (getattr(r, "skills", None) or []) if r else []
         skill_names = [SK.SKILL_BY_ID[s].name for s in skill_ids if s in SK.SKILL_BY_ID]
+        notable_skill_ids = [s for s in skill_ids if s in SK.SKILL_BY_ID and s not in self._TABLE_QUIET_SKILLS]
         if sym:
-            pm = icons.pixmap_for_key(sym, 22) if styles.mode == "icons" else None
+            pm = icons.pixmap_for_key(sym, 20) if styles.mode == "icons" else None
             if pm is not None:
                 it.setIcon(QIcon(pm))
             else:
@@ -5915,24 +6509,24 @@ class MainWindow(QMainWindow):
                 tip += "\nSkills: " + ", ".join(skill_names)
             it.setToolTip(tip)
         self.table.setItem(row, 2, it)
-        self.table.setItem(row, 3, QTableWidgetItem(r.eval_after_text if r else ""))
+        ev_it = QTableWidgetItem(r.eval_after_text if r else "")
+        ev_it.setTextAlignment(Qt.AlignCenter)
+        self.table.setItem(row, 3, ev_it)
         plies = self.clock_data.get("plies", [])
         mt = (r.move_time_text if r and r.move_time_text else "") or (
             plies[k]["move_time_text"] if k < len(plies) else "")
         tit = QTableWidgetItem(mt)
         tit.setTextAlignment(Qt.AlignCenter)
-        tit.setForeground(QColor("#aaaaaa"))
+        tit.setForeground(QColor("#9ca3af"))
         self.table.setItem(row, 4, tit)
         if r and r.book and r.opening:
             col5_it = QTableWidgetItem(r.opening)
             if skill_names and getattr(self.settings, "enable_skills", True):
                 col5_it.setToolTip(f"{r.eco} {r.opening}\nSkills: {', '.join(skill_names)}")
-        elif skill_names and getattr(self.settings, "enable_skills", True):
-            col5_it = QTableWidgetItem(f"★ {skill_names[0]}")
-            col5_it.setForeground(QColor("#eab308"))
-            col5_it.setToolTip("Skills: " + ", ".join(skill_names))
         else:
             col5_it = QTableWidgetItem("")
+            if skill_names and getattr(self.settings, "enable_skills", True):
+                col5_it.setToolTip("Skills: " + ", ".join(skill_names))
         self.table.setItem(row, 5, col5_it)
 
     # ------------------------------------------------------------ saving
@@ -6091,6 +6685,9 @@ class MainWindow(QMainWindow):
 
     def best_button(self, row):
         b = QPushButton("Best")
+        b.setProperty("compactBtn", True)
+        b.setCursor(Qt.PointingHandCursor)
+        b.setStyleSheet("padding:1px 6px; font-size:11px; border-radius:4px;")
         b.clicked.connect(lambda _=False, r=row: self.show_best(r))
         return b
 
@@ -6144,7 +6741,7 @@ class MainWindow(QMainWindow):
             f"font-size:11px; font-weight:bold;"
         )
 
-    def _update_explain_skills(self, skill_ids: Optional[list] = None):
+    def _update_explain_skills(self, skill_ids: Optional[list] = None, max_chips: int = 1):
         if not hasattr(self, "explain_skills_lay") or not hasattr(self, "explain_skills_bar"):
             return
         while self.explain_skills_lay.count():
@@ -6157,26 +6754,44 @@ class MainWindow(QMainWindow):
         if not getattr(self.settings, "enable_skills", True) or not skill_ids:
             self.explain_skills_bar.setVisible(False)
             return
-        shown = 0
-        for sid in skill_ids[:3]:
-            if sid not in SK.SKILL_BY_ID:
-                continue
+        valid = [sid for sid in skill_ids if sid in SK.SKILL_BY_ID]
+        notable = [sid for sid in valid if sid not in self._TABLE_QUIET_SKILLS]
+        ordered = notable if notable else []
+        if not ordered:
+            self.explain_skills_bar.setVisible(False)
+            return
+        all_tip_lines = []
+        for sid in valid:
             st = self.skills_store.get_skill_state(sid)
-            if st["is_mastered"]:
-                label = f"★ {st['name']} (Mastered)"
-            elif st["is_unlocked"]:
-                label = f"★ {st['name']} ({st['points']}/{st['target']})"
-            else:
-                label = f"★ {st['name']}"
-            btn = QPushButton(label)
-            btn.setProperty("skillChip", True)
-            btn.setCursor(Qt.PointingHandCursor)
-            btn.setToolTip(f"{st['category']}: {st['description']}\nClick to view Skills progress")
-            btn.clicked.connect(lambda _=False, c=st["category"]: self.open_skills(category=c))
-            self.explain_skills_lay.addWidget(btn)
-            shown += 1
-        self.explain_skills_lay.addStretch(1)
-        self.explain_skills_bar.setVisible(shown > 0)
+            prog = "Mastered" if st["is_mastered"] else (f"{st['points']}/{st['target']}" if st["is_unlocked"] else "Locked")
+            all_tip_lines.append(f"• {st['name']} ({st['category']} · {prog}): {st['description']}")
+        full_tip = "\n".join(all_tip_lines) + "\n\nClick to open Skills & Habits"
+
+        top_sid = ordered[0]
+        st = self.skills_store.get_skill_state(top_sid)
+        short_nm = st["name"] if len(st["name"]) <= 15 else (st["name"][:13].rstrip() + "…")
+        extra_cnt = len(ordered) - 1
+        label = f"{short_nm} +{extra_cnt}" if extra_cnt > 0 else short_nm
+        btn = QPushButton(label)
+        btn.setProperty("skillChip", True)
+        btn.setIcon(QIcon(_make_skill_icon(top_sid, st["category"], st["state"], 14, badge=False)))
+        btn.setIconSize(QSize(13, 13))
+        btn.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        btn.setMaximumWidth(145)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFixedHeight(20)
+        btn.setToolTip(full_tip)
+        btn.clicked.connect(lambda _=False, c=st["category"]: self.open_skills(category=c))
+        self.explain_skills_lay.addWidget(btn)
+        self.explain_skills_bar.setVisible(True)
+
+    def _set_explain_accent(self, accent_col: str = ""):
+        if getattr(self, "_explain_accent_col", None) == accent_col:
+            return
+        self._explain_accent_col = accent_col
+        theme = getattr(self, "_cached_card_theme", None)
+        if theme and len(theme) >= 8:
+            self._apply_explain_alt_theme(*theme[:8])
 
     def _update_explanation_card(
         self,
@@ -6192,8 +6807,9 @@ class MainWindow(QMainWindow):
     ):
         if not hasattr(self, "explain_title"):
             return
-        self._apply_badge_to_label(self.explain_icon, symbol, 20)
+        self._apply_badge_to_label(self.explain_icon, symbol, 19)
         if pending:
+            self._set_explain_accent("")
             title_core = f"{move_num_label} {san}".strip()
             self.explain_title.setText(f"<b>{title_core}</b> &nbsp; <span style='opacity:0.75;'>Analyzing…</span>")
             self.explain_eval.setText("…")
@@ -6203,6 +6819,7 @@ class MainWindow(QMainWindow):
             self._update_explain_skills(None)
             return
         if not san:
+            self._set_explain_accent("")
             self.explain_title.setText("<b>Start Position</b>")
             ev = eval_text or "0.0"
             self.explain_eval.setText(ev)
@@ -6218,6 +6835,7 @@ class MainWindow(QMainWindow):
             bt_label = "Underpromotion" if brilliant_type == "underpromotion" else f"{brilliant_type.title()} Sacrifice"
             sym_name = f"{sym_name} · {bt_label}"
         tag_col = styles.color(symbol) if symbol else ""
+        self._set_explain_accent(tag_col)
         move_hdr = f"{move_num_label} {san}".strip()
         prefix = "Alternate · " if is_manual else ""
         if tag_col:
@@ -6230,7 +6848,8 @@ class MainWindow(QMainWindow):
         self.explain_eval.setVisible(bool(eval_text))
         self.explain_eval.adjustSize()
         self.explain_body.setText(explanation or "No explanation available for this move.")
-        self._update_explain_skills(skill_ids)
+        chip_cap = 1 if (len(sym_name) >= 16 or is_manual) else 2
+        self._update_explain_skills(skill_ids, max_chips=chip_cap)
 
     def goto(self, idx, animate=True, play_sound=True, _keep_best_panel=False):
         if self._alt_route is not None:
@@ -7012,9 +7631,8 @@ class MainWindow(QMainWindow):
         labels = [
             (self.players, ""),
             (self.opening_label, "font-size:15px;font-weight:bold;"),
-            (self.line_title, ""),
-            (self.acc_label, ""),
-            (self.status, ""),
+            (self.line_title, "font-size:11.5px;"),
+            (self.status, "font-size:11.5px;"),
         ]
         if mode not in ("invert", "bw"):
             for lbl, extra in labels:
@@ -7529,17 +8147,24 @@ class MainWindow(QMainWindow):
                                  hover_bg: str, accent: str, accent_fg: str, border_w: str = "1px"):
         self._cached_card_theme = (bar_bg, fg, border, muted, hover_bg, accent, accent_fg, border_w)
         if hasattr(self, "explain_card"):
+            ex_acc = getattr(self, "_explain_accent_col", "") or ""
+            left_rule = f"border-left:3px solid {ex_acc};" if ex_acc else ""
             self.explain_card.setStyleSheet(
-                f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
+                f"QFrame#ExplainCard {{ background:{bar_bg}; border:{border_w} solid {border}; {left_rule} border-radius:6px; }}"
                 f"QFrame#ExplainCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:12px; }}"
                 f"QFrame#ExplainCard QPushButton[skillChip='true'] {{ background:{hover_bg}; color:#eab308; "
-                f"border:1px solid #eab308; border-radius:10px; padding:1px 8px; font-size:11px; font-weight:bold; }}"
+                f"border:1px solid #eab308; border-radius:9px; padding:1px 7px; font-size:10px; font-weight:bold; }}"
                 f"QFrame#ExplainCard QPushButton[skillChip='true']:hover {{ background:#eab308; color:#111827; }}"
+            )
+        if hasattr(self, "acc_card"):
+            self.acc_card.setStyleSheet(
+                f"QFrame#AccuracyCard {{ background:{bar_bg}; border:{border_w} solid {border}; border-radius:6px; }}"
+                f"QFrame#AccuracyCard QLabel {{ background:transparent; border:none; color:{fg}; font-size:11.5px; }}"
             )
         if hasattr(self, "explain_eval"):
             self.explain_eval.setStyleSheet(
                 f"background:{hover_bg}; color:{fg}; border:1px solid {border}; border-radius:4px; "
-                f"padding:1px 6px; font-family:'Consolas','Segoe UI',monospace; font-size:12px; font-weight:bold;"
+                f"padding:1px 6px; font-family:'Consolas','Segoe UI',monospace; font-size:11.5px; font-weight:bold;"
             )
         if hasattr(self, "alt_route_frame"):
             self.alt_route_frame.setStyleSheet(

@@ -197,38 +197,80 @@ def is_brilliant_underpromotion(board_before: chess.Board, move: chess.Move, is_
     return False
 
 
+def _non_pawn_material(board, color) -> int:
+    return sum(
+        PIECE_VAL[p.piece_type]
+        for p in board.piece_map().values()
+        if p.color == color and p.piece_type not in (chess.PAWN, chess.KING)
+    )
+
+
+def _recapture_adjusted_net(board_after_reply: chess.Board, color: bool):
+    """Best `(total_net, piece_net)` for `color` from `board_after_reply` considering 1 recapture
+    while accounting for immediate opponent re-recapture on the same target square."""
+    best_tot = material(board_after_reply, color) - material(board_after_reply, not color)
+    best_pc = _non_pawn_material(board_after_reply, color) - _non_pawn_material(board_after_reply, not color)
+    for rec in board_after_reply.legal_moves:
+        if not board_after_reply.is_capture(rec):
+            continue
+        b3 = board_after_reply.copy()
+        b3.push(rec)
+        rec_net = material(b3, color) - material(b3, not color)
+        rec_pc_net = _non_pawn_material(b3, color) - _non_pawn_material(b3, not color)
+        if not b3.is_checkmate():
+            opp_recaps = [
+                m4 for m4 in b3.legal_moves
+                if m4.to_square == rec.to_square and b3.is_capture(m4)
+            ]
+            if opp_recaps:
+                rec_pt = b3.piece_type_at(rec.to_square)
+                val = PIECE_VAL.get(rec_pt, 0)
+                rec_net -= val
+                if rec_pt not in (chess.PAWN, chess.KING, None):
+                    rec_pc_net -= val
+        if rec_net > best_tot or (rec_net == best_tot and rec_pc_net > best_pc):
+            best_tot = rec_net
+            best_pc = rec_pc_net
+    return best_tot, best_pc
+
+
 def is_sacrifice(board_before, move, threshold=2):
     """True if the mover willingly leaves a piece/rook/queen undefended or sacrifices
-    an exchange/piece for >= threshold pawns of net material loss after opponent's best reply."""
+    an exchange/piece (including a minor piece for two pawns) after opponent's best reply."""
     color = board_before.turn
     b = board_before.copy()
     start = material(b, color) - material(b, not color)
+    piece_start = _non_pawn_material(b, color) - _non_pawn_material(b, not color)
     moved_pt = b.piece_type_at(move.from_square)
     b.push(move)
+    if b.is_checkmate():
+        return False
     worst = start
+    worst_piece_loss = 0
     piece_involved = (moved_pt is not None and moved_pt != chess.PAWN)
-    # opponent's best capture reply
+    # opponent's best capture reply (SEE-aware so unrelated suicide captures elsewhere don't mask sacrifices)
     for reply in b.legal_moves:
         if b.is_capture(reply):
             victim = b.piece_at(reply.to_square)
             b2 = b.copy()
             b2.push(reply)
-            # allow our recapture (best of ours)
-            best = material(b2, color) - material(b2, not color)
-            for rec in b2.legal_moves:
-                if b2.is_capture(rec):
-                    b3 = b2.copy()
-                    b3.push(rec)
-                    best = max(best, material(b3, color) - material(b3, not color))
+            best, best_pc = _recapture_adjusted_net(b2, color)
             if best < worst:
                 worst = best
-            if start - best >= threshold and victim is not None and victim.color == color and victim.piece_type != chess.PAWN:
+            pc_loss = piece_start - best_pc
+            if best <= start - 1 and pc_loss > worst_piece_loss:
+                worst_piece_loss = pc_loss
+            if (start - best >= threshold or (start - best >= 1 and pc_loss >= 3)) and (
+                victim is not None and victim.color == color and victim.piece_type != chess.PAWN
+            ):
                 piece_involved = True
     # also the immediate state if no capture reply
     if not any(b.is_capture(m) for m in b.legal_moves):
         worst = min(worst, material(b, color) - material(b, not color))
+    # Recognize minor-piece-for-two-pawns sacrifices (net -1 total, net >= -3 non-pawn piece material)
     if start - worst < threshold:
-        return False
+        if not (threshold == 2 and (start - worst) >= 1 and worst_piece_loss >= 3 and piece_involved):
+            return False
     return True if threshold < 2 else piece_involved
 
 
@@ -252,12 +294,7 @@ def brilliant_category(board_before: chess.Board, move: chess.Move) -> str:
             victim = b.piece_at(reply.to_square)
             b2 = b.copy()
             b2.push(reply)
-            best = material(b2, color) - material(b2, not color)
-            for rec in b2.legal_moves:
-                if b2.is_capture(rec):
-                    b3 = b2.copy()
-                    b3.push(rec)
-                    best = max(best, material(b3, color) - material(b3, not color))
+            best, _best_pc = _recapture_adjusted_net(b2, color)
             if best < worst_net and victim is not None and victim.color == color:
                 worst_net = best
                 sacrificed_pt = victim.piece_type
@@ -443,9 +480,16 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
 
     # 2. Already-decided Winning Position Protection:
     # If a player is overwhelmingly winning before and after the move (>= +4.00 and >= 82% expected points),
-    # minor engine depth fluctuations should not be flagged as Inaccuracy/Mistake/Blunder.
+    # minor engine depth fluctuations should not be flagged as Inaccuracy/Mistake/Blunder — unless
+    # a forced checkmate was on the board and missed into a non-trivial position.
+    missed_forced_mate = (
+        best_cp is not None
+        and best_cp >= 9000
+        and (cp_after is None or cp_after < 650)
+    )
     if (
-        played_wp_after >= 82.0
+        not missed_forced_mate
+        and played_wp_after >= 82.0
         and best_wp >= 86.0
         and (cp_after is None or cp_after >= 400)
         and eff_loss < 12.0
@@ -457,13 +501,16 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
         return "??"
 
     # 4. Miss (miss):
-    # Case A: Opponent's previous move gifted mover a significant jump in expected points
+    # Case A: Missed forced checkmate while remaining in a playable/advantageous position
+    if missed_forced_mate and eff_loss >= 3.5 and played_wp_after >= 42.0:
+        return "miss"
+    # Case B: Opponent's previous move gifted mover a significant jump in expected points
     # (best_wp - wp_before >= 11%), and mover failed to capitalize (eff_loss >= 8%) without
     # dropping well below their pre-gift standing.
     opp_gift = (best_wp - wp_before) >= 11.0 and best_wp >= 42.0
     if opp_gift and eff_loss >= 8.0 and (played_wp_after >= wp_before - 8.0 or played_wp_after >= 32.0):
         return "miss"
-    # Case B: Missed clear tactical conversion in a sharp position
+    # Case C: Missed clear tactical conversion in a sharp position
     if eff_loss > 5.5 and eff_loss <= 22.0 and 30.0 <= played_wp_after < 60.0 and best_wp >= 68.0:
         return "miss"
 
@@ -504,57 +551,75 @@ def classify_modern(loss, is_best, played_wp_after, best_wp, second_wp, sacrific
         and not repeats_position
         and not pre_attacked_free_piece
         and not pendulum_return
-        and 45.5 <= played_wp_after < 99.0
         and (best_cp is None or best_cp < 9000)
     ):
-        only_good_move = (
-            second_wp is not None
-            and (best_wp - second_wp) >= 15.0
-            and 45.5 <= best_wp <= 95.0
-            and wp_before < 88.0
+        # Holding a difficult defense where every alternative loses on the spot
+        only_drawing_hold = (
+            38.0 <= played_wp_after < 52.0
+            and wp_before <= 46.0
+            and second_wp is not None
+            and second_wp <= 22.0
+            and (best_wp - second_wp) >= 16.0
         )
-        if only_good_move:
+        if only_drawing_hold:
             return "!"
-        if (
-            wp_before < 62.0
-            and (second_wp is None or second_wp < 62.0 or (wp_before <= 53.0 and not is_capture))
-        ):
-            punished_error = (
-                (best_wp - wp_before) >= 11.0
-                and second_wp is not None
-                and (best_wp - second_wp) >= 3.0
+
+        if 45.5 <= played_wp_after < 99.0:
+            only_good_move = (
+                second_wp is not None
+                and (best_wp - second_wp) >= 15.0
+                and 45.5 <= best_wp <= 95.0
+                and wp_before < 88.0
             )
-            saved_lost_position = (
-                wp_before < 32.0
-                and (best_wp - wp_before) >= 20.0
-                and played_wp_after >= 48.0
+            sharp_conversion = (
+                second_wp is not None
+                and (best_wp - second_wp) >= 11.5
+                and second_wp < 56.0
+                and 50.0 <= best_wp <= 92.0
+                and wp_before < 76.0
             )
-            defender_kick = (
-                attacks_piece
-                and (best_wp - wp_before) >= 7.0
-                and played_wp_after >= 56.0
-                and (second_wp is None or second_wp <= best_wp)
-            )
-            critical_followup = (
-                prev_critical
-                and not is_capture
-                and (best_cp is not None and best_cp >= 0)
-                and (second_wp is not None and (best_wp - second_wp) >= 3.0 and second_wp < 47.5)
-            )
-            escaped_danger = (
-                wp_before < 44.0
-                and played_wp_after >= 51.0
-                and second_wp is not None
-                and (best_wp - second_wp) >= 3.0
-            )
-            if (
-                punished_error
-                or saved_lost_position
-                or defender_kick
-                or critical_followup
-                or escaped_danger
-            ):
+            if only_good_move or sharp_conversion:
                 return "!"
+            if (
+                wp_before < 62.0
+                and (second_wp is None or second_wp < 62.0 or (wp_before <= 53.0 and not is_capture))
+            ):
+                punished_error = (
+                    (best_wp - wp_before) >= 11.0
+                    and second_wp is not None
+                    and (best_wp - second_wp) >= 3.0
+                )
+                saved_lost_position = (
+                    wp_before < 32.0
+                    and (best_wp - wp_before) >= 20.0
+                    and played_wp_after >= 48.0
+                )
+                defender_kick = (
+                    attacks_piece
+                    and (best_wp - wp_before) >= 7.0
+                    and played_wp_after >= 56.0
+                    and (second_wp is None or second_wp <= best_wp)
+                )
+                critical_followup = (
+                    prev_critical
+                    and not is_capture
+                    and (best_cp is not None and best_cp >= 0)
+                    and (second_wp is not None and (best_wp - second_wp) >= 3.0 and second_wp < 47.5)
+                )
+                escaped_danger = (
+                    wp_before < 44.0
+                    and played_wp_after >= 51.0
+                    and second_wp is not None
+                    and (best_wp - second_wp) >= 3.0
+                )
+                if (
+                    punished_error
+                    or saved_lost_position
+                    or defender_kick
+                    or critical_followup
+                    or escaped_danger
+                ):
+                    return "!"
 
     # 8. Best / Excellent / Good:
     # Moves that repeat a prior board position in an equal/non-losing state are Excellent (++), not Best (+++).

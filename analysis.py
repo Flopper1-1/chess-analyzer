@@ -320,6 +320,7 @@ class MoveResult:
     move_time_text: str = ""
     pv: List[str] = field(default_factory=list)   # SAN of best line from fen_before
     pv_uci: List[str] = field(default_factory=list)
+    after_pv_uci: List[str] = field(default_factory=list)  # opponent's best refutation PV after played move
     explanation: str = ""
     skills: List[str] = field(default_factory=list)
 
@@ -551,6 +552,8 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
             else:
                 r.eval_after = _norm_cp(after_score.white().score(mate_score=10000))
                 r.eval_after_text = format_cp_text(r.eval_after, after_score)
+        if after_pv:
+            r.after_pv_uci = [m.uci() for m in after_pv[:6]]
 
         if b.legal_moves.count() == 1 and not r.book:
             # only one legal move: forced, never judged
@@ -558,6 +561,11 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
         elif before and after_score is not None:
             best_cp = _norm_cp(C.cp_of(before[0]["score"].pov(mover)))
             after_cp = _norm_cp(C.cp_of(after_score.pov(mover)))
+            played_multipv_cp = (
+                _norm_cp(C.cp_of(played_info["score"].pov(mover)))
+                if played_info is not None
+                else None
+            )
             is_capture = b.is_capture(mv)
             attacks_piece = bool(
                 b.piece_type_at(mv.from_square) == chess.PAWN
@@ -579,6 +587,14 @@ def analyse_game(game, settings: Settings, engine, book: Optional[OpeningBook] =
                 )
             )
             if is_best:
+                after_cp = best_cp
+            elif (
+                played_multipv_cp is not None
+                and played_multipv_cp >= best_cp
+                and after_cp >= best_cp - 4
+                and not repeats_pos
+            ):
+                is_best = True
                 after_cp = best_cp
             elif (
                 after_cp >= best_cp
@@ -905,6 +921,7 @@ def reclassify_results(game, results: List[MoveResult], settings: Settings) -> N
                 best_uci=r.pv_uci[0] if r.pv_uci else "",
                 pv_san=r.pv,
                 pv_uci=r.pv_uci,
+                after_pv_uci=r.after_pv_uci or None,
                 opening=r.opening,
                 eco=r.eco,
                 brilliant_type=r.brilliant_type,
@@ -1009,6 +1026,8 @@ def analyse_single_move(
         else:
             r.eval_after = _norm_cp(after_score.white().score(mate_score=10000))
             r.eval_after_text = format_cp_text(r.eval_after, after_score)
+    if after_pv:
+        r.after_pv_uci = [m.uci() for m in after_pv[:6]]
 
     if legal_count == 1 and not r.book:
         r.symbol, r.analysed = "forced", True

@@ -111,6 +111,32 @@ def test_move_explanations_motifs_and_outcomes():
     )
     assert "castles kingside" in EX.explain_result(legacy_res).lower()
 
+    # 12. Rich tactical & strategic motifs: relative pin, skewer, outpost, open-file rook, 7th-rank rook, multi-ply refutation
+    b_rel_pin = chess.Board("r2qkb1r/ppp2ppp/2np1n2/4p3/2B1P3/2NP1N2/PPP2PPP/R1BQK2R w KQkq - 0 6")
+    txt_pin = EX.explain_move(b_rel_pin.fen(), "c1g5", "++")
+    assert "pins the knight on f6 to the queen on d8" in txt_pin
+
+    b_skewer = chess.Board("4q3/8/4k3/8/8/8/8/3R2K1 w - - 0 25")
+    txt_skewer = EX.explain_move(b_skewer.fen(), "d1e1", "!")
+    assert "skewers the king on e6 and the queen on e8" in txt_skewer
+
+    b_outpost = chess.Board("4k3/p6p/8/8/2P5/4N3/8/4K3 w - - 0 18")
+    txt_outpost = EX.explain_move(b_outpost.fen(), "e3d5", "+++")
+    assert "outpost" in txt_outpost.lower() and "d5" in txt_outpost
+
+    b_open_rook = chess.Board("4k3/p1pp1ppp/8/8/8/8/P1PP1PPP/3R2K1 w - - 0 18")
+    txt_open_rook = EX.explain_move(b_open_rook.fen(), "d1e1", "+++")
+    assert "open e-file" in txt_open_rook
+
+    b_multi_ref = chess.Board("4k3/8/8/8/8/2n5/8/R3K2R w KQ - 0 20")
+    txt_multi_ref = EX.explain_move(
+        b_multi_ref.fen(), "a1c1", "??",
+        eval_before=0, eval_after=-450,
+        best_san="Kd2", best_uci="e1d2",
+        after_pv_uci=["c3a2", "c1c2", "a2b4"],
+    )
+    assert "blunder" in txt_multi_ref.lower() and "Kd2" in txt_multi_ref
+
 
 def test_single_move_live_analysis_and_chain(tmp_path):
     s = A.Settings(depth=10)

@@ -267,3 +267,69 @@ def test_skills_store_progression_dedup_and_reset(tmp_path):
     store2.reset()
     assert store2.get_skill_state("capture")["points"] == 0
     assert store2.get_skill_state("free_piece")["state"] == "locked"
+
+
+def test_improved_sacrifice_annotation_and_compact_skills_ui(tmp_path):
+    # 1. SEE-aware sacrifice check: unrelated suicide capture (Qxd8 into Rxd8) must NOT mask a true sacrifice!
+    # White plays Bxh7+ (sacrificing bishop on h7), while White's Qd1 also faces Black's defended Qd8 (Re8 defends d8).
+    b_sac_masked = chess.Board("3qr1k1/5ppp/8/8/8/3B4/5PPP/3Q2K1 w - - 0 20")
+    assert C.is_sacrifice(b_sac_masked, chess.Move.from_uci("d3h7"), threshold=2) is True
+    assert C.brilliant_category(b_sac_masked, chess.Move.from_uci("d3h7")) == "bishop"
+
+    # Conversely, if Black's Qd8 is UNDEFENDED, Bxh7+ Kxh7 Qxd8 wins the queen cleanly -> NOT a sacrifice
+    b_sham = chess.Board("3q2k1/5ppp/8/8/8/3B4/5PPP/3Q2K1 w - - 0 20")
+    assert C.is_sacrifice(b_sham, chess.Move.from_uci("d3h7"), threshold=2) is False
+
+    # 2. Missing a forced checkmate into a slower non-forced edge is flagged as 'miss', not '+'
+    sym_missed_mate = C.classify(
+        8.0, False, 92.0, 100.0, 92.0, False, 96.0,
+        system="modern", cp_before=10000, cp_after=450, best_cp=10000,
+    )
+    assert sym_missed_mate == "miss"
+
+    # 3. Only move holding a difficult draw when 2nd best loses on the spot -> Great (!)
+    sym_hold = C.classify(
+        0.0, True, 43.0, 43.0, 14.0, False, 40.0,
+        system="modern", cp_before=-70, cp_after=-50, best_cp=-50,
+    )
+    assert sym_hold == "!"
+
+    # 4. Compact organized SkillsDialog + all 72 vector skill icons + zero UI expansion in MainWindow
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QApplication
+    import main as M
+
+    app = QApplication.instance() or QApplication([])
+    store = SK.SkillsStore(str(tmp_path / "compact_skills.json"))
+    for sd in SK.SKILLS:
+        pm = M._make_skill_icon(sd.id, sd.category, "unlocked", 32, badge=True)
+        assert not pm.isNull()
+
+    dlg = M.SkillsDialog(store)
+    dlg.setAttribute(Qt.WA_DontShowOnScreen, True)
+    assert dlg.width() <= 760 and dlg.height() <= 500
+    assert dlg.column_count == 3
+    assert dlg.cards_grid is not None and dlg.cards_grid.columnStretch(2) == 1
+    dlg.close()
+
+    # Verify Skills never expand MainWindow or ExplainCard geometry across moves
+    win = M.MainWindow()
+    win.setAttribute(Qt.WA_DontShowOnScreen, True)
+    win.skills_store = store
+    win.show()
+    app.processEvents()
+    init_win_size = (win.width(), win.height())
+    init_card_h = win.explain_card.height()
+    win._update_explanation_card(
+        san="Nxg5", symbol="!!", eval_text="+1.58",
+        explanation="Brilliant knight sacrifice!",
+        move_num_label="9.", brilliant_type="knight",
+        skill_ids=["brilliant_sacrifice", "damages_opponent_pawn_structure", "pin", "creates_battery"],
+    )
+    app.processEvents()
+    assert (win.width(), win.height()) == init_win_size
+    assert win.explain_card.height() == init_card_h
+    win._update_explanation_card(san="d3", symbol="+", eval_text="+0.09", explanation="Solid move.", move_num_label="5.", skill_ids=[])
+    app.processEvents()
+    assert win.explain_card.height() == init_card_h
+    win.close()
